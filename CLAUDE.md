@@ -55,7 +55,7 @@ Server (ws:7337)
 | `src/server/index.ts` | WS server; one `Session` + `FsMemoryProvider` per connection |
 | `src/tools/registry.ts` | Global tool registry; `registerAll()` in `src/tools/builtin/index.ts` registers built-ins |
 | `src/tools/acl.ts` | ACL resolution: profile `tools.builtin[name]` for built-ins; `tools.mcp_servers[].acl` for MCP |
-| `src/skills/loader.ts` | Loads `.md` skills from `skills_dirs`; last-write-wins on name collision across dirs |
+| `src/skills/loader.ts` | Auto-discovers `SKILL.md` dirs across 4 path levels; `resolveSkillsDirs()` + `loadAllSkills()`; last-write-wins |
 | `src/skills/indexer.ts` | Builds the skill list injected into the system prompt |
 | `src/memory/fs-memory.ts` | Two scopes: `session` (in-memory on `Session`) and `profile` (`<artifact_dir>/memory/*.md`) |
 | `src/session/store.ts` | Sessions persisted to `~/.harness/sessions/<date>_<id>.json` |
