@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+# Dev (no compile step needed)
+pnpm dev                        # start WebSocket server (default profile)
+pnpm dev:tui                    # start Ink TUI
+pnpm dev:cli                    # start readline CLI client
+
+# Build
+pnpm build                      # tsc → dist/
+pnpm typecheck                  # type-check without emitting
+
+# Test
+pnpm test                       # vitest run (all)
+pnpm test:watch                 # vitest watch
+npx vitest run tests/agent-loop.test.ts   # single test file
+```
+
+All entry points are in `dist/` after build; binary aliases are `harness`, `harness-server`, `harness-tui`.
+
+## Architecture
+
+This is a **generic agent harness** — a thin WebSocket-based runtime that wires an LLM to tools, skills, memory, MCP servers, and hooks. Everything is profile-driven (YAML).
+
+### Runtime flow
+
+```
+Profile YAML
+  ↓ loadProfile()
+Server (ws:7337)
+  ↓ per-connection
+  Session  ←→  FsMemoryProvider (profile-scoped + session-scoped)
+  ↓ on user message
+  AgentLoop  →  OpenAI-compatible API (streaming)
+                  ↓ tool calls
+                  ACL check (allow / prompt / deny)
+                  ↓ approved
+                  runHooks(pre_tool) → execute() → runHooks(post_tool)
+                  → telemetry (~/.harness/telemetry.jsonl)
+  ↓ session end
+  DefaultImprover.reflect() → memory.write() + proposed skills
+```
+
+### Key modules
+
+| Path | Role |
+|------|------|
+| `src/types.ts` | Shared WS protocol types (`ClientMessage` / `ServerMessage`) |
+| `src/profiles/schema.ts` | Zod schema for profiles — **start here** when changing config shape |
+| `src/loop/agent-loop.ts` | Core streaming agentic loop; handles tool call fan-out, ACL, hooks, telemetry |
+| `src/server/index.ts` | WS server; one `Session` + `FsMemoryProvider` per connection |
+| `src/tools/registry.ts` | Global tool registry; `registerAll()` in `src/tools/builtin/index.ts` registers built-ins |
+| `src/tools/acl.ts` | ACL resolution: profile `tools.builtin[name]` for built-ins; `tools.mcp_servers[].acl` for MCP |
+| `src/skills/loader.ts` | Loads `.md` skills from `skills_dirs`; last-write-wins on name collision across dirs |
+| `src/skills/indexer.ts` | Builds the skill list injected into the system prompt |
+| `src/memory/fs-memory.ts` | Two scopes: `session` (in-memory on `Session`) and `profile` (`<artifact_dir>/memory/*.md`) |
+| `src/session/store.ts` | Sessions persisted to `~/.harness/sessions/<date>_<id>.json` |
+| `src/hooks/runner.ts` | `pre_tool` / `post_tool` / `on_stop` shell hooks from profile; env vars `TOOL_NAME`, `TOOL_OK` |
+| `src/mcp/client.ts` | Spawns MCP servers via stdio; tool names exposed as `<serverName>__<toolName>` |
+| `src/improver/default-improver.ts` | Post-session reflection → memory writes; skill mining every N sessions |
+| `src/telemetry/logger.ts` | Appends JSONL events to `~/.harness/telemetry.jsonl` |
+| `src/tui/` | Ink-based TUI; `App` fans WS messages out to `useMessages`, `useTools`, `useMemory` hooks |
+
+### Profiles
+
+Profiles live in `profiles/` (project-local) or `~/.harness/profiles/`. Load order for paths in profile YAML: `$CWD` expands to `process.cwd()`, `~` to `homedir()`.
+
+Skills are individual `.md` files (not a single `SKILLS.md`) loaded from `skills_dirs` in order; later dirs override earlier ones for the same `name` frontmatter slug. Each file needs gray-matter frontmatter with `name` and `description`. Files prefixed with `_` are ignored. Default skill dirs: `~/.harness/skills/` and `./.harness/skills/`.
+
+### MCP tool naming
+
+MCP tools are registered as `<serverName>__<toolName>` in the agent loop. ACL for MCP uses `tools.mcp_servers[].acl` where `*` is the wildcard fallback.
+
+### Provider
+
+Uses the OpenAI SDK pointed at any `base_url` — model is fully configurable per profile. API key is read from `process.env[profile.model.api_key_env]`.
+
+### Cost estimation
+
+Hardcoded in `agent-loop.ts::estimateCost`: `$0.000003/input token`, `$0.000015/output token`. Update when switching models.
