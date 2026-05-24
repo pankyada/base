@@ -1,5 +1,5 @@
 import matter from 'gray-matter'
-import { readFileSync, readdirSync, existsSync, statSync } from 'fs'
+import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
@@ -7,14 +7,18 @@ import type { Skill } from '../tools/types.js'
 
 export type { Skill }
 
+let _gitRootCached: string | null | undefined = undefined
+
 function getGitRoot(): string | null {
+  if (_gitRootCached !== undefined) return _gitRootCached
   try {
-    return execSync('git rev-parse --show-toplevel', { stdio: 'pipe' })
+    _gitRootCached = execSync('git rev-parse --show-toplevel', { stdio: 'pipe', timeout: 3000 })
       .toString()
       .trim()
   } catch {
-    return null
+    _gitRootCached = null
   }
+  return _gitRootCached
 }
 
 export function resolveSkillsDirs(): string[] {
@@ -37,22 +41,27 @@ export function resolveSkillsDirs(): string[] {
 
 export function loadSkillsFromDir(dir: string): Skill[] {
   if (!existsSync(dir)) return []
-  return readdirSync(dir)
-    .filter(entry => statSync(join(dir, entry)).isDirectory())
+  return readdirSync(dir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
     .flatMap(entry => {
       const skillMd = join(dir, entry, 'SKILL.md')
       if (!existsSync(skillMd)) return []
-      const raw = readFileSync(skillMd, 'utf-8')
-      const { data } = matter(raw)
-      const name = data.name as string | undefined
-      const description = data.description as string | undefined
-      if (!name || !description) return []
-      return [{
-        name,
-        description,
-        content: raw,
-        filePath: skillMd,
-      } satisfies Skill]
+      try {
+        const raw = readFileSync(skillMd, 'utf-8')
+        const { data } = matter(raw)
+        const name = data.name
+        const description = data.description
+        if (!name || !description || typeof name !== 'string' || typeof description !== 'string') return []
+        return [{
+          name,
+          description,
+          content: raw,
+          filePath: skillMd,
+        } satisfies Skill]
+      } catch {
+        return []
+      }
     })
 }
 
