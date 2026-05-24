@@ -69,7 +69,20 @@ Server (ws:7337)
 
 Profiles live in `profiles/` (project-local) or `~/.harness/profiles/`. Load order for paths in profile YAML: `$CWD` expands to `process.cwd()`, `~` to `homedir()`.
 
-Skills are individual `.md` files (not a single `SKILLS.md`) loaded from `skills_dirs` in order; later dirs override earlier ones for the same `name` frontmatter slug. Each file needs gray-matter frontmatter with `name` and `description`. Files prefixed with `_` are ignored. Default skill dirs: `~/.harness/skills/` and `./.harness/skills/`.
+### Skills
+
+Skills are directories under `.agents/skills/<name>/` containing a `SKILL.md` file with gray-matter frontmatter (`name`, `description`). Optional subdirs: `scripts/`, `references/`, `assets/`.
+
+Four roots are auto-discovered at startup (most-specific wins on name collision):
+
+| Level | Path |
+|-------|------|
+| User | `~/.agents/skills/` |
+| Project | `<git-repo-root>/.agents/skills/` |
+| Sub-project | `<CWD>/../.agents/skills/` |
+| Folder | `<CWD>/.agents/skills/` |
+
+No profile configuration needed. The `Skill` tool returns `SKILL.md` content; use the `Read` tool for files in subdirectories.
 
 ### MCP tool naming
 

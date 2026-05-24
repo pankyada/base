@@ -7,9 +7,6 @@ model:
 system_prompt: ./prompts/coding.md
 working_dir: $CWD
 artifact_dir: .harness/coding
-skills_dirs:
-  - ~/.harness/skills
-  - ./.harness/skills
 tools:
   builtin:
     Read: allow

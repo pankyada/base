@@ -7,9 +7,6 @@ model:
 system_prompt: ./prompts/data.md
 working_dir: $CWD
 artifact_dir: .harness/data
-skills_dirs:
-  - ~/.harness/skills
-  - ./.harness/skills
 tools:
   builtin:
     Read: allow
