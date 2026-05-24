@@ -2,6 +2,9 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir } from 'os'
 import { readFileSync } from 'fs'
+import { readFileSync as readJsonFile, writeFileSync as writeJsonFile, existsSync as existsJsonFile, mkdirSync as mkdirJson } from 'fs'
+import { DefaultImprover } from '../improver/default-improver.js'
+import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
@@ -14,6 +17,19 @@ import { runAgentLoop } from '../loop/agent-loop.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
+
+function readSessionCount(artifactDir: string): number {
+  const path = `${artifactDir}/session-count.json`
+  try {
+    if (existsJsonFile(path)) return JSON.parse(readJsonFile(path, 'utf-8')).count ?? 0
+  } catch { /* corrupt file — reset */ }
+  return 0
+}
+
+function writeSessionCount(artifactDir: string, count: number): void {
+  mkdirJson(artifactDir, { recursive: true })
+  writeJsonFile(`${artifactDir}/session-count.json`, JSON.stringify({ count }), 'utf-8')
+}
 
 async function main() {
   const profileArg = process.argv[2]
@@ -28,6 +44,7 @@ async function main() {
   await initMcpClients(profile)
 
   const openai = createProviderClient(profile)
+  const improver = new DefaultImprover(profile, openai)
   const skills = loadAllSkills(resolveSkillsDirs())
   const skillIndex = buildSkillIndex(skills)
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
@@ -117,7 +134,30 @@ async function main() {
       }
     })
 
-    ws.on('close', () => { saveSession(session) })
+    ws.on('close', () => {
+      saveSession(session)
+
+      // on_stop hooks
+      runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
+
+      // self-improvement (fire-and-forget)
+      const userTurns = (session.messages as any[]).filter(m => m.role === 'user').length
+      if (userTurns >= 2 && profile.improvement?.enabled) {
+        void improver.reflect(session, memory).catch(e =>
+          console.error('[improver] reflect failed:', e.message)
+        )
+
+        const mineEvery = profile.improvement?.mine_skills_every_n_sessions ?? 10
+        let count = readSessionCount(profile.artifact_dir) + 1
+        if (count >= mineEvery) {
+          count = 0
+          void improver.mineSkills([session]).catch(e =>
+            console.error('[improver] mineSkills failed:', e.message)
+          )
+        }
+        writeSessionCount(profile.artifact_dir, count)
+      }
+    })
     ws.on('error', (e) => console.error('ws error:', e.message))
   })
 
