@@ -7,7 +7,7 @@ const baseProfile = {
   system_prompt: '/tmp/p.md', working_dir: '/tmp', artifact_dir: '/tmp/art',
   tools: {
     builtin: { Read: 'allow', Bash: 'prompt', Write: 'deny' } as any,
-    mcp_servers: [{ name: 'pg', command: 'pg-mcp', args: [], env: {}, acl: { '*': 'prompt', query: 'allow' } as any }],
+    mcp_servers: [{ name: 'pg', transport: 'stdio' as const, command: 'pg-mcp', args: [], env: {}, acl: { '*': 'prompt', query: 'allow' } as any }],
   },
   hooks: { pre_tool: [], post_tool: [], on_stop: [] },
   improvement: { enabled: false, mine_skills_every_n_sessions: 10 },

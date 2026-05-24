@@ -17,13 +17,56 @@ const BuiltinToolsSchema = z.object({
   Delegate: AclValue.default('prompt'),
 }).passthrough()
 
-const McpServerSchema = z.object({
+const McpAcl = z.record(z.string(), AclValue).default({ '*': 'prompt' })
+
+const StdioMcpServerSchema = z.object({
   name: z.string(),
+  transport: z.literal('stdio'),
   command: z.string(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).default({}),
-  acl: z.record(z.string(), AclValue).default({ '*': 'prompt' }),
+  acl: McpAcl,
 })
+
+const StreamableHttpMcpServerSchema = z.object({
+  name: z.string(),
+  transport: z.literal('streamable-http'),
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()).default({}),
+  acl: McpAcl,
+})
+
+const SseMcpServerSchema = z.object({
+  name: z.string(),
+  transport: z.literal('sse'),
+  url: z.string().url(),
+  headers: z.record(z.string(), z.string()).default({}),
+  acl: McpAcl,
+})
+
+const WebSocketMcpServerSchema = z.object({
+  name: z.string(),
+  transport: z.literal('websocket'),
+  url: z.string(),
+  acl: McpAcl,
+})
+
+const McpServerSchema = z.preprocess(
+  (val) => {
+    if (val && typeof val === 'object' && !('transport' in (val as object))) {
+      return { ...(val as object), transport: 'stdio' }
+    }
+    return val
+  },
+  z.discriminatedUnion('transport', [
+    StdioMcpServerSchema,
+    StreamableHttpMcpServerSchema,
+    SseMcpServerSchema,
+    WebSocketMcpServerSchema,
+  ])
+)
+
+export type McpServerConfig = z.infer<typeof McpServerSchema>
 
 export const ProfileSchema = z.object({
   name: z.string(),

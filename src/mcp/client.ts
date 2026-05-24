@@ -13,6 +13,10 @@ const entries: McpEntry[] = []
 
 export async function initMcpClients(profile: Profile): Promise<void> {
   for (const cfg of profile.tools.mcp_servers) {
+    if (cfg.transport !== 'stdio') {
+      console.warn(`[mcp] transport '${cfg.transport}' not yet supported, skipping '${cfg.name}'`)
+      continue
+    }
     const transport = new StdioClientTransport({
       command: cfg.command,
       args: cfg.args,
