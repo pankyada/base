@@ -36,7 +36,6 @@ export const ProfileSchema = z.object({
   system_prompt: z.string(),
   working_dir: z.string().default('$CWD'),
   artifact_dir: z.string(),
-  skills_dirs: z.array(z.string()).default([]),
   tools: z.preprocess(
     (val) => val ?? {},
     z.object({

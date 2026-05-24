@@ -94,7 +94,7 @@ export class DefaultImprover implements Improver {
     }
 
     const proposedDir = join(
-      this.profile.skills_dirs[0] ?? join(this.profile.artifact_dir, 'skills'),
+      join(this.profile.artifact_dir, 'skills'),
       '_proposed'
     )
     mkdirSync(proposedDir, { recursive: true })

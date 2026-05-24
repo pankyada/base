@@ -5,7 +5,6 @@ import { Profile } from '../src/profiles/schema.js'
 const baseProfile = {
   name: 'test', model: { base_url: 'https://api.openai.com/v1', api_key_env: 'X', id: 'gpt-4o' },
   system_prompt: '/tmp/p.md', working_dir: '/tmp', artifact_dir: '/tmp/art',
-  skills_dirs: [],
   tools: {
     builtin: { Read: 'allow', Bash: 'prompt', Write: 'deny' } as any,
     mcp_servers: [{ name: 'pg', command: 'pg-mcp', args: [], env: {}, acl: { '*': 'prompt', query: 'allow' } as any }],

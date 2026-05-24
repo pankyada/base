@@ -17,7 +17,6 @@ model:
 system_prompt: ${tmp}/prompt.md
 working_dir: ${tmp}
 artifact_dir: ${tmp}/artifacts
-skills_dirs: []
 `
     writeFileSync(join(tmp, 'profile.yaml'), yaml)
     writeFileSync(join(tmp, 'prompt.md'), '# prompt')

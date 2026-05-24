@@ -7,7 +7,7 @@ import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
 import { initMcpClients, closeMcpClients } from '../mcp/client.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
-import { loadAllSkills } from '../skills/loader.js'
+import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { registerAll, clearRegistry } from '../tools/builtin/index.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
@@ -28,7 +28,7 @@ async function main() {
   await initMcpClients(profile)
 
   const openai = createProviderClient(profile)
-  const skills = loadAllSkills(profile.skills_dirs)
+  const skills = loadAllSkills(resolveSkillsDirs())
   const skillIndex = buildSkillIndex(skills)
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
 
