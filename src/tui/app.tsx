@@ -53,13 +53,12 @@ export function App() {
 
   const handleSend = useCallback((msg: ClientMessage) => {
     if (msg.type === 'message') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      dispatch({ event: 'user', content: (msg as any).content })
+      dispatch({ event: 'user', content: msg.content })
       setGenerating(true)
       setScrollOffset(0)
     }
     if (msg.type === 'tool_approve' || msg.type === 'tool_deny') {
-      dispatch({ event: 'tool_prompt_resolve', id: (msg as { type: string; id: string }).id })
+      dispatch({ event: 'tool_prompt_resolve', id: msg.id })
     }
     if (msg.type === 'cancel') {
       setGenerating(false)
