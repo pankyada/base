@@ -84,9 +84,49 @@ Four roots are auto-discovered at startup (most-specific wins on name collision)
 
 No profile configuration needed. The `Skill` tool returns `SKILL.md` content; use the `Read` tool for files in subdirectories.
 
-### MCP tool naming
+### MCP servers
 
-MCP tools are registered as `<serverName>__<toolName>` in the agent loop. ACL for MCP uses `tools.mcp_servers[].acl` where `*` is the wildcard fallback.
+Configured in `tools.mcp_servers` of the profile YAML. Four transports supported (`transport` defaults to `stdio` if omitted):
+
+```yaml
+tools:
+  mcp_servers:
+    # stdio — local subprocess (default)
+    - name: filesystem
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      env: {}
+      acl:
+        "*": prompt
+        read_file: allow
+
+    # Streamable HTTP — modern remote MCP standard
+    - name: my-remote
+      transport: streamable-http
+      url: https://my-mcp-server.com/mcp
+      headers:
+        Authorization: "Bearer ${MY_TOKEN}"
+      acl:
+        "*": prompt
+
+    # SSE — legacy remote (still common)
+    - name: legacy
+      transport: sse
+      url: https://legacy.example.com/sse
+      headers: {}
+      acl:
+        "*": prompt
+
+    # WebSocket
+    - name: ws-server
+      transport: websocket
+      url: ws://localhost:8080/mcp
+      acl:
+        "*": prompt
+```
+
+Tools are exposed as `<serverName>__<toolName>` in the agent loop. ACL: `tools.mcp_servers[].acl` with `*` wildcard fallback. Tool parameter schemas are passed through from the MCP server's `listTools` response so the LLM sees real parameter definitions.
 
 ### Provider
 
