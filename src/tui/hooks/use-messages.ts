@@ -21,6 +21,7 @@ export interface ToolCallMessage {
   result?: string
   status: 'running' | 'ok' | 'err'
   duration_ms?: number
+  startTs: number
   id: string
 }
 
@@ -39,7 +40,7 @@ type Action =
   | { event: 'token'; content: string }
   | { event: 'seal' }
   | { event: 'tool_start'; name: string; input: Record<string, unknown>; id: string }
-  | { event: 'tool_end'; name: string; result: string; ok: boolean; duration_ms: number; id: string }
+  | { event: 'tool_end'; name: string; result: string; id: string }
   | { event: 'tool_prompt'; id: string; name: string; input: Record<string, unknown> }
   | { event: 'tool_prompt_resolve'; id: string }
   | { event: 'clear' }
@@ -74,15 +75,16 @@ export function messagesReducer(state: ChatMessage[], action: Action): ChatMessa
     case 'tool_start':
       return [...state, {
         role: 'tool-call', name: action.name, input: action.input,
-        status: 'running', id: action.id,
+        status: 'running', startTs: Date.now(), id: action.id,
       }]
 
     case 'tool_end': {
-      return state.map(m =>
-        m.role === 'tool-call' && m.name === action.name && m.status === 'running'
-          ? { ...m, result: action.result, status: action.ok ? 'ok' : 'err', duration_ms: action.duration_ms }
-          : m
-      )
+      return state.map(m => {
+        if (m.role !== 'tool-call' || m.name !== action.name || m.status !== 'running') return m
+        const duration_ms = Date.now() - m.startTs
+        const ok = !action.result.startsWith('Error:')
+        return { ...m, result: action.result, status: ok ? 'ok' : 'err', duration_ms }
+      })
     }
 
     case 'tool_prompt':
@@ -122,7 +124,7 @@ export function useMessages(lastMessage: ServerMessage | null): UseMessagesResul
         dispatch({ event: 'tool_start', name: lastMessage.name, input: lastMessage.input, id: lastMessage.name + Date.now() })
         break
       case 'tool_end':
-        dispatch({ event: 'tool_end', name: lastMessage.name, result: lastMessage.result, ok: true, duration_ms: 0, id: lastMessage.name })
+        dispatch({ event: 'tool_end', name: lastMessage.name, result: lastMessage.result, id: lastMessage.name })
         break
       case 'tool_prompt':
         dispatch({ event: 'tool_prompt', id: lastMessage.id, name: lastMessage.name, input: lastMessage.input })

@@ -74,7 +74,7 @@ export function RightPanel({ tools, memoryKeys, tokensIn, tokensOut, costUsd }: 
       {/* HINTS */}
       <SectionHeader label="" />
       <Text color={theme.dim}>^C cancel  ^L clear</Text>
-      <Text color={theme.dim}>Tab profile  ↑↓ history</Text>
+      <Text color={theme.dim}>^E expand tool  ↑↓ history</Text>
 
     </Box>
   )

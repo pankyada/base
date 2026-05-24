@@ -29,7 +29,7 @@ describe('Message — tool-call', () => {
   it('renders tool name and running status', () => {
     const { lastFrame } = render(
       <Message
-        msg={{ role: 'tool-call', name: 'Read', input: { path: 'src/auth.ts' }, status: 'running', id: '3' }}
+        msg={{ role: 'tool-call', name: 'Read', input: { path: 'src/auth.ts' }, status: 'running', startTs: Date.now(), id: '3' }}
         onSend={vi.fn()}
       />
     )
@@ -40,7 +40,7 @@ describe('Message — tool-call', () => {
   it('renders duration when done', () => {
     const { lastFrame } = render(
       <Message
-        msg={{ role: 'tool-call', name: 'Read', input: {}, status: 'ok', duration_ms: 34, id: '4' }}
+        msg={{ role: 'tool-call', name: 'Read', input: {}, status: 'ok', duration_ms: 34, startTs: Date.now() - 34, id: '4' }}
         onSend={vi.fn()}
       />
     )

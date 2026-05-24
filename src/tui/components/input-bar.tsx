@@ -7,13 +7,14 @@ interface InputBarProps {
   onSend: (msg: ClientMessage) => void
   onClear: () => void
   onScroll: (delta: number) => void
+  onExpandLast: () => void
   pendingToolId: string | null
   disabled: boolean
 }
 
 const HISTORY_MAX = 50
 
-export function InputBar({ onSend, onClear, onScroll, pendingToolId, disabled }: InputBarProps) {
+export function InputBar({ onSend, onClear, onScroll, onExpandLast, pendingToolId, disabled }: InputBarProps) {
   const [value, setValue] = useState('')
   const [history, setHistory] = useState<string[]>([])
   const [histIdx, setHistIdx] = useState(-1)
@@ -54,6 +55,11 @@ export function InputBar({ onSend, onClear, onScroll, pendingToolId, disabled }:
       return
     }
 
+    if (key.ctrl && input === 'e') {
+      onExpandLast()
+      return
+    }
+
     if (key.upArrow) {
       const nextIdx = Math.min(histIdx + 1, history.length - 1)
       setHistIdx(nextIdx)
@@ -84,6 +90,7 @@ export function InputBar({ onSend, onClear, onScroll, pendingToolId, disabled }:
   })
 
   const prompt = pendingToolId ? '⚠ y/n ❯ ' : disabled ? '… ❯ ' : '❯ '
+  void onScroll // used by parent via keybinding passthrough
 
   return (
     <Box borderStyle="single" borderColor={theme.border} paddingX={1}>

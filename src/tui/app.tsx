@@ -25,8 +25,9 @@ export function App() {
   const [costUsd, setCostUsd] = useState(0)
   const [scrollOffset, setScrollOffset] = useState(0)
   const [generating, setGenerating] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
-  // Track stats from WS stats messages
+  // Track stats + generation state from WS messages
   React.useEffect(() => {
     if (!lastMessage) return
     if (lastMessage.type === 'stats') {
@@ -34,15 +35,9 @@ export function App() {
       setTokensOut(lastMessage.tokens_out)
       setCostUsd(lastMessage.cost_usd)
     }
-    if (lastMessage.type === 'token') {
-      setGenerating(true)
-    }
-    if (lastMessage.type === 'session_end') {
-      setGenerating(false)
-    }
-    if (lastMessage.type === 'error') {
-      setGenerating(false)
-    }
+    if (lastMessage.type === 'token') setGenerating(true)
+    if (lastMessage.type === 'session_end') setGenerating(false)
+    if (lastMessage.type === 'error') setGenerating(false)
   }, [lastMessage])
 
   // Find pending tool prompt id (most recent unresolved tool-prompt message)
@@ -60,20 +55,36 @@ export function App() {
     if (msg.type === 'tool_approve' || msg.type === 'tool_deny') {
       dispatch({ event: 'tool_prompt_resolve', id: msg.id })
     }
-    if (msg.type === 'cancel') {
-      setGenerating(false)
-    }
+    if (msg.type === 'cancel') setGenerating(false)
     send(msg)
   }, [send, dispatch])
 
   const handleClear = useCallback(() => {
     dispatch({ event: 'clear' })
+    setExpandedIds(new Set())
     setScrollOffset(0)
   }, [dispatch])
 
   const handleScroll = useCallback((delta: number) => {
     setScrollOffset(o => Math.max(0, o + delta))
   }, [])
+
+  const handleExpandToggle = useCallback((id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  /** Ctrl+E — toggle the most recent completed tool-call */
+  const handleExpandLast = useCallback(() => {
+    const last = [...messages]
+      .reverse()
+      .find(m => m.role === 'tool-call' && m.status !== 'running')
+    if (last) handleExpandToggle(last.id)
+  }, [messages, handleExpandToggle])
 
   return (
     <Box flexDirection="column" height="100%">
@@ -91,6 +102,8 @@ export function App() {
           scrollOffset={scrollOffset}
           onScroll={handleScroll}
           onSend={handleSend}
+          expandedIds={expandedIds}
+          onExpandToggle={handleExpandToggle}
         />
         <RightPanel
           tools={tools}
@@ -104,6 +117,7 @@ export function App() {
         onSend={handleSend}
         onClear={handleClear}
         onScroll={handleScroll}
+        onExpandLast={handleExpandLast}
         pendingToolId={pendingToolId}
         disabled={generating}
       />
