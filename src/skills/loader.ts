@@ -1,9 +1,9 @@
 import matter from 'gray-matter'
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import { Skill } from '../tools/types.js'
+import type { Skill } from '../tools/types.js'
 
-export { Skill }
+export type { Skill }
 
 export function loadSkillsFromDir(dir: string): Skill[] {
   if (!existsSync(dir)) return []

@@ -2,8 +2,8 @@ name: coding
 model:
   base_url: https://api.openai.com/v1
   api_key_env: OPENAI_API_KEY
-  id: gpt-4o
-  fallback_id: gpt-4o-mini
+  id: gpt-5.4-mini-2026-03-17
+  fallback_id: gpt-5.4-mini-2026-03-17
 system_prompt: ./prompts/coding.md
 working_dir: $CWD
 artifact_dir: .harness/coding
