@@ -100,7 +100,9 @@ export class DefaultImprover implements Improver {
     mkdirSync(proposedDir, { recursive: true })
     for (const skill of skills) {
       if (skill.name && skill.content) {
-        writeFileSync(join(proposedDir, `${skill.name}.md`), skill.content, 'utf-8')
+        const skillDir = join(proposedDir, skill.name)
+        mkdirSync(skillDir, { recursive: true })
+        writeFileSync(join(skillDir, 'SKILL.md'), skill.content, 'utf-8')
       }
     }
 
