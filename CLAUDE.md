@@ -60,7 +60,7 @@ Server (ws:7337)
 | `src/memory/fs-memory.ts` | Two scopes: `session` (in-memory on `Session`) and `profile` (`<artifact_dir>/memory/*.md`) |
 | `src/session/store.ts` | Sessions persisted to `~/.harness/sessions/<date>_<id>.json` |
 | `src/hooks/runner.ts` | `pre_tool` / `post_tool` / `on_stop` shell hooks from profile; env vars `TOOL_NAME`, `TOOL_OK` |
-| `src/mcp/client.ts` | Spawns MCP servers via stdio; tool names exposed as `<serverName>__<toolName>` |
+| `src/mcp/client.ts` | Connects to MCP servers (stdio/streamable-http/sse/websocket); tools exposed as `<serverName>__<toolName>` with real schemas |
 | `src/improver/default-improver.ts` | Post-session reflection → memory writes; skill mining every N sessions |
 | `src/telemetry/logger.ts` | Appends JSONL events to `~/.harness/telemetry.jsonl` |
 | `src/tui/` | Ink-based TUI; `App` fans WS messages out to `useMessages`, `useTools`, `useMemory` hooks |
