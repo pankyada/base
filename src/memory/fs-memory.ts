@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { MemoryProvider, MemoryEntry } from './interface.js'
 import { Session } from '../session/types.js'
@@ -29,6 +29,18 @@ export class FsMemoryProvider implements MemoryProvider {
     mkdirSync(this.memDir, { recursive: true })
     writeFileSync(join(this.memDir, `${key}.md`), content, 'utf-8')
     await this.rebuildIndex()
+  }
+
+  async delete(scope: 'session' | 'profile', key: string): Promise<void> {
+    if (scope === 'session') {
+      delete this.session.session_memory[key]
+      return
+    }
+    const path = join(this.memDir, `${key}.md`)
+    if (existsSync(path)) {
+      unlinkSync(path)
+      await this.rebuildIndex()
+    }
   }
 
   async list(scope: 'session' | 'profile'): Promise<MemoryEntry[]> {

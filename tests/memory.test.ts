@@ -43,4 +43,23 @@ describe('FsMemoryProvider', () => {
     expect(section).toContain('Memory')
     expect(section).toContain('context')
   })
+
+  it('deletes a session memory key', async () => {
+    await provider.write('session', 'to-delete', 'value')
+    await provider.delete('session', 'to-delete')
+    expect(await provider.read('session', 'to-delete')).toBeNull()
+  })
+
+  it('deletes a profile memory file and rebuilds index', async () => {
+    await provider.write('profile', 'removeme', '# content')
+    await provider.delete('profile', 'removeme')
+    expect(await provider.read('profile', 'removeme')).toBeNull()
+    const entries = await provider.list('profile')
+    expect(entries.map(e => e.key)).not.toContain('removeme')
+  })
+
+  it('delete on missing key does not throw', async () => {
+    await expect(provider.delete('session', 'nonexistent')).resolves.toBeUndefined()
+    await expect(provider.delete('profile', 'nonexistent')).resolves.toBeUndefined()
+  })
 })
