@@ -14,6 +14,7 @@ export interface AgentLoopEvents {
   onToolEnd(name: string, result: string): void
   onToolPrompt(id: string, name: string, input: Record<string, unknown>): Promise<boolean>
   onSessionEnd(sessionId: string): void
+  onStats?(tokens_in: number, tokens_out: number, cost_usd: number): void
 }
 
 export async function runAgentLoop(
@@ -77,6 +78,7 @@ export async function runAgentLoop(
     session.usage.input += tokensIn
     session.usage.output += tokensOut
     session.usage.cost_usd += cost
+    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd)
     logEvent({
       session: session.id, profile: profile.name, kind: 'llm',
       model: profile.model.id, tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost,

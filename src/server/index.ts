@@ -105,6 +105,9 @@ async function main() {
               saveSession(session)
               send({ type: 'session_end', sessionId: id })
             },
+            onStats: (tokens_in, tokens_out, cost_usd) => {
+              send({ type: 'stats', tokens_in, tokens_out, cost_usd })
+            },
           }, openai, abortController.signal)
         } catch (e: any) {
           if (e.name !== 'AbortError') {

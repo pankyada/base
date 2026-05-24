@@ -30,4 +30,5 @@ export type ServerMessage =
   | { type: 'tool_end'; name: string; result: string }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'session_end'; sessionId: string }
+  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number }
   | { type: 'error'; message: string }
