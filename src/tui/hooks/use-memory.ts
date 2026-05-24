@@ -1,4 +1,4 @@
-import { useReducer, useEffect } from 'react'
+import { useReducer, useCallback } from 'react'
 import type { ServerMessage } from '../../types.js'
 
 export interface MemoryKey {
@@ -26,25 +26,24 @@ export function memoryReducer(state: MemoryKey[], action: Action): MemoryKey[] {
   }
 }
 
-export function useMemory(lastMessage: ServerMessage | null): MemoryKey[] {
-  const [keys, dispatch] = useReducer(memoryReducer, [])
+export interface UseMemoryResult {
+  memoryKeys: MemoryKey[]
+  handleMessage: (msg: ServerMessage) => void
+}
 
-  useEffect(() => {
-    if (!lastMessage) return
-    // MemoryWrite tool_end carries the key as part of the result
-    if (
-      lastMessage.type === 'tool_end' &&
-      lastMessage.name === 'MemoryWrite'
-    ) {
-      // Result format: "Wrote memory key: <key>"
-      const match = lastMessage.result.match(/Wrote memory key:\s*(.+)/)
+export function useMemory(): UseMemoryResult {
+  const [memoryKeys, dispatch] = useReducer(memoryReducer, [])
+
+  const handleMessage = useCallback((msg: ServerMessage) => {
+    if (msg.type === 'tool_end' && msg.name === 'MemoryWrite') {
+      const match = msg.result.match(/Wrote memory key:\s*(.+)/)
       if (match) {
         const key = match[1].trim()
         dispatch({ event: 'write', key })
         setTimeout(() => dispatch({ event: 'age', key }), 3000)
       }
     }
-  }, [lastMessage])
+  }, [])
 
-  return keys
+  return { memoryKeys, handleMessage }
 }

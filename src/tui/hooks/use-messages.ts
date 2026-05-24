@@ -1,4 +1,4 @@
-import { useReducer, useEffect } from 'react'
+import { useReducer, useCallback } from 'react'
 import type { ServerMessage } from '../../types.js'
 
 export interface UserMessage {
@@ -109,31 +109,32 @@ export function messagesReducer(state: ChatMessage[], action: Action): ChatMessa
 export interface UseMessagesResult {
   messages: ChatMessage[]
   dispatch: (action: Action) => void
+  /** Call this directly from the WS onMessage handler — no state hop. */
+  handleMessage: (msg: ServerMessage) => void
 }
 
-export function useMessages(lastMessage: ServerMessage | null): UseMessagesResult {
+export function useMessages(): UseMessagesResult {
   const [messages, dispatch] = useReducer(messagesReducer, [])
 
-  useEffect(() => {
-    if (!lastMessage) return
-    switch (lastMessage.type) {
+  const handleMessage = useCallback((msg: ServerMessage) => {
+    switch (msg.type) {
       case 'token':
-        dispatch({ event: 'token', content: lastMessage.content })
+        dispatch({ event: 'token', content: msg.content })
         break
       case 'tool_start':
-        dispatch({ event: 'tool_start', name: lastMessage.name, input: lastMessage.input, id: lastMessage.name + Date.now() })
+        dispatch({ event: 'tool_start', name: msg.name, input: msg.input, id: msg.name + Date.now() })
         break
       case 'tool_end':
-        dispatch({ event: 'tool_end', name: lastMessage.name, result: lastMessage.result, id: lastMessage.name })
+        dispatch({ event: 'tool_end', name: msg.name, result: msg.result, id: msg.name })
         break
       case 'tool_prompt':
-        dispatch({ event: 'tool_prompt', id: lastMessage.id, name: lastMessage.name, input: lastMessage.input })
+        dispatch({ event: 'tool_prompt', id: msg.id, name: msg.name, input: msg.input })
         break
       case 'session_end':
         dispatch({ event: 'seal' })
         break
     }
-  }, [lastMessage])
+  }, [])
 
-  return { messages, dispatch }
+  return { messages, dispatch, handleMessage }
 }

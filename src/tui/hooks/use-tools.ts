@@ -1,4 +1,4 @@
-import { useReducer, useEffect } from 'react'
+import { useReducer, useCallback } from 'react'
 import type { ServerMessage } from '../../types.js'
 
 export interface ToolEntry {
@@ -22,7 +22,6 @@ export function toolsReducer(state: ToolEntry[], action: Action): ToolEntry[] {
       return next.slice(-MAX_ENTRIES)
     }
     case 'end': {
-      // Update most recent running entry for this tool name
       const idx = [...state].reverse().findIndex(e => e.name === action.name && e.status === 'running')
       if (idx === -1) return state
       const realIdx = state.length - 1 - idx
@@ -39,18 +38,22 @@ export function toolsReducer(state: ToolEntry[], action: Action): ToolEntry[] {
   }
 }
 
-export function useTools(lastMessage: ServerMessage | null): ToolEntry[] {
+export interface UseToolsResult {
+  tools: ToolEntry[]
+  handleMessage: (msg: ServerMessage) => void
+}
+
+export function useTools(): UseToolsResult {
   const [tools, dispatch] = useReducer(toolsReducer, [])
 
-  useEffect(() => {
-    if (!lastMessage) return
-    if (lastMessage.type === 'tool_start') {
-      dispatch({ event: 'start', name: lastMessage.name, input: lastMessage.input })
-    } else if (lastMessage.type === 'tool_end') {
-      const ok = !lastMessage.result.startsWith('Error:')
-      dispatch({ event: 'end', name: lastMessage.name, ok, duration_ms: 0 })
+  const handleMessage = useCallback((msg: ServerMessage) => {
+    if (msg.type === 'tool_start') {
+      dispatch({ event: 'start', name: msg.name, input: msg.input })
+    } else if (msg.type === 'tool_end') {
+      const ok = !msg.result.startsWith('Error:')
+      dispatch({ event: 'end', name: msg.name, ok, duration_ms: 0 })
     }
-  }, [lastMessage])
+  }, [])
 
-  return tools
+  return { tools, handleMessage }
 }

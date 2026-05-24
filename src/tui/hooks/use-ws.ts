@@ -15,14 +15,20 @@ export function parseServerMessage(raw: string): ServerMessage | null {
 export interface UseWsResult {
   connected: boolean
   send: (msg: ClientMessage) => void
-  lastMessage: ServerMessage | null
 }
 
-export function useWs(): UseWsResult {
+/**
+ * Manages WebSocket lifecycle. Calls onMessage synchronously for every
+ * incoming message — no intermediate state, so no tokens are dropped
+ * when streaming arrives faster than React can re-render.
+ */
+export function useWs(onMessage: (msg: ServerMessage) => void): UseWsResult {
   const [connected, setConnected] = useState(false)
-  const [lastMessage, setLastMessage] = useState<ServerMessage | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Keep a stable ref to the latest onMessage so the WS handler never becomes stale
+  const onMessageRef = useRef(onMessage)
+  onMessageRef.current = onMessage
 
   const connect = useCallback(() => {
     const ws = new WebSocket(`ws://localhost:${HARNESS_PORT}`)
@@ -32,7 +38,7 @@ export function useWs(): UseWsResult {
 
     ws.on('message', (data) => {
       const msg = parseServerMessage(data.toString())
-      if (msg) setLastMessage(msg)
+      if (msg) onMessageRef.current(msg)
     })
 
     ws.on('close', () => {
@@ -59,5 +65,5 @@ export function useWs(): UseWsResult {
     }
   }, [])
 
-  return { connected, send, lastMessage }
+  return { connected, send }
 }
