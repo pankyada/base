@@ -1,0 +1,34 @@
+name: data
+model:
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  id: gpt-4o
+  fallback_id: gpt-4o-mini
+system_prompt: ./prompts/data.md
+working_dir: $CWD
+artifact_dir: .harness/data
+skills_dirs:
+  - ~/.harness/skills
+  - ./.harness/skills
+tools:
+  builtin:
+    Read: allow
+    Write: allow
+    Edit: deny
+    Bash: deny
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: allow
+    MemoryList: allow
+    Stats: allow
+    Delegate: prompt
+  mcp_servers: []
+hooks:
+  pre_tool: []
+  post_tool: []
+  on_stop: []
+improvement:
+  enabled: true
+  mine_skills_every_n_sessions: 10
