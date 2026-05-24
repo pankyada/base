@@ -17,7 +17,7 @@ const BuiltinToolsSchema = z.object({
   Delegate: AclValue.default('prompt'),
 }).passthrough()
 
-const McpAcl = z.record(z.string(), AclValue).default({ '*': 'prompt' })
+const McpAcl = z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const }))
 
 const StdioMcpServerSchema = z.object({
   name: z.string(),
@@ -31,7 +31,7 @@ const StdioMcpServerSchema = z.object({
 const StreamableHttpMcpServerSchema = z.object({
   name: z.string(),
   transport: z.literal('streamable-http'),
-  url: z.string().url(),
+  url: z.url(),
   headers: z.record(z.string(), z.string()).default({}),
   acl: McpAcl,
 })
@@ -39,7 +39,7 @@ const StreamableHttpMcpServerSchema = z.object({
 const SseMcpServerSchema = z.object({
   name: z.string(),
   transport: z.literal('sse'),
-  url: z.string().url(),
+  url: z.url(),
   headers: z.record(z.string(), z.string()).default({}),
   acl: McpAcl,
 })
@@ -53,8 +53,11 @@ const WebSocketMcpServerSchema = z.object({
 
 const McpServerSchema = z.preprocess(
   (val) => {
-    if (val && typeof val === 'object' && !('transport' in (val as object))) {
-      return { ...(val as object), transport: 'stdio' }
+    if (val && typeof val === 'object') {
+      const t = (val as any).transport
+      if (t === undefined || t === null || t === '') {
+        return { ...(val as object), transport: 'stdio' }
+      }
     }
     return val
   },
@@ -71,7 +74,7 @@ export type McpServerConfig = z.infer<typeof McpServerSchema>
 export const ProfileSchema = z.object({
   name: z.string(),
   model: z.object({
-    base_url: z.string().url(),
+    base_url: z.url(),
     api_key_env: z.string(),
     id: z.string(),
     fallback_id: z.string().optional(),
