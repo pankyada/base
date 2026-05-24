@@ -3,10 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "harness": "dist/cli/index.js",
+    "harness-server": "dist/server/index.js",
+    "harness-tui": "dist/tui/index.js"
+  },
   "scripts": {
     "dev": "tsx src/server/index.ts",
-    "cli": "tsx src/cli/index.ts",
-    "tui": "tsx src/tui/index.tsx",
+    "dev:server": "tsx src/server/index.ts",
+    "dev:cli": "tsx src/cli/index.ts",
+    "dev:tui": "tsx src/tui/index.tsx",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli/index.js",
+    "start:server": "node dist/server/index.js",
+    "start:tui": "node dist/tui/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
