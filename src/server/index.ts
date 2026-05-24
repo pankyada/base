@@ -1,8 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir } from 'os'
-import { readFileSync } from 'fs'
-import { readFileSync as readJsonFile, writeFileSync as writeJsonFile, existsSync as existsJsonFile, mkdirSync as mkdirJson } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
@@ -21,14 +20,14 @@ const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
 function readSessionCount(artifactDir: string): number {
   const path = `${artifactDir}/session-count.json`
   try {
-    if (existsJsonFile(path)) return JSON.parse(readJsonFile(path, 'utf-8')).count ?? 0
+    if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf-8')).count ?? 0
   } catch { /* corrupt file — reset */ }
   return 0
 }
 
 function writeSessionCount(artifactDir: string, count: number): void {
-  mkdirJson(artifactDir, { recursive: true })
-  writeJsonFile(`${artifactDir}/session-count.json`, JSON.stringify({ count }), 'utf-8')
+  mkdirSync(artifactDir, { recursive: true })
+  writeFileSync(`${artifactDir}/session-count.json`, JSON.stringify({ count }), 'utf-8')
 }
 
 async function main() {
