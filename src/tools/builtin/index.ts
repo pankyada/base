@@ -9,6 +9,7 @@ import { skillTool } from './skill.js'
 import { memoryReadTool } from './memory-read.js'
 import { memoryWriteTool } from './memory-write.js'
 import { memoryListTool } from './memory-list.js'
+import { memoryDeleteTool } from './memory-delete.js'
 import { statsTool } from './stats.js'
 import { delegateTool } from './delegate.js'
 
@@ -25,6 +26,7 @@ export function registerAll(): void {
   registerTool(memoryReadTool)
   registerTool(memoryWriteTool)
   registerTool(memoryListTool)
+  registerTool(memoryDeleteTool)
   registerTool(statsTool)
   registerTool(delegateTool)
 }

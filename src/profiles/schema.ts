@@ -13,6 +13,7 @@ const BuiltinToolsSchema = z.object({
   MemoryRead: AclValue.default('allow'),
   MemoryWrite: AclValue.default('allow'),
   MemoryList: AclValue.default('allow'),
+  MemoryDelete: AclValue.default('allow'),
   Stats: AclValue.default('allow'),
   Delegate: AclValue.default('prompt'),
 }).passthrough()
