@@ -32,9 +32,21 @@ export async function maybeCondenseMessages(
     keepSet.add(i)
   }
 
-  // Always keep: anchor tool messages (long markdown content)
+  // Always keep: anchor tool messages (long markdown content) + their parent assistant messages
   for (let i = 1; i < messages.length; i++) {
-    if (isAnchor(messages[i])) keepSet.add(i)
+    if (!isAnchor(messages[i])) continue
+    keepSet.add(i)
+    // Also keep the assistant message that issued this tool_call_id
+    const toolCallId = (messages[i] as any).tool_call_id
+    if (toolCallId) {
+      for (let j = i - 1; j >= 0; j--) {
+        const m = messages[j] as any
+        if (m.role === 'assistant' && m.tool_calls?.some((tc: any) => tc.id === toolCallId)) {
+          keepSet.add(j)
+          break
+        }
+      }
+    }
   }
 
   const summarisable = messages.filter((_, i) => !keepSet.has(i))
@@ -45,6 +57,7 @@ export async function maybeCondenseMessages(
   try {
     const resp = await (openai.chat.completions as any).create({
       model: modelId,
+      max_tokens: 512,
       messages: [{
         role: 'user',
         content: `Summarise this conversation history concisely. Preserve: key decisions made, tasks completed, current goals, important values or file contents mentioned. Output plain text, no JSON.\n\n${JSON.stringify(summarisable)}`,

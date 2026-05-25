@@ -121,6 +121,47 @@ describe('maybeCondenseMessages', () => {
     expect(contents).not.toContain('ok') // short tool result dropped
   })
 
+  it('keeps parent assistant message when tool anchor is preserved', async () => {
+    const session = createSession('test')
+    const anchorContent = '# CLAUDE.md\n' + 'x'.repeat(400)
+    session.messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'read file' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'Read', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'tc1', content: anchorContent },
+      { role: 'user', content: 'old-1' },
+      { role: 'assistant', content: 'old-2' },
+      { role: 'user', content: 'old-3' },
+      { role: 'assistant', content: 'old-4' },
+      { role: 'user', content: 'old-5' },
+      { role: 'assistant', content: 'old-6' },
+      { role: 'user', content: 'recent' },
+    ]
+    const openai = makeOpenAI('summary')
+    await maybeCondenseMessages(session, makeProfile(10), openai)
+    const msgs = session.messages as any[]
+    // Both the assistant message and the anchor tool message must be present
+    const hasAssistant = msgs.some(m => m.role === 'assistant' && m.tool_calls?.some((tc: any) => tc.id === 'tc1'))
+    const hasTool = msgs.some(m => m.role === 'tool' && m.tool_call_id === 'tc1')
+    expect(hasAssistant).toBe(true)
+    expect(hasTool).toBe(true)
+  })
+
+  it('does not condense when messages are all in keepSet (nothing summarisable)', async () => {
+    const session = createSession('test')
+    // Only 4 messages — all fall into the keep-set (system + last 6 covers everything)
+    session.messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'c' },
+    ]
+    const openai = makeOpenAI('summary')
+    await maybeCondenseMessages(session, makeProfile(10), openai)
+    expect(openai.chat.completions.create).not.toHaveBeenCalled()
+    expect(session.messages).toHaveLength(4)
+  })
+
   it('survives summarisation failure gracefully (leaves messages unchanged)', async () => {
     const session = createSession('test')
     const original = [
