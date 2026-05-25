@@ -96,6 +96,7 @@ export const ProfileSchema = z.object({
       pre_tool: z.array(z.string()).default([]),
       post_tool: z.array(z.string()).default([]),
       on_stop: z.array(z.string()).default([]),
+      timeout_ms: z.number().default(5000),
     })
   ),
   improvement: z.preprocess(
@@ -106,6 +107,10 @@ export const ProfileSchema = z.object({
       mine_skills_every_n_sessions: z.number().default(10),
     })
   ),
+  context_window: z.object({
+    max_tokens: z.number().default(100000),
+    model_id: z.string().optional(),
+  }).optional(),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>

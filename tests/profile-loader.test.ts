@@ -30,4 +30,41 @@ artifact_dir: ${tmp}/artifacts
     writeFileSync(join(tmp, 'bad.yaml'), 'name: bad')
     expect(() => loadProfile(join(tmp, 'bad.yaml'))).toThrow()
   })
+
+  it('defaults hooks.timeout_ms to 5000', () => {
+    const yaml = `
+name: test
+model:
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  id: gpt-4o
+system_prompt: ${tmp}/prompt.md
+artifact_dir: ${tmp}/artifacts
+`
+    writeFileSync(join(tmp, 'timeout-profile.yaml'), yaml)
+    const profile = loadProfile(join(tmp, 'timeout-profile.yaml'))
+    expect((profile.hooks as any).timeout_ms).toBe(5000)
+  })
+
+  it('parses context_window when present', () => {
+    const yaml = `
+name: test
+model:
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  id: gpt-4o
+system_prompt: ${tmp}/prompt.md
+artifact_dir: ${tmp}/artifacts
+context_window:
+  max_tokens: 50000
+`
+    writeFileSync(join(tmp, 'cw-profile.yaml'), yaml)
+    const profile = loadProfile(join(tmp, 'cw-profile.yaml'))
+    expect(profile.context_window?.max_tokens).toBe(50000)
+  })
+
+  it('context_window is undefined when not present', () => {
+    const profile = loadProfile(join(tmp, 'profile.yaml'))
+    expect(profile.context_window).toBeUndefined()
+  })
 })
