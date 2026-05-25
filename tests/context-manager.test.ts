@@ -162,6 +162,61 @@ describe('maybeCondenseMessages', () => {
     expect(session.messages).toHaveLength(4)
   })
 
+  it('keeps all sibling tool results when anchor causes parent assistant to be kept', async () => {
+    const session = createSession('test')
+    const anchorContent = '# CLAUDE.md\n' + 'x'.repeat(400)
+    session.messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'do things' },
+      // assistant calls two tools in one turn
+      { role: 'assistant', content: null, tool_calls: [
+        { id: 'tc1', type: 'function', function: { name: 'Read', arguments: '{}' } },
+        { id: 'tc2', type: 'function', function: { name: 'Bash', arguments: '{}' } },
+      ]},
+      { role: 'tool', tool_call_id: 'tc1', content: anchorContent },  // anchor
+      { role: 'tool', tool_call_id: 'tc2', content: 'ok' },            // sibling — must be kept too
+      { role: 'user', content: 'old-1' },
+      { role: 'assistant', content: 'old-2' },
+      { role: 'user', content: 'old-3' },
+      { role: 'assistant', content: 'old-4' },
+      { role: 'user', content: 'old-5' },
+      { role: 'assistant', content: 'old-6' },
+      { role: 'user', content: 'recent' },
+    ]
+    const openai = makeOpenAI('summary')
+    await maybeCondenseMessages(session, makeProfile(10), openai)
+    const msgs = session.messages as any[]
+    // Both tool results must be present
+    const tc1Present = msgs.some(m => m.role === 'tool' && m.tool_call_id === 'tc1')
+    const tc2Present = msgs.some(m => m.role === 'tool' && m.tool_call_id === 'tc2')
+    expect(tc1Present).toBe(true)
+    expect(tc2Present).toBe(true)
+  })
+
+  it('keeps tool results for assistant in last-6 window even when results are outside window', async () => {
+    const session = createSession('test')
+    session.messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'old-1' },
+      { role: 'assistant', content: null, tool_calls: [
+        { id: 'tc-old', type: 'function', function: { name: 'Bash', arguments: '{}' } },
+      ]},
+      { role: 'tool', tool_call_id: 'tc-old', content: 'result-old' },  // just outside last-6
+      { role: 'user', content: 'keep-5' },
+      { role: 'assistant', content: null, tool_calls: [
+        { id: 'tc-keep', type: 'function', function: { name: 'Read', arguments: '{}' } },
+      ]},
+      { role: 'tool', tool_call_id: 'tc-keep', content: 'result-keep' },
+      { role: 'user', content: 'keep-2' },
+      { role: 'assistant', content: 'keep-1' },
+    ]
+    const openai = makeOpenAI('summary')
+    await maybeCondenseMessages(session, makeProfile(10), openai)
+    const msgs = session.messages as any[]
+    // tc-keep result must be present (its assistant is in last-6)
+    expect(msgs.some(m => m.role === 'tool' && m.tool_call_id === 'tc-keep')).toBe(true)
+  })
+
   it('survives summarisation failure gracefully (leaves messages unchanged)', async () => {
     const session = createSession('test')
     const original = [

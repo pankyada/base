@@ -49,6 +49,22 @@ export async function maybeCondenseMessages(
     }
   }
 
+  // Ensure no orphaned tool_call references:
+  // for every kept assistant message with tool_calls, keep all its tool result messages
+  for (const idx of [...keepSet]) {
+    const m = messages[idx] as any
+    if (m.role !== 'assistant' || !m.tool_calls?.length) continue
+    const tcIds = new Set<string>(m.tool_calls.map((tc: any) => tc.id as string))
+    for (let k = idx + 1; k < messages.length; k++) {
+      const sibling = messages[k] as any
+      if (sibling.role === 'tool' && tcIds.has(sibling.tool_call_id)) {
+        keepSet.add(k)
+      } else if (sibling.role === 'assistant') {
+        break // next turn, stop scanning
+      }
+    }
+  }
+
   const summarisable = messages.filter((_, i) => !keepSet.has(i))
   if (summarisable.length === 0) return
 
