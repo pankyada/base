@@ -7,6 +7,7 @@ import { getMcpToolDefinitions } from '../mcp/client.js'
 import { getAcl, getMcpAcl } from '../tools/acl.js'
 import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
+import { maybeCondenseMessages } from './context-manager.js'
 
 export interface AgentLoopEvents {
   onToken(token: string): void
@@ -15,6 +16,15 @@ export interface AgentLoopEvents {
   onToolPrompt(id: string, name: string, input: Record<string, unknown>): Promise<boolean>
   onSessionEnd(sessionId: string): void
   onStats?(tokens_in: number, tokens_out: number, cost_usd: number): void
+}
+
+interface ToolResult {
+  tool_call_id: string
+  content: string
+  name: string
+  input: Record<string, unknown>
+  ok: boolean
+  isMcp: boolean
 }
 
 export async function runAgentLoop(
@@ -33,6 +43,8 @@ export async function runAgentLoop(
 
   while (true) {
     if (signal?.aborted) return
+
+    await maybeCondenseMessages(session, profile, openai)
 
     const stream = await (openai.chat.completions as any).create({
       model: profile.model.id,
@@ -103,52 +115,23 @@ export async function runAgentLoop(
     }
     session.messages.push(assistantMsg)
 
-    for (const tc of toolCalls) {
-      const name = tc.name
-      let input: Record<string, unknown>
-      try {
-        input = JSON.parse(tc.args || '{}')
-      } catch {
-        input = {}
-      }
+    // --- Parallel tool execution (Strategy C) ---
+    // allow tools batch in parallel; prompt/deny tools flush batch first then run serially
 
-      const isMcp = name.includes('__')
-      let acl: string
-      if (isMcp) {
-        const [server, tool] = name.split('__', 2)
-        acl = getMcpAcl(server, tool, profile)
-      } else {
-        acl = getAcl(name, profile)
-      }
+    const executeAllowTool = async (
+      tc: { id: string; name: string; args: string },
+      input: Record<string, unknown>,
+      isMcp: boolean
+    ): Promise<ToolResult> => {
+      await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
+      events.onToolStart(tc.name, input)
 
-      if (acl === 'deny') {
-        session.messages.push({
-          role: 'tool', tool_call_id: tc.id,
-          content: `Tool "${name}" is denied by profile ACL.`,
-        } as any)
-        continue
-      }
-
-      if (acl === 'prompt') {
-        const approved = await events.onToolPrompt(tc.id, name, input)
-        if (!approved) {
-          session.messages.push({
-            role: 'tool', tool_call_id: tc.id,
-            content: `User denied tool "${name}".`,
-          } as any)
-          continue
-        }
-      }
-
-      await runHooks('pre_tool', profile, { TOOL_NAME: name })
-      events.onToolStart(name, input)
-
-      const toolDef = allTools.find(t => t.name === name)
+      const toolDef = allTools.find(t => t.name === tc.name)
       const toolStart = Date.now()
       let result: string
       let ok = true
       try {
-        if (!toolDef) throw new Error(`Tool "${name}" not found in registry`)
+        if (!toolDef) throw new Error(`Tool "${tc.name}" not found in registry`)
         result = await toolDef.execute(input, context)
       } catch (e: any) {
         result = `Error: ${e.message}`
@@ -159,15 +142,71 @@ export async function runAgentLoop(
       logEvent({
         session: session.id, profile: profile.name,
         kind: isMcp ? 'mcp' : 'tool',
-        name, duration_ms, ok,
+        name: tc.name, duration_ms, ok,
       })
-      await runHooks('post_tool', profile, { TOOL_NAME: name, TOOL_OK: String(ok) })
-      events.onToolEnd(name, result)
+      await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
+      events.onToolEnd(tc.name, result)
 
+      return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp }
+    }
+
+    const toolResults: ToolResult[] = new Array(toolCalls.length)
+    let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number }> = []
+
+    const flushBatch = async () => {
+      if (pendingBatch.length === 0) return
+      const batchResults = await Promise.all(
+        pendingBatch.map(({ tc, input, isMcp }) => executeAllowTool(tc, input, isMcp))
+      )
+      for (let b = 0; b < pendingBatch.length; b++) {
+        toolResults[pendingBatch[b].idx] = batchResults[b]
+      }
+      pendingBatch = []
+    }
+
+    for (let i = 0; i < toolCalls.length; i++) {
+      const tc = toolCalls[i]
+      let input: Record<string, unknown>
+      try { input = JSON.parse(tc.args || '{}') } catch { input = {} }
+      const isMcp = tc.name.includes('__')
+      const acl = isMcp
+        ? getMcpAcl(tc.name.split('__', 2)[0], tc.name.split('__', 2)[1], profile)
+        : getAcl(tc.name, profile)
+
+      if (acl === 'deny') {
+        await flushBatch()
+        toolResults[i] = {
+          tool_call_id: tc.id,
+          content: `Tool "${tc.name}" is denied by profile ACL.`,
+          name: tc.name, input, ok: false, isMcp,
+        }
+      } else if (acl === 'prompt') {
+        await flushBatch()
+        const approved = await events.onToolPrompt(tc.id, tc.name, input)
+        if (!approved) {
+          toolResults[i] = {
+            tool_call_id: tc.id,
+            content: `User denied tool "${tc.name}".`,
+            name: tc.name, input, ok: false, isMcp,
+          }
+        } else {
+          toolResults[i] = await executeAllowTool(tc, input, isMcp)
+        }
+      } else {
+        // allow — add to pending batch
+        pendingBatch.push({ tc, input, isMcp, idx: i })
+      }
+    }
+    await flushBatch()
+
+    // Push results in original LLM-specified order
+    for (const r of toolResults) {
       session.messages.push({
-        role: 'tool', tool_call_id: tc.id, content: result,
+        role: 'tool', tool_call_id: r.tool_call_id, content: r.content,
       } as any)
-      session.tool_calls.push({ name, input, result, ok, ts: new Date().toISOString() })
+      session.tool_calls.push({
+        name: r.name, input: r.input, result: r.content, ok: r.ok, ts: new Date().toISOString(),
+      })
     }
   }
 }
