@@ -1,22 +1,13 @@
 import OpenAI from 'openai'
 import { Profile } from '../profiles/schema.js'
 import { Session } from '../session/types.js'
-import { ToolContext } from '../tools/types.js'
+import { ToolContext, AgentLoopEvents } from '../tools/types.js'
 import { getAllTools, toOpenAITools } from '../tools/registry.js'
 import { getMcpToolDefinitions } from '../mcp/client.js'
 import { getAcl, getMcpAcl } from '../tools/acl.js'
 import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
 import { maybeCondenseMessages } from './context-manager.js'
-
-export interface AgentLoopEvents {
-  onToken(token: string): void
-  onToolStart(name: string, input: Record<string, unknown>): void
-  onToolEnd(name: string, result: string): void
-  onToolPrompt(id: string, name: string, input: Record<string, unknown>): Promise<boolean>
-  onSessionEnd(sessionId: string): void
-  onStats?(tokens_in: number, tokens_out: number, cost_usd: number): void
-}
 
 interface ToolResult {
   tool_call_id: string

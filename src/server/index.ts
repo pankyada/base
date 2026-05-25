@@ -13,6 +13,7 @@ import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { registerAll, clearRegistry } from '../tools/builtin/index.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
+import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
@@ -111,27 +112,29 @@ async function main() {
           })
         }
 
-        const context = {
+        const events: AgentLoopEvents = {
+          onToken: t => send({ type: 'token', content: t }),
+          onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
+          onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
+          onToolPrompt: (id, n, i) => new Promise<boolean>(res => {
+            pendingApprovals.set(id, res)
+            send({ type: 'tool_prompt', id, name: n, input: i })
+          }),
+          onSessionEnd: (id) => {
+            saveSession(session)
+            send({ type: 'session_end', sessionId: id })
+          },
+          onStats: (tokens_in, tokens_out, cost_usd) => {
+            send({ type: 'stats', tokens_in, tokens_out, cost_usd })
+          },
+        }
+        const context: ToolContext = {
           profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
+          events, openai, signal: abortController.signal, delegateDepth: 0,
         }
 
         try {
-          await runAgentLoop(msg.content, profile, session, context, {
-            onToken: t => send({ type: 'token', content: t }),
-            onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
-            onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
-            onToolPrompt: (id, n, i) => new Promise<boolean>(res => {
-              pendingApprovals.set(id, res)
-              send({ type: 'tool_prompt', id, name: n, input: i })
-            }),
-            onSessionEnd: (id) => {
-              saveSession(session)
-              send({ type: 'session_end', sessionId: id })
-            },
-            onStats: (tokens_in, tokens_out, cost_usd) => {
-              send({ type: 'stats', tokens_in, tokens_out, cost_usd })
-            },
-          }, openai, abortController.signal)
+          await runAgentLoop(msg.content, profile, session, context, events, openai, abortController.signal)
         } catch (e: any) {
           if (e.name !== 'AbortError') {
             send({ type: 'error', message: e.message })
