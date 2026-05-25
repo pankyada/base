@@ -118,13 +118,12 @@ export async function runAgentLoop(
     // --- Parallel tool execution (Strategy C) ---
     // allow tools batch in parallel; prompt/deny tools flush batch first then run serially
 
-    const executeAllowTool = async (
+    const executeOneTool = async (
       tc: { id: string; name: string; args: string },
       input: Record<string, unknown>,
       isMcp: boolean
     ): Promise<ToolResult> => {
       await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
-      events.onToolStart(tc.name, input)
 
       const toolDef = allTools.find(t => t.name === tc.name)
       const toolStart = Date.now()
@@ -145,7 +144,6 @@ export async function runAgentLoop(
         name: tc.name, duration_ms, ok,
       })
       await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
-      events.onToolEnd(tc.name, result)
 
       return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp }
     }
@@ -155,9 +153,17 @@ export async function runAgentLoop(
 
     const flushBatch = async () => {
       if (pendingBatch.length === 0) return
+      // Fire onToolStart in LLM-specified order before parallel execution
+      for (const { tc, input } of pendingBatch) {
+        events.onToolStart(tc.name, input)
+      }
       const batchResults = await Promise.all(
-        pendingBatch.map(({ tc, input, isMcp }) => executeAllowTool(tc, input, isMcp))
+        pendingBatch.map(({ tc, input, isMcp }) => executeOneTool(tc, input, isMcp))
       )
+      // Fire onToolEnd in LLM-specified order after all complete
+      for (const r of batchResults) {
+        events.onToolEnd(r.name, r.content)
+      }
       for (let b = 0; b < pendingBatch.length; b++) {
         toolResults[pendingBatch[b].idx] = batchResults[b]
       }
@@ -190,7 +196,10 @@ export async function runAgentLoop(
             name: tc.name, input, ok: false, isMcp,
           }
         } else {
-          toolResults[i] = await executeAllowTool(tc, input, isMcp)
+          events.onToolStart(tc.name, input)
+          const r = await executeOneTool(tc, input, isMcp)
+          events.onToolEnd(r.name, r.content)
+          toolResults[i] = r
         }
       } else {
         // allow — add to pending batch
