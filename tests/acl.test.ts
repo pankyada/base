@@ -9,7 +9,7 @@ const baseProfile = {
     builtin: { Read: 'allow', Bash: 'prompt', Write: 'deny' } as any,
     mcp_servers: [{ name: 'pg', transport: 'stdio' as const, command: 'pg-mcp', args: [], env: {}, acl: { '*': 'prompt', query: 'allow' } as any }],
   },
-  hooks: { pre_tool: [], post_tool: [], on_stop: [] },
+  hooks: { pre_tool: [], post_tool: [], on_stop: [], timeout_ms: 5000 },
   improvement: { enabled: false, mine_skills_every_n_sessions: 10 },
 } satisfies Profile
 

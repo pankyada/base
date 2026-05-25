@@ -43,7 +43,7 @@ artifact_dir: ${tmp}/artifacts
 `
     writeFileSync(join(tmp, 'timeout-profile.yaml'), yaml)
     const profile = loadProfile(join(tmp, 'timeout-profile.yaml'))
-    expect((profile.hooks as any).timeout_ms).toBe(5000)
+    expect(profile.hooks.timeout_ms).toBe(5000)
   })
 
   it('parses context_window when present', () => {
