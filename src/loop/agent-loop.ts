@@ -140,7 +140,7 @@ export async function runAgentLoop(
         }
       }
 
-      runHooks('pre_tool', profile, { TOOL_NAME: name })
+      await runHooks('pre_tool', profile, { TOOL_NAME: name })
       events.onToolStart(name, input)
 
       const toolDef = allTools.find(t => t.name === name)
@@ -161,7 +161,7 @@ export async function runAgentLoop(
         kind: isMcp ? 'mcp' : 'tool',
         name, duration_ms, ok,
       })
-      runHooks('post_tool', profile, { TOOL_NAME: name, TOOL_OK: String(ok) })
+      await runHooks('post_tool', profile, { TOOL_NAME: name, TOOL_OK: String(ok) })
       events.onToolEnd(name, result)
 
       session.messages.push({

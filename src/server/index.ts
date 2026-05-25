@@ -133,11 +133,11 @@ async function main() {
       }
     })
 
-    ws.on('close', () => {
+    ws.on('close', async () => {
       saveSession(session)
 
       // on_stop hooks
-      runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
+      await runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
 
       // self-improvement (fire-and-forget)
       const userTurns = (session.messages as any[]).filter(m => m.role === 'user').length
