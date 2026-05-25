@@ -1,6 +1,7 @@
 import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
+import type { McpEntry } from '../mcp/client.js'
 
 export interface Skill {
   name: string
@@ -15,6 +16,7 @@ export interface ToolContext {
   workingDir: string
   memory: MemoryProvider
   skills: Skill[]
+  mcpEntries: McpEntry[]
 }
 
 export interface ToolDefinition {

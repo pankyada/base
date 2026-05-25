@@ -7,7 +7,7 @@ import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
-import { initMcpClients, closeMcpClients } from '../mcp/client.js'
+import { createMcpClients, destroyMcpClients, McpEntry } from '../mcp/client.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { registerAll, clearRegistry } from '../tools/builtin/index.js'
@@ -40,8 +40,6 @@ async function main() {
 
   clearRegistry()
   registerAll()
-  await initMcpClients(profile)
-
   const openai = createProviderClient(profile)
   const improver = new DefaultImprover(profile, openai)
   const skills = loadAllSkills(resolveSkillsDirs())
@@ -51,11 +49,20 @@ async function main() {
   const wss = new WebSocketServer({ port: PORT })
   console.log(`Harness server on ws://localhost:${PORT} [profile: ${profile.name}]`)
 
+  const openSockets = new Set<WebSocket>()
+
   wss.on('connection', (ws: WebSocket) => {
+    openSockets.add(ws)
     let session = createSession(profile.name)
     let memory = new FsMemoryProvider(profile.artifact_dir, session)
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
+    let mcpEntries: McpEntry[] = []
+
+    // Init MCP clients async — handlers below work with [] until ready
+    createMcpClients(profile)
+      .then(entries => { mcpEntries = entries })
+      .catch(e => console.error('[mcp] init failed:', e.message))
 
     const send = (msg: ServerMessage) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
@@ -105,7 +112,7 @@ async function main() {
         }
 
         const context = {
-          profile, session, workingDir: profile.working_dir, memory, skills,
+          profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
         }
 
         try {
@@ -134,7 +141,11 @@ async function main() {
     })
 
     ws.on('close', () => {
+      openSockets.delete(ws)
       saveSession(session)
+
+      // Destroy per-connection MCP clients (fire-and-forget)
+      void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
 
       // on_stop hooks (fire-and-forget — close handler cannot be async)
       void runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
@@ -161,9 +172,9 @@ async function main() {
     ws.on('error', (e) => console.error('ws error:', e.message))
   })
 
-  process.on('SIGINT', async () => {
+  process.on('SIGINT', () => {
     console.log('\nShutting down...')
-    await closeMcpClients()
+    for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
     process.exit(0)
   })
