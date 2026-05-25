@@ -133,11 +133,12 @@ async function main() {
       }
     })
 
-    ws.on('close', async () => {
+    ws.on('close', () => {
       saveSession(session)
 
-      // on_stop hooks
-      await runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
+      // on_stop hooks (fire-and-forget — close handler cannot be async)
+      void runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
+        .catch(e => console.error('[on_stop hook] error:', e.message))
 
       // self-improvement (fire-and-forget)
       const userTurns = (session.messages as any[]).filter(m => m.role === 'user').length
