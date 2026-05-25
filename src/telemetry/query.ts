@@ -2,16 +2,24 @@ import { readFileSync, existsSync } from 'fs'
 import { TelemetryEvent } from '../types.js'
 import { TELEMETRY_PATH } from './logger.js'
 
+const QUERY_TAIL_LINES = 2000
+
 export function queryEvents(opts: {
   profile?: string
   since?: Date
   kind?: TelemetryEvent['kind']
 }): TelemetryEvent[] {
   if (!existsSync(TELEMETRY_PATH)) return []
-  return readFileSync(TELEMETRY_PATH, 'utf-8')
-    .split('\n')
-    .filter(Boolean)
-    .map(l => JSON.parse(l) as TelemetryEvent)
+  const allLines = readFileSync(TELEMETRY_PATH, 'utf-8').split('\n').filter(Boolean)
+  const lines = allLines.slice(-QUERY_TAIL_LINES)
+  return lines
+    .flatMap(l => {
+      try {
+        return [JSON.parse(l) as TelemetryEvent]
+      } catch {
+        return []
+      }
+    })
     .filter(e => {
       if (opts.profile && e.profile !== opts.profile) return false
       if (opts.since && new Date(e.ts) < opts.since) return false
