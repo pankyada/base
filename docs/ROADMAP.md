@@ -42,7 +42,7 @@ Drop files into `.agents/tools/` and they're auto-registered. Swap the memory ba
 
 ---
 
-### ❌ 3. First-class multi-agent composition
+### 🔄 3. First-class multi-agent composition
 **Priority: HIGH — biggest leverage multiplier.**
 
 Any profile callable as a tool by another agent. Orchestrator spawns workers, collects results. Parallel fan-out.
