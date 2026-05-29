@@ -87,6 +87,7 @@ export const ProfileSchema = z.object({
     (val) => val ?? {},
     z.object({
       builtin: z.preprocess((val) => val ?? {}, BuiltinToolsSchema),
+      custom: z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const })),
       mcp_servers: z.array(McpServerSchema).default([]),
     })
   ),

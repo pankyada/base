@@ -12,7 +12,8 @@ import { createProviderClient } from '../provider/client.js'
 import { createMcpClients, destroyMcpClients, McpEntry } from '../mcp/client.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
-import { registerAll, clearRegistry } from '../tools/builtin/index.js'
+import { registerAll, clearRegistry, registerTool } from '../tools/builtin/index.js'
+import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
@@ -43,6 +44,13 @@ async function main() {
 
   clearRegistry()
   registerAll()
+
+  const customToolsDirs = resolveToolsDirs()
+  const customTools = await loadAllCustomTools(customToolsDirs)
+  for (const tool of customTools) {
+    registerTool(tool)
+  }
+
   const openai = createProviderClient(profile)
   const improver = new DefaultImprover(profile, openai)
   const skills = loadAllSkills(resolveSkillsDirs())
