@@ -112,6 +112,12 @@ export const ProfileSchema = z.object({
     max_tokens: z.number().default(100000),
     model_id: z.string().optional(),
   }).optional(),
+  memory: z.preprocess(
+    (val) => val ?? {},
+    z.object({
+      provider: z.enum(['fs', 'graph']).default('fs'),
+    })
+  ).optional(),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
