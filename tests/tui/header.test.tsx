@@ -3,10 +3,20 @@ import { describe, it, expect } from 'vitest'
 import { render } from 'ink-testing-library'
 import { Header } from '../../src/tui/components/header.js'
 
+const defaultProps = {
+  generating: false,
+  narratorText: '',
+  narratorSlow: false,
+  waveBars: '▁▁▁▁▁▁▁▁',
+  waveRate: 0,
+  contextWindow: 0,
+}
+
 describe('Header', () => {
   it('renders profile name and session id', () => {
     const { lastFrame } = render(
       <Header
+        {...defaultProps}
         profile="coding"
         sessionId="abc12345"
         tokensIn={0}
@@ -22,6 +32,7 @@ describe('Header', () => {
   it('renders token counts and cost', () => {
     const { lastFrame } = render(
       <Header
+        {...defaultProps}
         profile="coding"
         sessionId="abc12345"
         tokensIn={2431}
@@ -38,6 +49,7 @@ describe('Header', () => {
   it('shows disconnected indicator when not connected', () => {
     const { lastFrame } = render(
       <Header
+        {...defaultProps}
         profile="coding"
         sessionId="abc12345"
         tokensIn={0}
@@ -47,5 +59,39 @@ describe('Header', () => {
       />
     )
     expect(lastFrame()).toContain('⚠')
+  })
+
+  it('shows narrator text while generating', () => {
+    const { lastFrame } = render(
+      <Header
+        {...defaultProps}
+        profile="coding"
+        sessionId="abc12345"
+        tokensIn={0}
+        tokensOut={0}
+        costUsd={0}
+        connected={true}
+        generating={true}
+        narratorText="⚙ reading src/auth/token.ts · 0.4s"
+      />
+    )
+    expect(lastFrame()).toContain('reading')
+  })
+
+  it('shows context bar when contextWindow is set', () => {
+    const { lastFrame } = render(
+      <Header
+        {...defaultProps}
+        profile="coding"
+        sessionId="abc12345"
+        tokensIn={20000}
+        tokensOut={0}
+        costUsd={0}
+        connected={true}
+        contextWindow={128000}
+      />
+    )
+    expect(lastFrame()).toContain('ctx')
+    expect(lastFrame()).toContain('128k')
   })
 })

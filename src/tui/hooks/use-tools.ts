@@ -9,8 +9,8 @@ export interface ToolEntry {
 }
 
 type Action =
-  | { event: 'start'; name: string; input: Record<string, unknown> }
-  | { event: 'end'; name: string; ok: boolean; duration_ms: number }
+  | { event: 'start'; name: string }
+  | { event: 'end'; name: string; ok: boolean }
 
 const MAX_ENTRIES = 20
 
@@ -18,19 +18,16 @@ export function toolsReducer(state: ToolEntry[], action: Action): ToolEntry[] {
   switch (action.event) {
     case 'start': {
       const entry: ToolEntry = { name: action.name, status: 'running', ts: Date.now() }
-      const next = [...state, entry]
-      return next.slice(-MAX_ENTRIES)
+      return [...state, entry].slice(-MAX_ENTRIES)
     }
     case 'end': {
       const idx = [...state].reverse().findIndex(e => e.name === action.name && e.status === 'running')
       if (idx === -1) return state
       const realIdx = state.length - 1 - idx
+      const entry = state[realIdx]
+      const duration_ms = Date.now() - entry.ts
       const updated = [...state]
-      updated[realIdx] = {
-        ...updated[realIdx],
-        status: action.ok ? 'ok' : 'err',
-        duration_ms: action.duration_ms,
-      }
+      updated[realIdx] = { ...entry, status: action.ok ? 'ok' : 'err', duration_ms }
       return updated
     }
     default:
@@ -48,10 +45,10 @@ export function useTools(): UseToolsResult {
 
   const handleMessage = useCallback((msg: ServerMessage) => {
     if (msg.type === 'tool_start') {
-      dispatch({ event: 'start', name: msg.name, input: msg.input })
+      dispatch({ event: 'start', name: msg.name })
     } else if (msg.type === 'tool_end') {
       const ok = !msg.result.startsWith('Error:')
-      dispatch({ event: 'end', name: msg.name, ok, duration_ms: 0 })
+      dispatch({ event: 'end', name: msg.name, ok })
     }
   }, [])
 

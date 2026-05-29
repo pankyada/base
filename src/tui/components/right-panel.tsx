@@ -1,8 +1,12 @@
 import React from 'react'
 import { Box, Text } from 'ink'
+import { theme } from '../theme.js'
+import { Tabs, type TabId } from './tabs.js'
+import { ToolsTab } from './tools-tab.js'
+import { MemoryTab } from './memory-tab.js'
+import { StatsTab } from './stats-tab.js'
 import type { ToolEntry } from '../hooks/use-tools.js'
 import type { MemoryKey } from '../hooks/use-memory.js'
-import { theme } from '../theme.js'
 
 interface RightPanelProps {
   tools: ToolEntry[]
@@ -10,71 +14,38 @@ interface RightPanelProps {
   tokensIn: number
   tokensOut: number
   costUsd: number
+  activeTab: TabId
+  sessionStart: number
 }
 
-function SectionHeader({ label }: { label: string }) {
+export function RightPanel({
+  tools, memoryKeys, tokensIn, tokensOut, costUsd, activeTab, sessionStart,
+}: RightPanelProps) {
   return (
-    <Box flexDirection="column">
-      <Text color={theme.dim}>{'─'.repeat(28)}</Text>
-      <Text color={theme.dim}>{label}</Text>
-    </Box>
-  )
-}
+    <Box flexDirection="column" width={32} borderStyle="single" borderColor={theme.border}>
 
-function ToolRow({ entry }: { entry: ToolEntry }) {
-  const color = entry.status === 'running' ? theme.warn
-    : entry.status === 'ok' ? theme.success
-    : theme.error
-  const icon = entry.status === 'running' ? '▶'
-    : entry.status === 'ok' ? '✓'
-    : '✗'
-  const suffix = entry.status === 'running' ? 'running…'
-    : entry.duration_ms !== undefined ? `${entry.duration_ms}ms`
-    : ''
+      <Tabs active={activeTab} />
 
-  return (
-    <Box>
-      <Text color={color}>{icon} {entry.name.slice(0, 10)}</Text>
-      {suffix ? <Text color={theme.dim}> {suffix}</Text> : null}
-    </Box>
-  )
-}
+      <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        {activeTab === 'tools'  && <ToolsTab tools={tools} />}
+        {activeTab === 'memory' && <MemoryTab memoryKeys={memoryKeys} />}
+        {activeTab === 'stats'  && (
+          <StatsTab
+            tokensIn={tokensIn}
+            tokensOut={tokensOut}
+            costUsd={costUsd}
+            tools={tools}
+            sessionStart={sessionStart}
+          />
+        )}
+      </Box>
 
-export function RightPanel({ tools, memoryKeys, tokensIn, tokensOut, costUsd }: RightPanelProps) {
-  return (
-    <Box flexDirection="column" width={28} borderStyle="single" borderColor={theme.border}>
-
-      {/* TOOLS */}
-      <Text color={theme.dim} bold>TOOLS</Text>
-      {tools.length === 0
-        ? <Text color={theme.dim}>  (none yet)</Text>
-        : tools.slice(-8).map((t, i) => <ToolRow key={i} entry={t} />)
-      }
-
-      {/* MEMORY */}
-      <SectionHeader label="MEMORY" />
-      {memoryKeys.length === 0
-        ? <Text color={theme.dim}>  (empty)</Text>
-        : memoryKeys.map((k, i) => (
-          <Box key={i}>
-            {k.isNew
-              ? <Text color={theme.newMemory}>+ {k.key}</Text>
-              : <Text color={theme.dim}>📝 {k.key}</Text>
-            }
-          </Box>
-        ))
-      }
-
-      {/* STATS */}
-      <SectionHeader label="STATS" />
-      <Text color={theme.dim}>in: <Text color={theme.text}>{tokensIn.toLocaleString()}</Text></Text>
-      <Text color={theme.dim}>out: <Text color={theme.text}>{tokensOut.toLocaleString()}</Text></Text>
-      <Text color={theme.dim}>cost: <Text color={theme.warn}>${costUsd.toFixed(3)}</Text></Text>
-
-      {/* HINTS */}
-      <SectionHeader label="" />
-      <Text color={theme.dim}>^C cancel  ^L clear</Text>
-      <Text color={theme.dim}>^E expand tool  ↑↓ history</Text>
+      {/* Hints footer */}
+      <Box flexDirection="column" borderStyle="single" borderColor={theme.border} paddingX={1}>
+        <Text color={theme.dim}>^C cancel  ^L clear  ^E expand</Text>
+        <Text color={theme.dim}>Tab switch panel  ↑↓ scroll</Text>
+        <Text color={theme.dim}>⇧↵ newline  ↵ send</Text>
+      </Box>
 
     </Box>
   )

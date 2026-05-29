@@ -125,7 +125,7 @@ async function main() {
             send({ type: 'session_end', sessionId: id })
           },
           onStats: (tokens_in, tokens_out, cost_usd) => {
-            send({ type: 'stats', tokens_in, tokens_out, cost_usd })
+            send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: profile.context_window?.max_tokens ?? 0 })
           },
         }
         const context: ToolContext = {

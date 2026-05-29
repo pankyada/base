@@ -1,17 +1,22 @@
 import React, { useState, useCallback, useRef } from 'react'
-import { Box, useApp } from 'ink'
+import { Box, useApp, useInput } from 'ink'
 import { useWs } from './hooks/use-ws.js'
 import { useMessages } from './hooks/use-messages.js'
 import { useTools } from './hooks/use-tools.js'
 import { useMemory } from './hooks/use-memory.js'
+import { useNarrator } from './hooks/use-narrator.js'
+import { useTokenRate } from './hooks/use-token-rate.js'
 import { Header } from './components/header.js'
 import { ChatPane } from './components/chat-pane.js'
 import { RightPanel } from './components/right-panel.js'
 import { InputBar } from './components/input-bar.js'
+import type { TabId } from './components/tabs.js'
 import type { ClientMessage, ServerMessage } from '../types.js'
 
 const PROFILE = process.env.HARNESS_PROFILE ?? 'coding'
 const SESSION_ID = Math.random().toString(36).slice(2, 10)
+
+const TAB_ORDER: TabId[] = ['tools', 'memory', 'stats']
 
 export function App() {
   const { exit } = useApp()
@@ -23,9 +28,15 @@ export function App() {
   const [tokensIn, setTokensIn] = useState(0)
   const [tokensOut, setTokensOut] = useState(0)
   const [costUsd, setCostUsd] = useState(0)
+  const [contextWindow, setContextWindow] = useState(0)
   const [scrollOffset, setScrollOffset] = useState(0)
   const [generating, setGenerating] = useState(false)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [activeTab, setActiveTab] = useState<TabId>('tools')
+  const [sessionStart, setSessionStart] = useState(0)
+
+  const { text: narratorText, slow: narratorSlow } = useNarrator(messages)
+  const { bars: waveBars, rate: waveRate, addToken } = useTokenRate(generating)
 
   /**
    * Single message handler passed to useWs — called directly from the WS
@@ -33,21 +44,28 @@ export function App() {
    * streaming arrives faster than React can re-render.
    */
   const handleMessage = useCallback((msg: ServerMessage) => {
-    // Fan out to each hook's handler
     messagesHandler(msg)
     toolsHandler(msg)
     memoryHandler(msg)
 
-    // App-level stats / generation state
     if (msg.type === 'stats') {
       setTokensIn(msg.tokens_in)
       setTokensOut(msg.tokens_out)
       setCostUsd(msg.cost_usd)
+      if (msg.context_window) setContextWindow(msg.context_window)
     }
-    if (msg.type === 'token') setGenerating(true)
+    if (msg.type === 'token') {
+      setGenerating(true)
+      addToken()
+      // Record session start on first token
+      setSessionStart(prev => prev === 0 ? Date.now() : prev)
+    }
+    if (msg.type === 'tool_start') {
+      setSessionStart(prev => prev === 0 ? Date.now() : prev)
+    }
     if (msg.type === 'session_end') setGenerating(false)
     if (msg.type === 'error') setGenerating(false)
-  }, [messagesHandler, toolsHandler, memoryHandler])
+  }, [messagesHandler, toolsHandler, memoryHandler, addToken])
 
   const { connected, send } = useWs(handleMessage)
 
@@ -97,6 +115,18 @@ export function App() {
     if (last) handleExpandToggle(last.id)
   }, [messages, handleExpandToggle])
 
+  /** Tab key — cycle right panel tabs */
+  useInput((_input, key) => {
+    if (key.tab) {
+      setActiveTab(prev => {
+        const idx = TAB_ORDER.indexOf(prev)
+        return TAB_ORDER[(idx + 1) % TAB_ORDER.length]
+      })
+    }
+  })
+
+  void exit
+
   return (
     <Box flexDirection="column" height="100%">
       <Header
@@ -106,6 +136,12 @@ export function App() {
         tokensOut={tokensOut}
         costUsd={costUsd}
         connected={connected}
+        generating={generating}
+        narratorText={narratorText}
+        narratorSlow={narratorSlow}
+        waveBars={waveBars}
+        waveRate={waveRate}
+        contextWindow={contextWindow}
       />
       <Box flexDirection="row" flexGrow={1}>
         <ChatPane
@@ -122,6 +158,8 @@ export function App() {
           tokensIn={tokensIn}
           tokensOut={tokensOut}
           costUsd={costUsd}
+          activeTab={activeTab}
+          sessionStart={sessionStart}
         />
       </Box>
       <InputBar
