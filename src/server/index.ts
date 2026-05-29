@@ -59,6 +59,7 @@ async function main() {
     let userId = sanitizeUserId(process.env.HARNESS_USER ?? userInfo().username)
     let session = createSession(profile.name, userId)
     let memory = new FsMemoryProvider(profile.artifact_dir, session)
+    let usageAtConnectionStart = { ...session.usage }
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
     let mcpEntries: McpEntry[] = []
@@ -87,6 +88,7 @@ async function main() {
           userId = sanitizeUserId(msg.user_id)
           session = createSession(profile.name, userId)
           memory = new FsMemoryProvider(profile.artifact_dir, session)
+          usageAtConnectionStart = { ...session.usage }
         }
         return
       }
@@ -108,6 +110,7 @@ async function main() {
         if (loaded) {
           session = loaded
           memory = new FsMemoryProvider(profile.artifact_dir, session)
+          usageAtConnectionStart = { ...session.usage }
           send({ type: 'session_end', sessionId: session.id })
         } else {
           send({ type: 'error', message: `Session ${msg.sessionId} not found` })
@@ -159,7 +162,12 @@ async function main() {
     ws.on('close', () => {
       openSockets.delete(ws)
       saveSession(session)
-      recordUsage(session.user, session.usage)
+      const connectionDelta = {
+        input: session.usage.input - usageAtConnectionStart.input,
+        output: session.usage.output - usageAtConnectionStart.output,
+        cost_usd: session.usage.cost_usd - usageAtConnectionStart.cost_usd,
+      }
+      recordUsage(session.user, connectionDelta)
 
       // Destroy per-connection MCP clients (fire-and-forget)
       void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
