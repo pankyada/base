@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
-import { MemoryProvider, MemoryEntry } from './interface.js'
+import matter from 'gray-matter'
+import { MemoryProvider, MemoryEntry, MemoryLink } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths } from '../session/user-paths.js'
 
@@ -22,22 +23,38 @@ export class FsMemoryProvider implements MemoryProvider {
     return scope === 'profile' ? this.sharedMemDir : this.privateMemDir
   }
 
-  async read(scope: 'session' | 'profile' | 'user', key: string): Promise<string | null> {
+  async read(scope: 'session' | 'profile' | 'user', key: string): Promise<{content: string, links?: MemoryLink[]} | null> {
     if (scope === 'session') {
-      return this.session.session_memory[key] ?? null
+      const val = this.session.session_memory[key]
+      if (!val) return null
+      try {
+        const parsed = JSON.parse(val)
+        return { content: parsed.content, links: parsed.links }
+      } catch {
+        return { content: val }
+      }
     }
     const path = join(this.dirFor(scope), `${key}.md`)
-    return existsSync(path) ? readFileSync(path, 'utf-8') : null
+    if (!existsSync(path)) return null
+    const raw = readFileSync(path, 'utf-8')
+    const parsed = matter(raw)
+    return {
+      content: parsed.content.trim(),
+      links: parsed.data.links as MemoryLink[] | undefined
+    }
   }
 
-  async write(scope: 'session' | 'profile' | 'user', key: string, content: string): Promise<void> {
+  async write(scope: 'session' | 'profile' | 'user', key: string, content: string, links?: MemoryLink[]): Promise<void> {
     if (scope === 'session') {
-      this.session.session_memory[key] = content
+      this.session.session_memory[key] = JSON.stringify({ content, links })
       return
     }
     const dir = this.dirFor(scope)
     mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, `${key}.md`), content, 'utf-8')
+    const fileContent = links && links.length > 0
+      ? matter.stringify(content, { links })
+      : content
+    writeFileSync(join(dir, `${key}.md`), fileContent, 'utf-8')
     await this.rebuildIndex(scope)
   }
 
@@ -55,10 +72,16 @@ export class FsMemoryProvider implements MemoryProvider {
 
   async list(scope: 'session' | 'profile' | 'user'): Promise<MemoryEntry[]> {
     if (scope === 'session') {
-      return Object.entries(this.session.session_memory).map(([key, val]) => ({
-        key,
-        preview: val.slice(0, 100),
-      }))
+      return Object.entries(this.session.session_memory).map(([key, val]) => {
+        let preview = val.slice(0, 100)
+        let links: MemoryLink[] | undefined
+        try {
+          const parsed = JSON.parse(val)
+          preview = (parsed.content as string).slice(0, 100)
+          links = parsed.links
+        } catch { /* ignore */ }
+        return { key, preview, links }
+      })
     }
     const dir = this.dirFor(scope)
     if (!existsSync(dir)) return []
@@ -66,8 +89,13 @@ export class FsMemoryProvider implements MemoryProvider {
       .filter(f => f.endsWith('.md') && f !== 'MEMORY.md')
       .map(f => {
         const key = f.replace(/\.md$/, '')
-        const content = readFileSync(join(dir, f), 'utf-8')
-        return { key, preview: content.slice(0, 100) }
+        const raw = readFileSync(join(dir, f), 'utf-8')
+        const parsed = matter(raw)
+        return {
+          key,
+          preview: parsed.content.trim().slice(0, 100),
+          links: parsed.data.links as MemoryLink[] | undefined
+        }
       })
   }
 
@@ -89,7 +117,12 @@ export class FsMemoryProvider implements MemoryProvider {
 
   private async rebuildIndex(scope: 'profile' | 'user'): Promise<void> {
     const entries = await this.list(scope)
-    const lines = entries.map(e => `- **${e.key}**: ${e.preview.replace(/\n/g, ' ')}`)
+    const lines = entries.map(e => {
+      const linksStr = e.links && e.links.length > 0
+        ? ` [links: ${e.links.map(l => `${l.relation ? l.relation + ':' : ''}${l.target}`).join(', ')}]`
+        : ''
+      return `- **${e.key}**: ${e.preview.replace(/\n/g, ' ')}${linksStr}`
+    })
     const dir = this.dirFor(scope)
     writeFileSync(join(dir, 'MEMORY.md'), `# Memory Index\n\n${lines.join('\n')}\n`, 'utf-8')
   }

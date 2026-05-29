@@ -14,6 +14,11 @@ export const memoryListTool: ToolDefinition = {
     const { scope } = input as { scope: 'session' | 'profile' | 'user' }
     const entries = await ctx.memory.list(scope)
     if (entries.length === 0) return `(no entries in ${scope} memory)`
-    return entries.map(e => `- **${e.key}**: ${e.preview}`).join('\n')
+    return entries.map(e => {
+      const linksStr = e.links && e.links.length > 0
+        ? ` [links: ${e.links.map(l => `${l.relation ? l.relation + ':' : ''}${l.target}`).join(', ')}]`
+        : ''
+      return `- **${e.key}**: ${e.preview}${linksStr}`
+    }).join('\n')
   },
 }

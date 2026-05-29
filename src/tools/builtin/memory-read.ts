@@ -14,6 +14,13 @@ export const memoryReadTool: ToolDefinition = {
   async execute(input, ctx: ToolContext) {
     const { scope, key } = input as { scope: 'session' | 'profile' | 'user'; key: string }
     const val = await ctx.memory.read(scope, key)
-    return val ?? `(no memory entry for key: ${key})`
+    if (!val) return `(no memory entry for key: ${key})`
+
+    let output = val.content
+    if (val.links && val.links.length > 0) {
+      output += '\n\nLinked Memories:\n'
+      output += val.links.map(l => `- ${l.target}${l.relation ? ` (${l.relation})` : ''}`).join('\n')
+    }
+    return output
   },
 }

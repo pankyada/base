@@ -16,7 +16,7 @@ describe('FsMemoryProvider', () => {
 
   it('reads and writes session memory', async () => {
     await provider.write('session', 'foo', 'bar')
-    expect(await provider.read('session', 'foo')).toBe('bar')
+    expect((await provider.read('session', 'foo'))?.content).toBe('bar')
   })
 
   it('returns null for missing session key', async () => {
@@ -25,8 +25,8 @@ describe('FsMemoryProvider', () => {
 
   it('reads and writes profile memory files', async () => {
     await provider.write('profile', 'project-context', '# Context\nThis is a test.')
-    const content = await provider.read('profile', 'project-context')
-    expect(content).toContain('This is a test.')
+    const res = await provider.read('profile', 'project-context')
+    expect(res?.content).toContain('This is a test.')
   })
 
   it('lists profile memory entries', async () => {
@@ -67,7 +67,7 @@ describe('FsMemoryProvider', () => {
   it('reads and writes user-private memory', async () => {
     await provider.write('user', 'my-key', 'private content')
     const val = await provider.read('user', 'my-key')
-    expect(val).toBe('private content')
+    expect(val?.content).toBe('private content')
   })
 
   it('user-scope write does not appear in profile list', async () => {

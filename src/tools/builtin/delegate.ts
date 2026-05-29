@@ -7,6 +7,8 @@ import { createProviderClient } from '../../provider/client.js'
 import { createMcpClients, destroyMcpClients } from '../../mcp/client.js'
 import { createSession } from '../../session/store.js'
 import { FsMemoryProvider } from '../../memory/fs-memory.js'
+import { GraphMemoryProvider } from '../../memory/graph-memory.js'
+import { MemoryProvider } from '../../memory/interface.js'
 import { loadAllSkills, resolveSkillsDirs } from '../../skills/loader.js'
 import { buildSkillIndex } from '../../skills/indexer.js'
 import { runAgentLoop } from '../../loop/agent-loop.js'
@@ -57,7 +59,9 @@ export const delegateTool: ToolDefinition = {
 
       try {
         const subSession = createSession(subProfile.name, context.session.user)
-        const subMemory = new FsMemoryProvider(subProfile.artifact_dir, subSession)
+        const subMemory: MemoryProvider = subProfile.memory?.provider === 'graph'
+          ? new GraphMemoryProvider(subProfile.artifact_dir, subSession)
+          : new FsMemoryProvider(subProfile.artifact_dir, subSession)
         const subSkills = loadAllSkills(resolveSkillsDirs())
 
         // Build system prompt for sub-agent

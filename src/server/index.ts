@@ -11,6 +11,8 @@ import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
 import { createMcpClients, destroyMcpClients, McpEntry } from '../mcp/client.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
+import { GraphMemoryProvider } from '../memory/graph-memory.js'
+import { MemoryProvider } from '../memory/interface.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { registerAll, clearRegistry, registerTool } from '../tools/builtin/index.js'
 import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
@@ -66,7 +68,9 @@ async function main() {
     openSockets.add(ws)
     let userId = sanitizeUserId(process.env.HARNESS_USER ?? userInfo().username)
     let session = createSession(profile.name, userId)
-    let memory = new FsMemoryProvider(profile.artifact_dir, session)
+    let memory: MemoryProvider = profile.memory?.provider === 'graph'
+      ? new GraphMemoryProvider(profile.artifact_dir, session)
+      : new FsMemoryProvider(profile.artifact_dir, session)
     let usageAtConnectionStart = { ...session.usage }
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
@@ -95,7 +99,9 @@ async function main() {
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
           session = createSession(profile.name, userId)
-          memory = new FsMemoryProvider(profile.artifact_dir, session)
+          memory = profile.memory?.provider === 'graph'
+            ? new GraphMemoryProvider(profile.artifact_dir, session)
+            : new FsMemoryProvider(profile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
         }
         return
@@ -117,7 +123,9 @@ async function main() {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
           session = loaded
-          memory = new FsMemoryProvider(profile.artifact_dir, session)
+          memory = profile.memory?.provider === 'graph'
+            ? new GraphMemoryProvider(profile.artifact_dir, session)
+            : new FsMemoryProvider(profile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
           send({ type: 'session_end', sessionId: session.id })
         } else {
