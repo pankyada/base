@@ -56,7 +56,7 @@ export const delegateTool: ToolDefinition = {
       const subMcpEntries = await createMcpClients(subProfile)
 
       try {
-        const subSession = createSession(subProfile.name)
+        const subSession = createSession(subProfile.name, context.session.user)
         const subMemory = new FsMemoryProvider(subProfile.artifact_dir, subSession)
         const subSkills = loadAllSkills(resolveSkillsDirs())
 

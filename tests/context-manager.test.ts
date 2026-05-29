@@ -25,7 +25,7 @@ function makeOpenAI(summary: string): any {
 
 describe('maybeCondenseMessages', () => {
   it('does nothing when under token limit', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     session.messages = [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'hi' },
@@ -37,7 +37,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('condenses when over token limit, inserts summary after system message', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     session.messages = [
       { role: 'system', content: 'system prompt' },
       { role: 'user', content: 'old-1' },
@@ -60,7 +60,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('preserves last 6 messages verbatim', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     session.messages = [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'drop-me' },
@@ -81,7 +81,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('preserves anchor tool messages (long markdown content)', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     const anchorContent = '# CLAUDE.md\n' + 'x'.repeat(400)
     session.messages = [
       { role: 'system', content: 'sys' },
@@ -102,7 +102,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('does not anchor short tool messages', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     session.messages = [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'run cmd' },
@@ -122,7 +122,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('keeps parent assistant message when tool anchor is preserved', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     const anchorContent = '# CLAUDE.md\n' + 'x'.repeat(400)
     session.messages = [
       { role: 'system', content: 'sys' },
@@ -148,7 +148,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('does not condense when messages are all in keepSet (nothing summarisable)', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     // Only 4 messages — all fall into the keep-set (system + last 6 covers everything)
     session.messages = [
       { role: 'system', content: 'sys' },
@@ -163,7 +163,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('keeps all sibling tool results when anchor causes parent assistant to be kept', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     const anchorContent = '# CLAUDE.md\n' + 'x'.repeat(400)
     session.messages = [
       { role: 'system', content: 'sys' },
@@ -194,7 +194,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('keeps tool results for assistant in last-6 window even when results are outside window', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     session.messages = [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'old-1' },
@@ -218,7 +218,7 @@ describe('maybeCondenseMessages', () => {
   })
 
   it('survives summarisation failure gracefully (leaves messages unchanged)', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     const original = [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'old-1' },

@@ -24,7 +24,7 @@ const TEST_ARTIFACT_DIR = join(process.cwd(), '.harness', 'test-delegate')
 function makeContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
     profile: {} as any,
-    session: {} as any,
+    session: { user: 'testuser' } as any,
     workingDir: process.cwd(),
     memory: {} as any,
     skills: [],

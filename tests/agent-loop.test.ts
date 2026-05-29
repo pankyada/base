@@ -27,7 +27,7 @@ describe('runAgentLoop', () => {
   beforeEach(() => clearRegistry())
 
   it('streams tokens and fires onSessionEnd when no tool calls', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     const profile: any = {
       name: 'test',
       model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
@@ -63,7 +63,7 @@ describe('runAgentLoop', () => {
   })
 
   it('executes multiple allow-ACL tool calls in parallel and preserves order', async () => {
-    const session = createSession('test')
+    const session = createSession('test', 'testuser')
     const profile: any = {
       name: 'test',
       model: { id: 'gpt-4o', base_url: '', api_key_env: '' },

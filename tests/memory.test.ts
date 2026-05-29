@@ -11,7 +11,7 @@ describe('FsMemoryProvider', () => {
 
   beforeEach(() => {
     artifactDir = mkdtempSync(join(tmpdir(), 'harness-mem-'))
-    provider = new FsMemoryProvider(artifactDir, createSession('test'))
+    provider = new FsMemoryProvider(artifactDir, createSession('test', 'testuser'))
   })
 
   it('reads and writes session memory', async () => {

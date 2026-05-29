@@ -8,6 +8,7 @@ export interface SessionToolCall {
 
 export interface Session {
   id: string
+  user: string
   profile: string
   created_at: string
   messages: unknown[]
