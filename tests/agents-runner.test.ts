@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import Ajv from 'ajv'
+import { Ajv } from 'ajv'
 import { runSubAgent, SubAgentParams } from '../src/agents/runner.js'
 import { runAgentLoop } from '../src/loop/agent-loop.js'
 import { createMcpClients, destroyMcpClients } from '../src/mcp/client.js'
