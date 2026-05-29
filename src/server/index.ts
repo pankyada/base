@@ -7,6 +7,7 @@ import { recordUsage } from '../usage/ledger.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
+import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
 import { createMcpClients, destroyMcpClients, McpEntry } from '../mcp/client.js'
@@ -160,9 +161,12 @@ async function main() {
             send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: profile.context_window?.max_tokens ?? 0 })
           },
         }
+        const agentTools = await loadAgentTools(profile)
         const context: ToolContext = {
           profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
           events, openai, signal: abortController.signal, delegateDepth: 0,
+          agentTools,
+          maxDepth: profile.max_depth ?? 2,
         }
 
         try {
