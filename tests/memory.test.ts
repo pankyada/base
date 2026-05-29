@@ -62,4 +62,44 @@ describe('FsMemoryProvider', () => {
     await expect(provider.delete('session', 'nonexistent')).resolves.toBeUndefined()
     await expect(provider.delete('profile', 'nonexistent')).resolves.toBeUndefined()
   })
+
+  // --- user scope ---
+  it('reads and writes user-private memory', async () => {
+    await provider.write('user', 'my-key', 'private content')
+    const val = await provider.read('user', 'my-key')
+    expect(val).toBe('private content')
+  })
+
+  it('user-scope write does not appear in profile list', async () => {
+    await provider.write('user', 'private-key', 'val')
+    const profileEntries = await provider.list('profile')
+    expect(profileEntries.map(e => e.key)).not.toContain('private-key')
+  })
+
+  it('profile-scope write does not appear in user list', async () => {
+    await provider.write('profile', 'shared-key', 'val')
+    const userEntries = await provider.list('user')
+    expect(userEntries.map(e => e.key)).not.toContain('shared-key')
+  })
+
+  it('buildSystemPromptSection merges shared and private with labels', async () => {
+    await provider.write('profile', 'shared', '# Shared')
+    await provider.write('user', 'mine', '# Mine')
+    const section = await provider.buildSystemPromptSection()
+    expect(section).toContain('Memory (shared)')
+    expect(section).toContain('Memory (yours)')
+  })
+
+  it('buildSystemPromptSection omits a tier when empty', async () => {
+    await provider.write('profile', 'shared', '# Shared only')
+    const section = await provider.buildSystemPromptSection()
+    expect(section).toContain('Memory (shared)')
+    expect(section).not.toContain('Memory (yours)')
+  })
+
+  it('deletes user-scope memory key', async () => {
+    await provider.write('user', 'del-me', 'content')
+    await provider.delete('user', 'del-me')
+    expect(await provider.read('user', 'del-me')).toBeNull()
+  })
 })
