@@ -8,10 +8,12 @@
 
 ## Overview
 
-Extend the harness so any profile can declare a registry of named sub-agents. The orchestrating agent gets:
+Extend the harness so any profile can optionally declare a registry of named sub-agents. **Profiles without an `agents:` block are completely unaffected** — they run as standalone agents with no delegation tools exposed to the LLM.
+
+When `agents:` is present and non-empty, the orchestrating agent gets:
 
 - A per-agent tool for each registry entry (single sequential call)
-- A `DelegateFanout` builtin for explicit parallel batches
+- A `DelegateFanout` tool for explicit parallel batches
 - Hard input/output schema validation (JSON Schema via `ajv`)
 - Configurable delegation depth (default 2)
 
@@ -65,12 +67,14 @@ agents:
 
 On each new session (`src/server/index.ts`), after loading the profile:
 
-1. For each entry in `profile.agents`:
+1. If `profile.agents` is absent or empty, `agentTools = []` and no further work is done. The LLM sees zero delegation tools.
+2. If `profile.agents` has entries, for each entry:
    - Resolve the sub-profile path (same `~` / `$CWD` expansion used elsewhere).
    - Load with `loadProfile()`.
    - Compile `input` and `output` schemas into `ajv` validator functions (cached on the entry; done once per session init).
    - Build a `ToolDefinition`: `name = entry.name`, `parameters = entry.input`.
-2. Store the resulting `ToolDefinition[]` on `ToolContext` as `agentTools`.
+   - Also build the `DelegateFanout` tool definition (once, added at the end of the list).
+3. Store the resulting `ToolDefinition[]` on `ToolContext` as `agentTools`.
 
 If any sub-profile fails to load, session init throws — the orchestrator profile is misconfigured.
 
@@ -94,7 +98,9 @@ const allTools = [
 ]
 ```
 
-Per-agent tools and `DelegateFanout` participate in the existing ACL system. Both default to `prompt` in `BuiltinToolsSchema`. The existing parallel tool execution (Strategy C) handles fan-out automatically when the LLM emits multiple per-agent tool calls in one turn.
+Per-agent tools and `DelegateFanout` are only present in `allTools` when `profile.agents` is non-empty — a standalone profile with no `agents:` block sees no delegation tools whatsoever, keeping the LLM's tool list clean.
+
+ACL for per-agent tools defaults to `prompt` (profile can override per tool name). `DelegateFanout` ACL defaults to `prompt`. The existing parallel tool execution (Strategy C) handles fan-out automatically when the LLM emits multiple per-agent tool calls in one turn.
 
 ---
 
@@ -181,9 +187,8 @@ No other new dependencies.
 | `src/profiles/schema.ts` | Add `max_depth` (number, default 2) and `agents` array (name, profile, input schema, output schema) to `ProfileSchema` |
 | `src/tools/types.ts` | Add `agentTools?: ToolDefinition[]` and `maxDepth?: number` to `ToolContext` |
 | `src/loop/agent-loop.ts` | Spread `context.agentTools ?? []` into `allTools` |
-| `src/tools/builtin/index.ts` | Register `DelegateFanout` builtin |
-| `src/server/index.ts` | On session init: call `loadAgentTools(profile, context)`, set result on context |
-| `src/tools/builtin/delegate-fanout.ts` | **New** — `DelegateFanout` tool definition |
+| `src/server/index.ts` | On session init: call `loadAgentTools(profile)`, set result on context; no-op if `agents:` absent |
+| `src/tools/builtin/delegate-fanout.ts` | **New** — `DelegateFanout` tool definition (injected into `agentTools`, not global registry) |
 | `src/agents/loader.ts` | **New** — `loadAgentTools()`: resolves profiles, compiles schemas, returns `ToolDefinition[]` |
 | `src/agents/runner.ts` | **New** — `runSubAgent()`: shared 7-step execute logic used by per-agent tools and `DelegateFanout` |
 | `docs/ROADMAP.md` | Mark #3 as `🔄 In progress` |
