@@ -6,9 +6,13 @@ import type { ToolDefinition, ToolContext } from '../tools/types.js'
 import { runSubAgent } from './runner.js'
 import { buildDelegateFanoutTool } from '../tools/builtin/delegate-fanout.js'
 
+function untildify(p: string): string {
+  return p.startsWith('~') ? p.replace('~', homedir()) : p
+}
+
 function resolvePath(p: string): string {
-  if (p.startsWith('~')) return resolve(p.replace('~', homedir()))
-  return resolve(p)
+  if (p === '$CWD') return process.cwd()
+  return resolve(untildify(p))
 }
 
 type AgentExecutor = (input: Record<string, unknown>, context: ToolContext) => Promise<string>

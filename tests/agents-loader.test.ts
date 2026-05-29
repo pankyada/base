@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { loadAgentTools } from '../src/agents/loader.js'
+import { buildDelegateFanoutTool } from '../src/tools/builtin/delegate-fanout.js'
 import type { Profile } from '../src/profiles/schema.js'
 
 vi.mock('../src/agents/runner.js', () => ({ runSubAgent: vi.fn() }))
@@ -59,6 +60,15 @@ describe('loadAgentTools', () => {
     expect(tools.map(t => t.name)).toContain('researcher')
     expect(tools.map(t => t.name)).toContain('writer')
     expect(tools.map(t => t.name)).toContain('DelegateFanout')
+
+    // Fix 2: Verify buildDelegateFanoutTool called with correct args
+    expect(buildDelegateFanoutTool).toHaveBeenCalledTimes(1)
+    const [passedMap] = vi.mocked(buildDelegateFanoutTool).mock.calls[0] as [Map<string, unknown>]
+    expect(passedMap).toBeInstanceOf(Map)
+    expect([...passedMap.keys()]).toEqual(['researcher', 'writer'])
+
+    // Fix 3: Verify DelegateFanout is last tool
+    expect(tools[tools.length - 1].name).toBe('DelegateFanout')
   })
 
   it('per-agent tool uses declared input schema as its parameters', async () => {
