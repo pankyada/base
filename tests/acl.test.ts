@@ -11,6 +11,8 @@ const baseProfile = {
   },
   hooks: { pre_tool: [], post_tool: [], on_stop: [], timeout_ms: 5000 },
   improvement: { enabled: false, mine_skills_every_n_sessions: 10 },
+  max_depth: 2,
+  agents: [],
 } satisfies Profile
 
 describe('getAcl', () => {

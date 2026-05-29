@@ -127,8 +127,8 @@ export const ProfileSchema = z.object({
       provider: z.enum(['fs', 'graph']).default('fs'),
     })
   ).optional(),
-  max_depth: z.number().min(1).default(2),
-  agents: z.array(AgentEntrySchema).default([]),
+  max_depth: z.number().min(1).optional().default(2),
+  agents: z.array(AgentEntrySchema).optional().default([]),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
