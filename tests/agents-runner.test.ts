@@ -121,6 +121,14 @@ describe('runSubAgent', () => {
     expect(result).toContain('non-JSON output')
   })
 
+  it('parses output wrapped in markdown json fences', async () => {
+    vi.mocked(runAgentLoop).mockImplementation(async (_msg, _profile, session: any) => {
+      session.messages.push({ role: 'assistant', content: '```json\n{"findings": "wrapped"}\n```' })
+    })
+    const result = await runSubAgent(makeParams())
+    expect(JSON.parse(result)).toEqual({ findings: 'wrapped' })
+  })
+
   it('returns error when sub-agent output fails schema validation', async () => {
     vi.mocked(runAgentLoop).mockImplementation(async (_msg, _profile, session: any) => {
       session.messages.push({ role: 'assistant', content: JSON.stringify({ wrong_key: 'oops' }) })

@@ -25,6 +25,10 @@ export async function loadAgentTools(profile: Profile): Promise<ToolDefinition[]
   const tools: ToolDefinition[] = []
 
   for (const entry of profile.agents) {
+    if (executors.has(entry.name)) {
+      throw new Error(`Duplicate agent name "${entry.name}" in profile "${profile.name}"`)
+    }
+
     const subProfilePath = resolvePath(entry.profile)
     const inputValidator = ajv.compile(entry.input)
     const outputValidator = ajv.compile(entry.output)

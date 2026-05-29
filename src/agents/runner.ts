@@ -85,13 +85,15 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
 
       await runAgentLoop(userMessage, subProfile, subSession, subContext, subEvents, subOpenai, context.signal)
 
-      // 5. Output parsing
+      // 5. Output parsing — strip markdown fences if present
       const messages = subSession.messages as Array<{ role: string; content?: string | null }>
       const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
       const raw = lastAssistant?.content ?? ''
+      const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+      const toParse = fenceMatch ? fenceMatch[1] : raw.trim()
       let parsed: unknown
       try {
-        parsed = JSON.parse(raw)
+        parsed = JSON.parse(toParse)
       } catch {
         return `Error: agent "${agentName}" returned non-JSON output: ${raw.slice(0, 200)}`
       }

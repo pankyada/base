@@ -86,4 +86,24 @@ describe('loadAgentTools', () => {
     const researcherTool = tools.find(t => t.name === 'researcher')!
     expect(researcherTool.parameters).toEqual(inputSchema)
   })
+
+  it('throws on duplicate agent names', async () => {
+    const profile = makeProfile({
+      agents: [
+        {
+          name: 'researcher',
+          profile: './profiles/researcher.yaml',
+          input: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+          output: { type: 'object', properties: { findings: { type: 'string' } }, required: ['findings'] },
+        },
+        {
+          name: 'researcher', // duplicate!
+          profile: './profiles/other.yaml',
+          input: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+          output: { type: 'object', properties: { findings: { type: 'string' } }, required: ['findings'] },
+        },
+      ],
+    })
+    await expect(loadAgentTools(profile)).rejects.toThrow('Duplicate agent name "researcher"')
+  })
 })
