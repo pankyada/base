@@ -47,7 +47,7 @@ export class DefaultImprover implements Improver {
     }
 
     for (const m of memories) {
-      if (m.key && m.content) await memory.write('profile', m.key, m.content)
+      if (m.key && m.content) await memory.write('user', m.key, m.content)
     }
 
     if (memories.length > 0) {
