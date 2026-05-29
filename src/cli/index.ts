@@ -1,5 +1,6 @@
 import WebSocket from 'ws'
 import * as readline from 'readline'
+import { userInfo } from 'os'
 import { ClientMessage, ServerMessage } from '../types.js'
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
@@ -14,6 +15,7 @@ const rl = readline.createInterface({
 const send = (msg: ClientMessage) => ws.send(JSON.stringify(msg))
 
 ws.on('open', () => {
+  send({ type: 'hello', user_id: process.env.HARNESS_USER ?? userInfo().username })
   console.log(`Connected to harness (ws://localhost:${PORT})`)
   console.log('Commands: /exit  /cancel  /resume <session-id>')
   prompt()

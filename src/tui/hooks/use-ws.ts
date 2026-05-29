@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import WebSocket from 'ws'
+import { userInfo } from 'os'
 import type { ClientMessage, ServerMessage } from '../../types.js'
 
 const HARNESS_PORT = process.env.HARNESS_PORT ?? '7337'
@@ -34,7 +35,13 @@ export function useWs(onMessage: (msg: ServerMessage) => void): UseWsResult {
     const ws = new WebSocket(`ws://localhost:${HARNESS_PORT}`)
     wsRef.current = ws
 
-    ws.on('open', () => setConnected(true))
+    ws.on('open', () => {
+      ws.send(JSON.stringify({
+        type: 'hello',
+        user_id: process.env.HARNESS_USER ?? userInfo().username,
+      }))
+      setConnected(true)
+    })
 
     ws.on('message', (data) => {
       const msg = parseServerMessage(data.toString())

@@ -18,6 +18,7 @@ export interface TelemetryEvent {
 
 // WebSocket protocol
 export type ClientMessage =
+  | { type: 'hello'; user_id: string }
   | { type: 'message'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }

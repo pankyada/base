@@ -1,7 +1,9 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
-import { homedir } from 'os'
+import { homedir, userInfo } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { sanitizeUserId } from '../session/user-paths.js'
+import { recordUsage } from '../usage/ledger.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
@@ -54,7 +56,8 @@ async function main() {
 
   wss.on('connection', (ws: WebSocket) => {
     openSockets.add(ws)
-    let session = createSession(profile.name)
+    let userId = sanitizeUserId(process.env.HARNESS_USER ?? userInfo().username)
+    let session = createSession(profile.name, userId)
     let memory = new FsMemoryProvider(profile.artifact_dir, session)
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
@@ -78,6 +81,16 @@ async function main() {
         return
       }
 
+      if (msg.type === 'hello') {
+        // Only honour hello before the session has any messages
+        if (session.messages.length === 0) {
+          userId = sanitizeUserId(msg.user_id)
+          session = createSession(profile.name, userId)
+          memory = new FsMemoryProvider(profile.artifact_dir, session)
+        }
+        return
+      }
+
       if (msg.type === 'cancel') {
         abortController.abort()
         abortController = new AbortController()
@@ -91,7 +104,7 @@ async function main() {
       }
 
       if (msg.type === 'resume') {
-        const loaded = loadSession(msg.sessionId)
+        const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
           session = loaded
           memory = new FsMemoryProvider(profile.artifact_dir, session)
@@ -146,6 +159,7 @@ async function main() {
     ws.on('close', () => {
       openSockets.delete(ws)
       saveSession(session)
+      recordUsage(session.user, session.usage)
 
       // Destroy per-connection MCP clients (fire-and-forget)
       void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
