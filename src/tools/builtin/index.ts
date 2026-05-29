@@ -13,7 +13,7 @@ import { memoryDeleteTool } from './memory-delete.js'
 import { statsTool } from './stats.js'
 import { delegateTool } from './delegate.js'
 
-export { clearRegistry } from '../registry.js'
+export { clearRegistry, registerTool } from '../registry.js'
 
 export function registerAll(): void {
   registerTool(readTool)
