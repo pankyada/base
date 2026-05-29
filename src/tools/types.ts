@@ -31,6 +31,8 @@ export interface ToolContext {
   openai: OpenAI
   signal?: AbortSignal
   delegateDepth: number
+  agentTools?: ToolDefinition[]
+  maxDepth?: number
 }
 
 export interface ToolDefinition {

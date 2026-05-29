@@ -29,7 +29,11 @@ export async function runAgentLoop(
 ): Promise<void> {
   session.messages.push({ role: 'user', content: userMessage })
 
-  const allTools = [...getAllTools(), ...getMcpToolDefinitions(profile, context.mcpEntries ?? [])]
+  const allTools = [
+    ...getAllTools(),
+    ...getMcpToolDefinitions(profile, context.mcpEntries ?? []),
+    ...(context.agentTools ?? []),
+  ]
   const openaiTools = toOpenAITools(allTools)
 
   while (true) {
