@@ -105,13 +105,37 @@ Make the harness interoperable with the broader agent ecosystem. Both protocols 
 
 ---
 
+### ❌ 7. Comprehensive product documentation (GitHub Pages)
+
+Public-facing docs site hosted on GitHub Pages covering everything a developer needs to understand, configure, and extend the harness.
+
+**To build:**
+- Static site generator setup (VitePress recommended — zero-config, Markdown-native, fast)
+- GitHub Actions workflow to build and deploy to `gh-pages` branch on every push to `main`
+- Documentation sections:
+  - **Getting started** — install, run, connect a client
+  - **Profiles** — full YAML reference with annotated examples
+  - **Built-in tools** — each tool documented (name, params, ACL default, example)
+  - **Skills** — how skills are discovered, SKILL.md format, example
+  - **Memory** — fs vs graph provider, scopes (session / profile / user), MemoryLinked
+  - **MCP servers** — all 4 transports, ACL config, tool naming convention
+  - **Multi-agent composition** — `agents:` block, typed contracts, DelegateFanout, depth
+  - **Hooks** — pre_tool / post_tool / on_stop, env vars, timeout
+  - **Self-improvement** — reflection loop, skill mining
+  - **Telemetry** — JSONL schema, querying
+  - **CLI & TUI** — startup flags, keyboard shortcuts
+
+**Why:** Discoverability bottleneck. Everything is powerful but undocumented outside CLAUDE.md and code comments.
+
+---
+
 ## Suggested sequencing
 
 ```
-#3 Multi-agent composition  ← next, highest leverage
 #4 REST + typed I/O         ← enables #5 and #6 to share HTTP layer
 #5 Triggered + durable      ← builds on #4's HTTP foundation
 #6 A2A + ACP                ← builds on #4's HTTP layer; do after REST is solid
+#7 Docs site                ← can run in parallel with any of the above
 ```
 
 ---
