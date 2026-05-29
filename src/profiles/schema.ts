@@ -72,6 +72,15 @@ const McpServerSchema = z.preprocess(
 
 export type McpServerConfig = z.infer<typeof McpServerSchema>
 
+const AgentEntrySchema = z.object({
+  name: z.string(),
+  profile: z.string(),
+  input: z.record(z.string(), z.unknown()),
+  output: z.record(z.string(), z.unknown()),
+})
+
+export type AgentEntry = z.infer<typeof AgentEntrySchema>
+
 export const ProfileSchema = z.object({
   name: z.string(),
   model: z.object({
@@ -118,6 +127,8 @@ export const ProfileSchema = z.object({
       provider: z.enum(['fs', 'graph']).default('fs'),
     })
   ).optional(),
+  max_depth: z.number().min(1).default(2),
+  agents: z.array(AgentEntrySchema).default([]),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
