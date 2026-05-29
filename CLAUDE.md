@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Roadmap
+
+Feature backlog and status live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Read it before starting any feature work. The next item to pick up is marked there.
+
 ## Commands
 
 ```bash
