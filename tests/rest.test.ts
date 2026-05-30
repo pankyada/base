@@ -89,6 +89,215 @@ describe('REST /health and /run (no auth)', () => {
   })
 })
 
+describe('REST ACP — GET /agents', () => {
+  const ACP_PROFILE = {
+    name: 'myagent',
+    description: 'A smart ACP agent',
+    interop: { a2a: false, acp: true },
+    contract: undefined,
+  } as any
+
+  it('returns 404 when interop.acp is false', async () => {
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/agents`)
+    expect(res.status).toBe(404)
+    server.close()
+  })
+
+  it('returns 401 without bearer when apiKey is set', async () => {
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: 'secret', runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/agents`)
+    expect(res.status).toBe(401)
+    server.close()
+  })
+
+  it('returns agent list with default profile when acp is enabled', async () => {
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/agents`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.agents).toHaveLength(1)
+    expect(body.agents[0]).toEqual({ agent_id: 'myagent', name: 'myagent', description: 'A smart ACP agent' })
+    server.close()
+  })
+
+  it('returns empty description when profile has no description', async () => {
+    const profile = { name: 'noname', interop: { acp: true }, contract: undefined } as any
+    const handler = createRestHandler({ defaultProfile: profile, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/agents`)
+    const body = await res.json()
+    expect(body.agents[0].description).toBe('')
+    server.close()
+  })
+})
+
+describe('REST ACP — POST /agents/:id/runs', () => {
+  const ACP_PROFILE = {
+    name: 'myagent',
+    description: 'A smart ACP agent',
+    interop: { a2a: false, acp: true },
+    contract: undefined,
+  } as any
+
+  let server: Server, base: string
+  let mockRunStore: RunStore
+
+  beforeAll(async () => {
+    mockRunStore = makeMockRunStore()
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map(), skills: [] })
+    ;({ server, base } = await startServer(handler))
+  })
+  afterAll(() => server.close())
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('returns 404 when agent id does not match profile name', async () => {
+    const res = await fetch(`${base}/agents/wrongname/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ input: [{ type: 'text', text: 'hello' }] }),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 400 for malformed JSON', async () => {
+    const res = await fetch(`${base}/agents/myagent/runs`, { method: 'POST', body: 'not json' })
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 when no text input items', async () => {
+    const res = await fetch(`${base}/agents/myagent/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ input: [{ type: 'image' }] }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 when input array is missing', async () => {
+    const res = await fetch(`${base}/agents/myagent/runs`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('creates a pending run record and returns run id', async () => {
+    const res = await fetch(`${base}/agents/myagent/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ input: [{ type: 'text', text: 'What is the capital of France?' }] }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.run.status).toBe('created')
+    expect(typeof body.run.id).toBe('string')
+    expect(body.run.id).toHaveLength(8)
+    expect(body.run.agent_id).toBe('myagent')
+    expect(mockRunStore.create).toHaveBeenCalledWith(expect.objectContaining({
+      trigger: 'acp',
+      status: 'pending',
+      input: 'What is the capital of France?',
+    }))
+  })
+
+  it('concatenates multiple text input items', async () => {
+    await fetch(`${base}/agents/myagent/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ input: [{ type: 'text', text: 'Hello' }, { type: 'text', text: 'World' }] }),
+    })
+    expect(mockRunStore.create).toHaveBeenCalledWith(expect.objectContaining({ input: 'Hello\nWorld' }))
+  })
+})
+
+describe('REST ACP — GET /runs/:id/messages', () => {
+  const ACP_PROFILE = {
+    name: 'myagent',
+    description: 'A smart ACP agent',
+    interop: { a2a: false, acp: true },
+    contract: undefined,
+  } as any
+
+  const PENDING_RUN = {
+    id: 'run00001',
+    profile: 'myagent',
+    user: 'anonymous',
+    trigger: 'acp' as const,
+    input: 'What is the capital of France?',
+    status: 'pending' as const,
+    started_at: new Date().toISOString(),
+  }
+
+  it('returns 404 when run is not found', async () => {
+    const store = makeMockRunStore()
+    vi.mocked(store.get).mockReturnValue(null)
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/runs/notfound/messages`)
+    expect(res.status).toBe(404)
+    server.close()
+  })
+
+  it('returns 404 when run exists but trigger is not acp', async () => {
+    const store = makeMockRunStore()
+    vi.mocked(store.get).mockReturnValue({ ...PENDING_RUN, trigger: 'rest' as any })
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/runs/run00001/messages`)
+    expect(res.status).toBe(404)
+    server.close()
+  })
+
+  it('returns 409 when run is not pending', async () => {
+    const store = makeMockRunStore()
+    vi.mocked(store.get).mockReturnValue({ ...PENDING_RUN, status: 'completed' as any })
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/runs/run00001/messages`)
+    expect(res.status).toBe(409)
+    server.close()
+  })
+
+  it('streams SSE messages and done event on success', async () => {
+    vi.mocked(runProfileOnce).mockImplementation(async (opts: any) => {
+      opts.events.onToken('Par')
+      opts.events.onToken('is.')
+      return { finalText: 'Paris.', usage: { tokens_in: 2, tokens_out: 3, cost_usd: 0 }, session: { id: 'sx1' } as any }
+    })
+    const store = makeMockRunStore()
+    vi.mocked(store.get).mockReturnValue(PENDING_RUN)
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+
+    const res = await fetch(`${base}/runs/run00001/messages`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/event-stream')
+    const text = await res.text()
+    expect(text).toContain('event: message')
+    expect(text).toContain('"type":"token"')
+    expect(text).toContain('"content":"Par"')
+    expect(text).toContain('event: done')
+    expect(text).toContain('"output":"Paris."')
+    expect(store.update).toHaveBeenCalledWith('run00001', expect.objectContaining({ status: 'running' }))
+    expect(store.update).toHaveBeenCalledWith('run00001', expect.objectContaining({ status: 'completed' }))
+    server.close()
+  })
+
+  it('streams error event and marks run failed when agent throws', async () => {
+    vi.mocked(runProfileOnce).mockRejectedValue(new Error('model timeout'))
+    const store = makeMockRunStore()
+    vi.mocked(store.get).mockReturnValue(PENDING_RUN)
+    const handler = createRestHandler({ defaultProfile: ACP_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+
+    const res = await fetch(`${base}/runs/run00001/messages`)
+    const text = await res.text()
+    expect(text).toContain('event: error')
+    expect(text).toContain('"message":"model timeout"')
+    server.close()
+  })
+})
+
 describe('REST A2A — agent card', () => {
   const A2A_PROFILE = {
     name: 'myagent',
