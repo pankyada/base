@@ -54,7 +54,7 @@ interface RunRequest { profile?: string; user?: string; input?: unknown }
  * Parse + validate the request shared by /run and /stream.
  * Returns either a ready-to-run payload, or an error with a status code.
  */
-export function prepareRun(bodyText: string, deps: RestDeps):
+function prepareRun(bodyText: string, deps: RestDeps):
   | { ok: true; profile: Profile; userId: string; userMessage: string; compiled: ReturnType<typeof compileContract> }
   | { ok: false; status: number; body: unknown } {
   let body: RunRequest
