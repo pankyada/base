@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs'
 import type { ValidateFunction } from 'ajv'
+import { parseJsonContract } from '../shared/json-contract.js'
 import { loadProfile } from '../profiles/loader.js'
 import { createProviderClient } from '../provider/client.js'
 import { createMcpClients, destroyMcpClients } from '../mcp/client.js'
@@ -85,27 +86,17 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
 
       await runAgentLoop(userMessage, subProfile, subSession, subContext, subEvents, subOpenai, context.signal)
 
-      // 5. Output parsing — strip markdown fences if present
+      // 5–6. Output parsing + validation (shared util)
       const messages = subSession.messages as Array<{ role: string; content?: string | null }>
       const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
       const raw = lastAssistant?.content ?? ''
-      const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-      const toParse = fenceMatch ? fenceMatch[1] : raw.trim()
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(toParse)
-      } catch {
-        return `Error: agent "${agentName}" returned non-JSON output: ${raw.slice(0, 200)}`
-      }
-
-      // 6. Output validation
-      if (!outputValidator(parsed)) {
-        const errs = (outputValidator.errors ?? []).map(e => `${e.instancePath} ${e.message}`).join('; ')
-        return `Error: output validation failed for agent "${agentName}": ${errs}`
+      const result = parseJsonContract(raw, outputValidator)
+      if (!result.ok) {
+        return `Error: agent "${agentName}" ${result.error}`
       }
 
       // 7. Return validated output as JSON string
-      return JSON.stringify(parsed)
+      return JSON.stringify(result.value)
     } finally {
       await destroyMcpClients(subMcpEntries).catch(() => {})
     }
