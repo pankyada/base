@@ -16,7 +16,6 @@ export interface TelemetryEvent {
   trigger?: string
 }
 
-// WebSocket protocol
 export type ClientMessage =
   | { type: 'hello'; user_id: string }
   | { type: 'message'; content: string }
@@ -33,3 +32,27 @@ export type ServerMessage =
   | { type: 'session_end'; sessionId: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number }
   | { type: 'error'; message: string }
+  | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[] }
+
+export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
+
+export interface ArtifactWidget {
+  id: string
+  kind: ArtifactKind
+  title: string
+  icon: string
+  meta?: string
+  data?: unknown
+  [key: string]: unknown
+}
+
+export interface UIMessage {
+  id: string;
+  role: 'user' | 'agent' | 'tool-prompt' | 'tool-call';
+  content?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  result?: string;
+  status?: 'running' | 'done' | 'error';
+  pending?: boolean;
+}

@@ -95,6 +95,20 @@ export async function runAgentLoop(
 
     if (toolCalls.length === 0) {
       session.messages.push({ role: 'assistant', content: assistantContent })
+
+      const markerIdx = assistantContent.indexOf('__ARTIFACTS__')
+      if (markerIdx !== -1 && events.onArtifacts) {
+        try {
+          const artifactsJson = assistantContent.slice(markerIdx + '__ARTIFACTS__'.length).trim()
+          const artifacts = JSON.parse(artifactsJson)
+          if (Array.isArray(artifacts)) {
+            events.onArtifacts(session.id, artifacts)
+          }
+        } catch (e) {
+          // Ignore invalid artifacts format
+        }
+      }
+
       events.onSessionEnd(session.id)
       return
     }

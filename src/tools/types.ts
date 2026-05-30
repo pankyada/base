@@ -11,6 +11,7 @@ export interface AgentLoopEvents {
   onToolPrompt(id: string, name: string, input: Record<string, unknown>): Promise<boolean>
   onSessionEnd(sessionId: string): void
   onStats?(tokens_in: number, tokens_out: number, cost_usd: number): void
+  onArtifacts?(sessionId: string, artifacts: any[]): void
 }
 
 export interface Skill {
