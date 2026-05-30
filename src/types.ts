@@ -1,5 +1,14 @@
 export type AclValue = 'allow' | 'prompt' | 'deny'
 
+export type InputRequestKind = 'text' | 'select' | 'multi_select'
+
+export interface TodoItem {
+  id: string
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  priority: 'high' | 'medium' | 'low'
+}
+
 export interface TelemetryEvent {
   ts: string
   session: string
@@ -23,6 +32,7 @@ export type ClientMessage =
   | { type: 'resume'; sessionId: string }
   | { type: 'tool_approve'; id: string }
   | { type: 'tool_deny'; id: string }
+  | { type: 'input_response'; id: string; value: string }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -33,6 +43,8 @@ export type ServerMessage =
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number }
   | { type: 'error'; message: string }
   | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[] }
+  | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[] }
+  | { type: 'todos'; todos: TodoItem[] }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 

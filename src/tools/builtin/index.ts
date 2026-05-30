@@ -13,6 +13,9 @@ import { memoryDeleteTool } from './memory-delete.js'
 import { memoryLinkedTool } from './memory-linked.js'
 import { statsTool } from './stats.js'
 import { delegateTool } from './delegate.js'
+import { askUserTool } from './ask-user.js'
+import { todoWriteTool } from './todo-write.js'
+import { todoReadTool } from './todo-read.js'
 
 export { clearRegistry, registerTool } from '../registry.js'
 
@@ -31,4 +34,7 @@ export function registerAll(): void {
   registerTool(memoryLinkedTool)
   registerTool(statsTool)
   registerTool(delegateTool)
+  registerTool(askUserTool)
+  registerTool(todoWriteTool)
+  registerTool(todoReadTool)
 }
