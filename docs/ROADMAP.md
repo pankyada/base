@@ -129,6 +129,75 @@ Public-facing docs site hosted on GitHub Pages covering everything a developer n
 
 ---
 
+### ❌ 8. Pluggable code execution (WASM / Docker / E2B / Daytona)
+
+Sandboxed code execution routed by profile config. WASM runs in the user's browser — zero server-side risk. Docker and cloud sandboxes handle heavy workloads and headless contexts.
+
+**Architecture:**
+
+New `ExecuteCode` builtin tool + new WebSocket message pair + optional `<HarnessPython />` React component for WASM clients.
+
+```
+executor: wasm    → code_execute WS message → Pyodide in browser → code_result back
+executor: docker  → containerised subprocess on server (read-only data mount)
+executor: e2b     → E2B cloud API call
+executor: daytona → Daytona cloud sandbox API call
+```
+
+**Profile config block:**
+```yaml
+executor:
+  default: wasm             # used when client signals Pyodide support
+  fallback: docker          # headless clients or unsupported WASM
+  e2b_api_key_env: E2B_KEY  # required for executor: e2b
+  docker_image: python:3.12-slim
+  allowed_packages:         # pre-loaded into Pyodide on client boot
+    - pandas
+    - numpy
+    - matplotlib
+```
+
+**To build:**
+- New WS message types: `code_execute { id, code, data }` (server → client) and `code_result { id, output, error }` (client → server)
+- `ExecuteCode` builtin tool — routes to executor backend, awaits result (mirrors `tool_prompt` approval pattern)
+- Executor backends: WASM relay, Docker subprocess, E2B API client, Daytona API client
+- `<HarnessPython />` React component — boots Pyodide, listens for `code_execute`, returns `code_result`
+- Client capability handshake: client signals `wasm_supported: true` in `hello` message so server knows which executor to use
+- `executor:` block in `ProfileSchema`
+
+**Why WASM-first:** Browser sandbox IS the isolation. Agent never executes code on server. User's data goes to their own tab, runs there, result comes back. No container spin-up, no cloud cost, no server-side attack surface for analyst workloads.
+
+---
+
+### ❌ 9. Instance modes (developer / analyst / assistant / production)
+
+First-class `mode:` field on profiles that sets the trust model, default tool ACLs, and documentation for what kind of deployment this is. Operators know what they're running; users know what they're connecting to.
+
+**Modes:**
+
+| Mode | Analogy | Default tools | Multi-tenant safe? |
+|------|---------|--------------|-------------------|
+| `developer` | Claude Code, opencode | Bash, exec, full FS, MCP anything | No — single-tenant, operator owns the machine |
+| `analyst` | Notebook AI | `ExecuteCode` (sandboxed), Memory, Read (data dir only) | Yes — code runs in sandbox, no shell |
+| `assistant` | ChatGPT, Claude.ai | Memory, web search, no exec | Yes — no destructive capability |
+| `production` | Customer-facing agent | Approved tool allowlist only | Yes — zero shell access |
+
+**Profile usage:**
+```yaml
+mode: analyst   # sets defaults; individual tools.builtin overrides still apply
+```
+
+**To build:**
+- `mode` field in `ProfileSchema` (enum: `developer | analyst | assistant | production`)
+- Mode-to-ACL default map: each mode ships with pre-configured `tools.builtin` defaults
+- `developer` mode logs a warning if `per_user_isolation: true` (destructive + multi-tenant = unsafe)
+- Profile validation: `analyst` mode without `executor:` block warns that code execution falls back to Bash (defeats sandboxing)
+- Documentation for each mode's trust model and intended deployment pattern (feeds into #7)
+
+**Why:** Security model needs to be stated, not just implemented. Today a misconfigured profile can silently run Bash in a multi-tenant context. Mode makes the operator's intent explicit and validates it at startup.
+
+---
+
 ## Suggested sequencing
 
 ```
@@ -136,6 +205,8 @@ Public-facing docs site hosted on GitHub Pages covering everything a developer n
 #5 Triggered + durable      ← builds on #4's HTTP foundation
 #6 A2A + ACP                ← builds on #4's HTTP layer; do after REST is solid
 #7 Docs site                ← can run in parallel with any of the above
+#8 Pluggable code execution  ← prerequisite for analyst mode (#9)
+#9 Instance modes            ← builds on #8; do after ExecuteCode exists
 ```
 
 ---
