@@ -33,6 +33,7 @@
     "gray-matter": "^4.0.3",
     "ink": "^7.0.3",
     "js-yaml": "^4.1.1",
+    "node-cron": "^4.2.1",
     "openai": "^6.39.0",
     "react": "^19.2.6",
     "untildify": "^6.0.0",
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.9.1",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^19.2.15",
     "@types/ws": "^8.18.1",
     "ink-testing-library": "^4.0.0",

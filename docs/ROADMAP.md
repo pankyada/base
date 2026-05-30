@@ -74,7 +74,7 @@ Today the only interface is WS streaming chat. This makes the harness usable as 
 
 ---
 
-### ❌ 5. Triggered + durable agents
+### ✅ 5. Triggered + durable agents
 Not all agents are interactive. Some wake on a schedule, run for hours, and resume after crashes.
 
 **To build:**
