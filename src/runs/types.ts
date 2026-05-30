@@ -2,7 +2,7 @@ export interface Run {
   id: string
   profile: string
   user: string
-  trigger: 'rest' | 'stream' | 'cron' | 'webhook'
+  trigger: 'rest' | 'stream' | 'cron' | 'webhook' | 'a2a'
   input: unknown
   status: 'running' | 'completed' | 'failed' | 'cancelled'
   session_id?: string

@@ -4,6 +4,12 @@ import type { AddressInfo } from 'net'
 import { createRestHandler } from '../src/server/rest.js'
 import { runProfileOnce } from '../src/server/run-profile.js'
 import { RunStore } from '../src/runs/store.js'
+import type { Skill } from '../src/tools/types.js'
+
+const FAKE_SKILLS: Skill[] = [
+  { name: 'web-search', description: 'Search the web', content: '', filePath: '' },
+  { name: 'memory', description: 'Store facts', content: '', filePath: '' },
+]
 
 vi.mock('../src/server/run-profile.js', () => ({ runProfileOnce: vi.fn() }))
 vi.mock('../src/profiles/loader.js', () => ({
@@ -42,7 +48,7 @@ function startServer(handler: (req: any, res: any) => void): Promise<{ server: S
 describe('REST /health and /run (no auth)', () => {
   let server: Server, base: string
   beforeAll(async () => {
-    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
     ;({ server, base } = await startServer(handler))
   })
   afterAll(() => server.close())
@@ -83,10 +89,160 @@ describe('REST /health and /run (no auth)', () => {
   })
 })
 
+describe('REST A2A — agent card', () => {
+  const A2A_PROFILE = {
+    name: 'myagent',
+    description: 'A smart agent',
+    interop: { a2a: true },
+    contract: undefined,
+  } as any
+
+  it('GET /.well-known/agent.json returns 404 when interop.a2a is false', async () => {
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/.well-known/agent.json`)
+    expect(res.status).toBe(404)
+    server.close()
+  })
+
+  it('GET /.well-known/agent.json returns 401 without bearer when apiKey is set', async () => {
+    const handler = createRestHandler({ defaultProfile: A2A_PROFILE, apiKey: 'secret', runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/.well-known/agent.json`)
+    expect(res.status).toBe(401)
+    server.close()
+  })
+
+  it('GET /.well-known/agent.json returns agent card when enabled', async () => {
+    const handler = createRestHandler({ defaultProfile: A2A_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: FAKE_SKILLS })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/.well-known/agent.json`)
+    expect(res.status).toBe(200)
+    const card = await res.json()
+    expect(card.name).toBe('myagent')
+    expect(card.description).toBe('A smart agent')
+    expect(card.url).toContain('/a2a')
+    expect(card.capabilities).toEqual({ streaming: false })
+    expect(card.authentication).toEqual({ schemes: ['bearer'] })
+    expect(card.skills).toHaveLength(2)
+    expect(card.skills[0]).toEqual({ id: 'web-search', name: 'web-search', description: 'Search the web' })
+    server.close()
+  })
+
+  it('GET /.well-known/agent.json returns 200 with valid bearer when apiKey is set', async () => {
+    const handler = createRestHandler({ defaultProfile: A2A_PROFILE, apiKey: 'secret', runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/.well-known/agent.json`, { headers: { authorization: 'Bearer secret' } })
+    expect(res.status).toBe(200)
+    server.close()
+  })
+
+  it('GET /.well-known/agent.json returns empty skills array when no skills loaded', async () => {
+    const handler = createRestHandler({ defaultProfile: A2A_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const res = await fetch(`${base}/.well-known/agent.json`)
+    const card = await res.json()
+    expect(card.skills).toEqual([])
+    server.close()
+  })
+})
+
+describe('REST A2A — task endpoint', () => {
+  const A2A_PROFILE = {
+    name: 'myagent',
+    description: 'A smart agent',
+    interop: { a2a: true },
+    contract: undefined,
+  } as any
+
+  let server: Server, base: string
+  let mockRunStore: RunStore
+
+  beforeAll(async () => {
+    mockRunStore = makeMockRunStore()
+    const handler = createRestHandler({ defaultProfile: A2A_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map(), skills: [] })
+    ;({ server, base } = await startServer(handler))
+  })
+  afterAll(() => server.close())
+
+  beforeEach(() => {
+    vi.mocked(runProfileOnce).mockReset().mockResolvedValue({
+      finalText: 'Paris.', usage: { tokens_in: 1, tokens_out: 1, cost_usd: 0 }, session: { id: 'sa1' } as any,
+    })
+  })
+
+  it('POST /a2a returns 404 when interop.a2a is false', async () => {
+    const handler2 = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server: s2, base: b2 } = await startServer(handler2)
+    const res = await fetch(`${b2}/a2a`, { method: 'POST', body: JSON.stringify({ id: 't1', message: { parts: [{ type: 'text', text: 'hi' }] } }) })
+    expect(res.status).toBe(404)
+    s2.close()
+  })
+
+  it('POST /a2a returns 400 for malformed JSON', async () => {
+    const res = await fetch(`${base}/a2a`, { method: 'POST', body: 'not json' })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /a2a returns 400 when no text parts in message', async () => {
+    const res = await fetch(`${base}/a2a`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 't2', message: { parts: [{ type: 'image' }] } }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /a2a returns 200 A2A response on success', async () => {
+    const res = await fetch(`${base}/a2a`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 'task-001', message: { parts: [{ type: 'text', text: 'What is the capital of France?' }] } }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.id).toBe('task-001')
+    expect(body.status.state).toBe('completed')
+    expect(body.artifacts).toHaveLength(1)
+    expect(body.artifacts[0].parts[0]).toEqual({ type: 'text', text: 'Paris.' })
+    expect(mockRunStore.create).toHaveBeenCalledWith(expect.objectContaining({ trigger: 'a2a', status: 'running' }))
+    expect(mockRunStore.update).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'completed' }))
+  })
+
+  it('POST /a2a returns 200 with state:failed when agent throws', async () => {
+    vi.mocked(runProfileOnce).mockRejectedValue(new Error('model timeout'))
+    const res = await fetch(`${base}/a2a`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 'task-002', message: { parts: [{ type: 'text', text: 'hello' }] } }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.id).toBe('task-002')
+    expect(body.status.state).toBe('failed')
+    expect(body.status.error.message).toBe('model timeout')
+  })
+
+  it('POST /a2a concatenates multiple text parts', async () => {
+    await fetch(`${base}/a2a`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 't3', message: { parts: [{ type: 'text', text: 'Hello' }, { type: 'text', text: 'World' }] } }),
+    })
+    expect(runProfileOnce).toHaveBeenCalledWith(expect.objectContaining({ userMessage: 'Hello\nWorld' }))
+  })
+
+  it('POST /a2a generates a task id when none provided', async () => {
+    const res = await fetch(`${base}/a2a`, {
+      method: 'POST',
+      body: JSON.stringify({ message: { parts: [{ type: 'text', text: 'hi' }] } }),
+    })
+    const body = await res.json()
+    expect(typeof body.id).toBe('string')
+    expect(body.id.length).toBeGreaterThan(0)
+  })
+})
+
 describe('REST /run typed contract', () => {
   let server: Server, base: string
   beforeAll(async () => {
-    const handler = createRestHandler({ defaultProfile: CONTRACT_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: CONTRACT_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
     ;({ server, base } = await startServer(handler))
   })
   afterAll(() => server.close())
@@ -117,7 +273,7 @@ describe('REST /run typed contract', () => {
 describe('REST auth', () => {
   let server: Server, base: string
   beforeAll(async () => {
-    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: 'secret', runStore: makeMockRunStore(), abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: 'secret', runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
     ;({ server, base } = await startServer(handler))
   })
   afterAll(() => server.close())
@@ -145,7 +301,7 @@ describe('REST auth', () => {
 describe('REST /stream (SSE)', () => {
   let server: Server, base: string
   beforeAll(async () => {
-    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
     ;({ server, base } = await startServer(handler))
   })
   afterAll(() => server.close())
@@ -180,7 +336,7 @@ describe('REST /runs lifecycle API', () => {
 
   beforeAll(async () => {
     mockRunStore = makeMockRunStore()
-    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map(), skills: [] })
     ;({ server, base } = await startServer(handler))
   })
   afterAll(() => server.close())
@@ -232,7 +388,7 @@ describe('REST /runs lifecycle API', () => {
     abortRegistry.set('run00001', abort)
     vi.mocked(mockRunStore.get).mockReturnValue({ id: 'run00001', status: 'running' } as any)
 
-    const handler2 = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry })
+    const handler2 = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry, skills: [] })
     const { server: s2, base: b2 } = await startServer(handler2)
     const res = await fetch(`${b2}/runs/run00001`, { method: 'DELETE' })
     expect(res.status).toBe(200)
@@ -244,7 +400,7 @@ describe('REST /runs lifecycle API', () => {
 
   it('POST /run creates a run record', async () => {
     const store = makeMockRunStore()
-    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: store, abortRegistry: new Map(), skills: [] })
     const { server: s2, base: b2 } = await startServer(handler)
     vi.mocked(runProfileOnce).mockResolvedValue({
       finalText: 'hi', usage: { tokens_in: 1, tokens_out: 1, cost_usd: 0 }, session: { id: 'sx' } as any,
@@ -268,7 +424,7 @@ describe('REST /webhooks/:profile', () => {
 
   beforeAll(async () => {
     mockRunStore = makeMockRunStore()
-    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map() })
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map(), skills: [] })
     ;({ server, base } = await startServer(handler))
   })
   afterAll(() => server.close())
@@ -306,7 +462,7 @@ describe('REST /webhooks/:profile', () => {
 
   it('returns 200 with run_id when webhook is enabled', async () => {
     // Rely on defaultProfile fallback logic to resolve
-    const handler3 = createRestHandler({ defaultProfile: WEBHOOK_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map() })
+    const handler3 = createRestHandler({ defaultProfile: WEBHOOK_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map(), skills: [] })
     const { server: s3, base: b3 } = await startServer(handler3)
 
     const res = await fetch(`${b3}/webhooks/webhookprofile`, { method: 'POST', body: JSON.stringify({ input: 'task' }) })
@@ -319,7 +475,7 @@ describe('REST /webhooks/:profile', () => {
   })
 
   it('returns 400 when input is missing', async () => {
-    const handler3 = createRestHandler({ defaultProfile: WEBHOOK_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map() })
+    const handler3 = createRestHandler({ defaultProfile: WEBHOOK_PROFILE, apiKey: undefined, runStore: mockRunStore, abortRegistry: new Map(), skills: [] })
     const { server: s3, base: b3 } = await startServer(handler3)
 
     const res = await fetch(`${b3}/webhooks/webhookprofile`, { method: 'POST', body: JSON.stringify({}) })

@@ -90,6 +90,7 @@ Not all agents are interactive. Some wake on a schedule, run for hours, and resu
 ### ❌ 6. A2A + ACP compatibility (optional / protocol layer)
 Make the harness interoperable with the broader agent ecosystem. Both protocols are optional — no breaking changes to existing WS interface.
 
+### ✅ 6a. A2A server-side compatibility
 **A2A (Google Agent-to-Agent protocol):**
 - Expose `GET /.well-known/agent.json` Agent Card (name, description, capabilities, skills)
 - Implement A2A task endpoint: `POST /a2a` receives tasks from other A2A agents

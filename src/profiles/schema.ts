@@ -138,6 +138,10 @@ export const ProfileSchema = z.object({
     webhook: z.boolean().default(false),
     cron_input: z.record(z.string(), z.unknown()).optional(),
   }).optional(),
+  description: z.string().optional(),
+  interop: z.object({
+    a2a: z.boolean().default(false),
+  }).optional(),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
