@@ -6,6 +6,8 @@ export interface SessionToolCall {
   ts: string
 }
 
+import type { TodoItem } from '../types.js'
+
 export interface Session {
   id: string
   user: string
@@ -15,4 +17,5 @@ export interface Session {
   tool_calls: SessionToolCall[]
   usage: { input: number; output: number; cost_usd: number }
   session_memory: Record<string, string>
+  todos: TodoItem[]
 }

@@ -2,6 +2,7 @@ import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
 import type { McpEntry } from '../mcp/client.js'
+import type { TodoItem, InputRequestKind } from '../types.js'
 import type OpenAI from 'openai'
 
 export interface AgentLoopEvents {
@@ -12,6 +13,8 @@ export interface AgentLoopEvents {
   onSessionEnd(sessionId: string): void
   onStats?(tokens_in: number, tokens_out: number, cost_usd: number): void
   onArtifacts?(sessionId: string, artifacts: any[]): void
+  onInputRequest?(id: string, prompt: string, kind: InputRequestKind, options?: string[]): Promise<string>
+  onTodosUpdate?(todos: TodoItem[]): void
 }
 
 export interface Skill {

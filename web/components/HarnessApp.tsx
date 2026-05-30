@@ -12,7 +12,9 @@ import { Message } from './Message.js'
 import { AgentTurn } from './AgentTurn.js'
 import { Composer } from './Composer.js'
 import { useHarnessWS } from '../hooks/useHarnessWS.js'
-import { UIMessage, WorkspaceTab, Artifact } from '../lib/types.js'
+import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind } from '../lib/types.js'
+import { InputRequestModal } from './InputRequestModal.js'
+import { TodoPanel } from './TodoPanel.js'
 
 interface State {
   messages: UIMessage[]
@@ -28,6 +30,10 @@ interface State {
   theme: string
   palette: string
   density: string
+  todos: TodoItem[]
+  pendingInputRequest: {
+    id: string; prompt: string; kind: InputRequestKind; options?: string[]
+  } | null
 }
 
 type Action =
@@ -41,6 +47,9 @@ type Action =
   | { type: 'CLEAR' }
   | { type: 'RESOLVE_APPROVAL' }
   | { type: 'SET_THEME'; theme: string; palette: string; density: string }
+  | { type: 'INPUT_REQUEST'; payload: { id: string; prompt: string; kind: InputRequestKind; options?: string[] } }
+  | { type: 'RESOLVE_INPUT_REQUEST' }
+  | { type: 'SET_TODOS'; payload: TodoItem[] }
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -59,6 +68,9 @@ function reducer(state: State, action: Action): State {
     case 'CLEAR': return { ...state, messages: [], tabs: [], busy: false, pendingApproval: null }
     case 'RESOLVE_APPROVAL': return { ...state, pendingApproval: null }
     case 'SET_THEME': return { ...state, theme: action.theme, palette: action.palette, density: action.density }
+    case 'INPUT_REQUEST': return { ...state, pendingInputRequest: action.payload }
+    case 'RESOLVE_INPUT_REQUEST': return { ...state, pendingInputRequest: null }
+    case 'SET_TODOS': return { ...state, todos: action.payload }
     case 'SERVER_MSG': {
       const msg = action.payload
       if (msg.type === 'token') {
@@ -81,6 +93,12 @@ function reducer(state: State, action: Action): State {
       if (msg.type === 'tool_prompt') {
         return { ...state, pendingApproval: { id: msg.id, name: msg.name, input: msg.input } }
       }
+      if (msg.type === 'input_request') {
+        return { ...state, pendingInputRequest: { id: msg.id, prompt: msg.prompt, kind: msg.kind, options: msg.options } }
+      }
+      if (msg.type === 'todos') {
+        return { ...state, todos: msg.todos }
+      }
       if (msg.type === 'stats') {
         return { ...state, tokens: { in: msg.tokens_in, out: msg.tokens_out } }
       }
@@ -101,7 +119,8 @@ export function HarnessApp() {
   const [state, dispatch] = useReducer(reducer, {
     messages: [], tabs: [], activeTab: 0, input: '', busy: false,
     focusPane: 'conv', paletteOpen: false, tokens: { in: 0, out: 0 },
-    pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular'
+    pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular',
+    todos: [], pendingInputRequest: null
   })
 
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
@@ -148,6 +167,11 @@ export function HarnessApp() {
   const handleDeny = () => {
     if (state.pendingApproval) send({ type: 'tool_deny', id: state.pendingApproval.id })
     dispatch({ type: 'RESOLVE_APPROVAL' })
+  }
+
+  const handleInputResponse = (id: string, value: string) => {
+    send({ type: 'input_response', id, value })
+    dispatch({ type: 'RESOLVE_INPUT_REQUEST' })
   }
 
   // Group messages into turns for multi-turn rendering
@@ -200,6 +224,7 @@ export function HarnessApp() {
               ))}
             </div>
           )}
+          <TodoPanel todos={state.todos} />
           <Composer
             value={state.input}
             onChange={v => dispatch({ type: 'INPUT', payload: v })}
@@ -229,6 +254,15 @@ export function HarnessApp() {
       )}
       {state.pendingApproval && (
         <ApprovalModal toolName={state.pendingApproval.name} toolInput={state.pendingApproval.input} onApprove={handleApprove} onDeny={handleDeny} />
+      )}
+      {state.pendingInputRequest && (
+        <InputRequestModal
+          id={state.pendingInputRequest.id}
+          prompt={state.pendingInputRequest.prompt}
+          kind={state.pendingInputRequest.kind}
+          options={state.pendingInputRequest.options}
+          onSubmit={handleInputResponse}
+        />
       )}
       <Tweaks
         open={state.tweaksOpen}

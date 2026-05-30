@@ -15,7 +15,9 @@ import { Tab } from './components/TabBar.js'
 import { C } from './theme.js'
 import { useTermSize } from './hooks/useTermSize.js'
 import { convWidth, workWidth } from './layout.js'
-import type { ClientMessage, ServerMessage, UIMessage, ArtifactWidget } from '../types.js'
+import type { ClientMessage, ServerMessage, UIMessage, ArtifactWidget, TodoItem, InputRequestKind } from '../types.js'
+import { InputRequestModal } from './components/InputRequestModal.js'
+import { TodoPanel } from './components/TodoPanel.js'
 
 const PROFILE = process.env.HARNESS_PROFILE ?? 'coding'
 const SESSION_ID = Math.random().toString(36).slice(2, 10)
@@ -38,6 +40,14 @@ export function App() {
   const [tokens, setTokens] = useState({ in: 0, out: 0 })
   const [theme, setTheme] = useState('dark')
   const [pendingApproval, setPendingApproval] = useState<{ id: string; name: string; input: unknown } | null>(null)
+
+  const [todos, setTodos] = useState<TodoItem[]>([])
+  const [pendingInputRequest, setPendingInputRequest] = useState<{
+    id: string; prompt: string; kind: InputRequestKind; options?: string[]
+    resolve: (v: string) => void
+  } | null>(null)
+
+  const pendingInputResolveRef = useRef<((v: string) => void) | null>(null)
 
   const handleMessage = useCallback((msg: ServerMessage) => {
     if (msg.type === 'token') {
@@ -72,6 +82,21 @@ export function App() {
     if (msg.type === 'tool_prompt') {
       setPendingApproval({ id: msg.id, name: msg.name, input: msg.input })
     }
+    if (msg.type === 'input_request') {
+      pendingInputResolveRef.current = null
+      setPendingInputRequest({
+        id: msg.id,
+        prompt: msg.prompt,
+        kind: msg.kind,
+        options: msg.options,
+        resolve: (v: string) => {
+          // Placeholder, will be reassigned inside send effect or handle Input response
+        }
+      })
+    }
+    if (msg.type === 'todos') {
+      setTodos(msg.todos)
+    }
     if (msg.type === 'stats') setTokens({ in: msg.tokens_in, out: msg.tokens_out })
     if (msg.type === 'session_end' || msg.type === 'error') setBusy(false)
     if (msg.type === 'artifacts') {
@@ -81,6 +106,23 @@ export function App() {
   }, [])
 
   const { connected, send } = useWs(handleMessage)
+
+  // Fix up the resolve callback now that we have `send`
+  useEffect(() => {
+    if (pendingInputRequest && !pendingInputResolveRef.current) {
+      pendingInputResolveRef.current = (v: string) => {
+        send({ type: 'input_response', id: pendingInputRequest.id, value: v })
+      }
+      setPendingInputRequest(prev => prev ? { ...prev, resolve: pendingInputResolveRef.current! } : null)
+    }
+  }, [pendingInputRequest, send])
+
+  const handleInputResponse = (id: string, value: string) => {
+    if (pendingInputRequest && pendingInputRequest.id === id) {
+      pendingInputRequest.resolve(value)
+      setPendingInputRequest(null)
+    }
+  }
 
   const handleSend = (value: string) => {
     if (!value.trim()) return
@@ -178,6 +220,7 @@ export function App() {
                 ))}
               </Box>
             )}
+            {todos.length > 0 && <TodoPanel todos={todos} />}
             <Composer
               value={input}
               onChange={setInput}
@@ -226,6 +269,16 @@ export function App() {
             </Box>
           </Box>
         </Box>
+      )}
+
+      {pendingInputRequest && (
+        <InputRequestModal
+          id={pendingInputRequest.id}
+          prompt={pendingInputRequest.prompt}
+          kind={pendingInputRequest.kind}
+          options={pendingInputRequest.options}
+          onSubmit={handleInputResponse}
+        />
       )}
     </Box>
   )

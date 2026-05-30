@@ -123,6 +123,7 @@ async function main() {
     let usageAtConnectionStart = { ...session.usage }
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
+    const pendingInputRequests = new Map<string, (value: string) => void>()
     let mcpEntries: McpEntry[] = []
 
     // Init MCP clients async — handlers below work with [] until ready
@@ -168,6 +169,12 @@ async function main() {
         return
       }
 
+      if (msg.type === 'input_response') {
+        const cb = pendingInputRequests.get(msg.id)
+        if (cb) { pendingInputRequests.delete(msg.id); cb(msg.value) }
+        return
+      }
+
       if (msg.type === 'resume') {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
@@ -210,6 +217,13 @@ async function main() {
           },
           onArtifacts: (sessionId, artifacts) => {
             send({ type: 'artifacts', sessionId, artifacts })
+          },
+          onInputRequest: (id, prompt, kind, options) => new Promise<string>(res => {
+            pendingInputRequests.set(id, res)
+            send({ type: 'input_request', id, prompt, kind, options })
+          }),
+          onTodosUpdate: (todos) => {
+            send({ type: 'todos', todos })
           },
         }
         const agentTools = await loadAgentTools(profile)

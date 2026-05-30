@@ -14,6 +14,7 @@ export function createSession(profileName: string, user: string): Session {
     tool_calls: [],
     usage: { input: 0, output: 0, cost_usd: 0 },
     session_memory: {},
+    todos: [],
   }
 }
 
