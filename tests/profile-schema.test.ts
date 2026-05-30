@@ -110,3 +110,21 @@ describe('ProfileSchema – description + interop', () => {
     expect(p.interop?.a2a).toBe(false)
   })
 })
+
+describe('ProfileSchema – interop.acp', () => {
+  it('interop.acp defaults to false when interop block is present without acp', () => {
+    const p = ProfileSchema.parse({ ...BASE, interop: { a2a: true } })
+    expect(p.interop?.acp).toBe(false)
+  })
+
+  it('parses interop.acp: true', () => {
+    const p = ProfileSchema.parse({ ...BASE, interop: { acp: true } })
+    expect(p.interop?.acp).toBe(true)
+  })
+
+  it('interop.a2a and interop.acp can both be true', () => {
+    const p = ProfileSchema.parse({ ...BASE, interop: { a2a: true, acp: true } })
+    expect(p.interop?.a2a).toBe(true)
+    expect(p.interop?.acp).toBe(true)
+  })
+})

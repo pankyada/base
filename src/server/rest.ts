@@ -287,6 +287,103 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
   }
 }
 
+async function handleAcpCreateRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps, agentId: string): Promise<void> {
+  if (!deps.defaultProfile.interop?.acp) return sendJson(res, 404, { error: 'ACP not enabled' })
+  if (agentId !== deps.defaultProfile.name) return sendJson(res, 404, { error: `agent '${agentId}' not found` })
+
+  let body: { input?: Array<{ type: string; text?: string }> }
+  try {
+    body = JSON.parse(await readBody(req))
+  } catch {
+    return sendJson(res, 400, { error: 'malformed JSON body' })
+  }
+
+  const input = body.input ?? []
+  const userMessage = input.filter(i => i.type === 'text').map(i => i.text ?? '').join('\n')
+  if (!userMessage) return sendJson(res, 400, { error: 'no text input items' })
+
+  const runId = makeRunId()
+  const userId = sanitizeUserId(process.env.HARNESS_USER ?? 'anonymous')
+  deps.runStore.create({
+    id: runId,
+    profile: deps.defaultProfile.name,
+    user: userId,
+    trigger: 'acp',
+    input: userMessage,
+    status: 'pending',
+    started_at: new Date().toISOString(),
+  })
+
+  sendJson(res, 200, { run: { id: runId, agent_id: deps.defaultProfile.name, status: 'created' } })
+}
+
+async function handleAcpMessages(req: IncomingMessage, res: ServerResponse, deps: RestDeps, runId: string): Promise<void> {
+  if (!deps.defaultProfile.interop?.acp) return sendJson(res, 404, { error: 'ACP not enabled' })
+
+  const run = deps.runStore.get(runId)
+  if (!run || run.trigger !== 'acp') return sendJson(res, 404, { error: 'run not found' })
+  if (run.status !== 'pending') return sendJson(res, 409, { error: `run is already ${run.status}` })
+
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+  const sse = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+
+  const abort = new AbortController()
+  req.on('close', () => abort.abort())
+  deps.abortRegistry.set(runId, abort)
+  deps.runStore.update(runId, { status: 'running' })
+
+  const events: AgentLoopEvents = {
+    onToken: t => sse('message', { type: 'token', content: t }),
+    onToolStart: (n, i) => sse('message', { type: 'tool_start', name: n, input: i }),
+    onToolEnd: (n, r) => sse('message', { type: 'tool_end', name: n, result: r }),
+    onToolPrompt: async () => false,
+    onSessionEnd: () => {},
+    onStats: () => {},
+  }
+
+  try {
+    const result = await runProfileOnce({
+      profile: deps.defaultProfile,
+      userId: run.user,
+      userMessage: run.input as string,
+      events,
+      signal: abort.signal,
+    })
+    deps.abortRegistry.delete(runId)
+    deps.runStore.update(runId, {
+      status: 'completed',
+      session_id: result.session.id,
+      finished_at: new Date().toISOString(),
+    })
+    sse('done', { type: 'done', output: result.finalText, session_id: result.session.id, run_id: runId })
+  } catch (e: any) {
+    deps.abortRegistry.delete(runId)
+    const existing = deps.runStore.get(runId)
+    if (existing?.status === 'running') {
+      const isCancelled = (e as Error).name === 'AbortError'
+      deps.runStore.update(runId, {
+        status: isCancelled ? 'cancelled' : 'failed',
+        error: isCancelled ? undefined : e.message,
+        finished_at: new Date().toISOString(),
+      })
+    }
+    if ((e as Error).name !== 'AbortError') sse('error', { message: e.message })
+  } finally {
+    res.end()
+  }
+}
+
+function handleAcpAgents(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
+  if (!deps.defaultProfile.interop?.acp) return sendJson(res, 404, { error: 'ACP not enabled' })
+  sendJson(res, 200, {
+    agents: [{
+      agent_id: deps.defaultProfile.name,
+      name: deps.defaultProfile.name,
+      description: deps.defaultProfile.description ?? '',
+    }],
+  })
+}
+
 function handleAgentCard(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
   if (!deps.defaultProfile.interop?.a2a) return sendJson(res, 404, { error: 'A2A not enabled' })
   const host = req.headers.host ?? 'localhost'
@@ -375,6 +472,12 @@ export function createRestHandler(deps: RestDeps) {
       return sendJson(res, 401, { error: 'unauthorized' })
     }
 
+    if (method === 'GET' && url === '/agents') return handleAcpAgents(req, res, deps)
+
+    if (method === 'POST' && url.startsWith('/agents/') && url.endsWith('/runs')) {
+      return handleAcpCreateRun(req, res, deps, url.slice('/agents/'.length, -'/runs'.length))
+    }
+
     if (method === 'GET' && url === '/.well-known/agent.json') return handleAgentCard(req, res, deps)
 
     if (method === 'POST' && url === '/a2a') return handleA2ATask(req, res, deps)
@@ -383,6 +486,9 @@ export function createRestHandler(deps: RestDeps) {
     if (method === 'POST' && url === '/stream') return handleStream(req, res, deps)
 
     if (method === 'GET' && url === '/runs') return handleListRuns(req, res, deps)
+    if (method === 'GET' && url.startsWith('/runs/') && url.endsWith('/messages')) {
+      return handleAcpMessages(req, res, deps, url.slice('/runs/'.length, -'/messages'.length))
+    }
     if (method === 'GET' && url.startsWith('/runs/') && !url.includes('/webhooks')) {
       return handleGetRun(req, res, deps, url.slice('/runs/'.length))
     }

@@ -141,6 +141,7 @@ export const ProfileSchema = z.object({
   description: z.string().optional(),
   interop: z.object({
     a2a: z.boolean().default(false),
+    acp: z.boolean().default(false),
   }).optional(),
 })
 
