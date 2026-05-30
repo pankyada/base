@@ -110,7 +110,44 @@ Make the harness interoperable with the broader agent ecosystem. Both protocols 
 
 ---
 
-### ❌ 7. Comprehensive product documentation (GitHub Pages)
+### ❌ 7. TUI uplift — richer power and animation
+
+Evolve the Ink TUI from functional to genuinely impressive: more visual density, smoother animation, and new power-user capabilities that make the terminal experience feel native and fast.
+
+**To build:**
+- **Live diff view** — when the agent writes/edits a file, render a side-by-side or inline diff panel in the TUI (syntax-highlighted, scrollable)
+- **Tool timeline** — replace the flat tool log with a collapsible timeline: each tool call shows duration bar, status icon (✓ / ✗ / ⏳), and output preview on expand
+- **Animated token stream** — smooth character-by-character typewriter rendering with configurable speed; cursor blink synced to streaming state
+- **Memory panel** — live tab showing active memory keys (session + profile scope) updated in real time as agent writes
+- **Session breadcrumb** — persistent header bar: profile name, user, session ID, elapsed time, live cost ticker
+- **Keyboard power-ups** — `/` to open command palette (switch profile, clear session, export transcript); `Ctrl+T` to toggle tool timeline; `Ctrl+M` to toggle memory panel
+- **Spinners and transitions** — replace static "thinking…" with per-tool spinners (braille unicode); smooth panel slide-in/out using Ink's `useTransition`-equivalent
+
+**Why:** The TUI is the primary dev interface. A richer experience reduces cognitive load and makes debugging agent behavior faster.
+
+---
+
+### ❌ 8. Web client (Next.js)
+
+A first-class browser client for the harness — connects to the WS server, renders the agent conversation, and exposes the full tool/memory/session surface in a polished UI.
+
+**Stack:** Next.js (App Router) · TypeScript · Tailwind CSS
+
+**To build:**
+- **Chat interface** — streaming message view; token-by-token rendering via WS `token` events; tool calls shown inline as collapsible cards
+- **Tool approval UI** — when the agent hits a `prompt`-ACL tool, render an approval modal with the tool name, input preview, and Allow / Deny buttons; resolves the `tool_approve` / `tool_deny` WS messages
+- **Profile selector** — sidebar dropdown to choose active profile; sends `hello` message on switch
+- **Memory explorer** — read/write/delete memory entries from the browser; live-synced via `MemoryRead` / `MemoryWrite` tool calls
+- **Session history** — list past sessions (from `GET /runs`); click to load transcript
+- **Multi-user auth** — user identity set in profile settings; passed as `user_id` in `hello` message
+- **Connection status** — banner showing WS connection state; auto-reconnect with exponential backoff
+- **Responsive layout** — full-screen on desktop; mobile-friendly single-column on small screens
+
+**Why:** Opens the harness to non-terminal users and makes it deployable as a product surface (internal tool, customer-facing assistant, etc.).
+
+---
+
+### ❌ 9. Comprehensive product documentation (GitHub Pages)
 
 Public-facing docs site hosted on GitHub Pages covering everything a developer needs to understand, configure, and extend the harness.
 
@@ -134,7 +171,7 @@ Public-facing docs site hosted on GitHub Pages covering everything a developer n
 
 ---
 
-### ❌ 8. Pluggable code execution (WASM / Docker / E2B / Daytona)
+### ❌ 10. Pluggable code execution (WASM / Docker / E2B / Daytona)
 
 Sandboxed code execution routed by profile config. WASM runs in the user's browser — zero server-side risk. Docker and cloud sandboxes handle heavy workloads and headless contexts.
 
@@ -174,7 +211,7 @@ executor:
 
 ---
 
-### ❌ 9. Instance modes (developer / analyst / assistant / production)
+### ❌ 11. Instance modes (developer / analyst / assistant / production)
 
 First-class `mode:` field on profiles that sets the trust model, default tool ACLs, and documentation for what kind of deployment this is. Operators know what they're running; users know what they're connecting to.
 
@@ -197,7 +234,7 @@ mode: analyst   # sets defaults; individual tools.builtin overrides still apply
 - Mode-to-ACL default map: each mode ships with pre-configured `tools.builtin` defaults
 - `developer` mode logs a warning if `per_user_isolation: true` (destructive + multi-tenant = unsafe)
 - Profile validation: `analyst` mode without `executor:` block warns that code execution falls back to Bash (defeats sandboxing)
-- Documentation for each mode's trust model and intended deployment pattern (feeds into #7)
+- Documentation for each mode's trust model and intended deployment pattern (feeds into #9)
 
 **Why:** Security model needs to be stated, not just implemented. Today a misconfigured profile can silently run Bash in a multi-tenant context. Mode makes the operator's intent explicit and validates it at startup.
 
@@ -209,9 +246,11 @@ mode: analyst   # sets defaults; individual tools.builtin overrides still apply
 #4 REST + typed I/O         ← enables #5 and #6 to share HTTP layer
 #5 Triggered + durable      ← builds on #4's HTTP foundation
 #6 A2A + ACP                ← builds on #4's HTTP layer; do after REST is solid
-#7 Docs site                ← can run in parallel with any of the above
-#8 Pluggable code execution  ← prerequisite for analyst mode (#9)
-#9 Instance modes            ← builds on #8; do after ExecuteCode exists
+#7 TUI uplift               ← can run in parallel with any of the above
+#8 Web client (Next.js)     ← builds on #4 REST + WS; can run in parallel
+#9 Docs site                ← can run in parallel; best after #7 + #8 exist to document
+#10 Pluggable code execution ← prerequisite for analyst mode (#11)
+#11 Instance modes           ← builds on #10; do after ExecuteCode exists
 ```
 
 ---

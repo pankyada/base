@@ -188,7 +188,7 @@ describe('REST ACP — POST /agents/:id/runs', () => {
       method: 'POST',
       body: JSON.stringify({ input: [{ type: 'text', text: 'What is the capital of France?' }] }),
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(201)
     const body = await res.json()
     expect(body.run.status).toBe('created')
     expect(typeof body.run.id).toBe('string')

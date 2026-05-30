@@ -14,6 +14,7 @@ import type { Run } from '../runs/types.js'
 import type { Skill } from '../tools/types.js'
 
 const VERSION = '0.1.0'
+const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
 
 export interface RestDeps {
   defaultProfile: Profile
@@ -33,11 +34,11 @@ interface AgentCard {
   authentication: { schemes: string[] }
 }
 
-function buildAgentCard(profile: Profile, skills: Skill[], host: string): AgentCard {
+function buildAgentCard(profile: Profile, skills: Skill[], host: string, proto: string): AgentCard {
   return {
     name: profile.name,
     description: profile.description ?? '',
-    url: `https://${host}/a2a`,
+    url: `${proto}://${host}/a2a`,
     version: VERSION,
     capabilities: { streaming: false },
     skills: skills.map(s => ({ id: s.name, name: s.name, description: s.description })),
@@ -56,7 +57,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
-  for await (const c of req) chunks.push(c as Buffer)
+  let total = 0
+  for await (const c of req) {
+    const chunk = c as Buffer
+    total += chunk.length
+    if (total > MAX_BODY_BYTES) {
+      req.destroy()
+      const err = new Error('request body too large') as any
+      err.statusCode = 413
+      throw err
+    }
+    chunks.push(chunk)
+  }
   return Buffer.concat(chunks).toString('utf-8')
 }
 
@@ -227,7 +239,7 @@ function handleGetRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps,
 function handleDeleteRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps, id: string): void {
   const run = deps.runStore.get(id)
   if (!run) return sendJson(res, 404, { error: 'run not found' })
-  if (run.status !== 'running') return sendJson(res, 409, { error: `run is already ${run.status}` })
+  if (run.status !== 'running' && run.status !== 'pending') return sendJson(res, 409, { error: `run is already ${run.status}` })
   deps.abortRegistry.get(id)?.abort()
   deps.runStore.update(id, { status: 'cancelled', finished_at: new Date().toISOString() })
   sendJson(res, 200, { ok: true })
@@ -314,15 +326,24 @@ async function handleAcpCreateRun(req: IncomingMessage, res: ServerResponse, dep
     started_at: new Date().toISOString(),
   })
 
-  sendJson(res, 200, { run: { id: runId, agent_id: deps.defaultProfile.name, status: 'created' } })
+  sendJson(res, 201, { run: { id: runId, agent_id: deps.defaultProfile.name, status: 'created' } })
 }
 
-async function handleAcpMessages(req: IncomingMessage, res: ServerResponse, deps: RestDeps, runId: string): Promise<void> {
+async function handleAcpMessages(
+  req: IncomingMessage, res: ServerResponse, deps: RestDeps,
+  runId: string, acpInFlight: Set<string>,
+): Promise<void> {
   if (!deps.defaultProfile.interop?.acp) return sendJson(res, 404, { error: 'ACP not enabled' })
 
+  if (acpInFlight.has(runId)) return sendJson(res, 409, { error: 'run is already being claimed' })
+  acpInFlight.add(runId)
+
   const run = deps.runStore.get(runId)
-  if (!run || run.trigger !== 'acp') return sendJson(res, 404, { error: 'run not found' })
-  if (run.status !== 'pending') return sendJson(res, 409, { error: `run is already ${run.status}` })
+  if (!run || run.trigger !== 'acp') { acpInFlight.delete(runId); return sendJson(res, 404, { error: 'run not found' }) }
+  if (run.status !== 'pending') { acpInFlight.delete(runId); return sendJson(res, 409, { error: `run is already ${run.status}` }) }
+
+  deps.runStore.update(runId, { status: 'running' })
+  acpInFlight.delete(runId)
 
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
   const sse = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -330,7 +351,6 @@ async function handleAcpMessages(req: IncomingMessage, res: ServerResponse, deps
   const abort = new AbortController()
   req.on('close', () => abort.abort())
   deps.abortRegistry.set(runId, abort)
-  deps.runStore.update(runId, { status: 'running' })
 
   const events: AgentLoopEvents = {
     onToken: t => sse('message', { type: 'token', content: t }),
@@ -387,7 +407,9 @@ function handleAcpAgents(req: IncomingMessage, res: ServerResponse, deps: RestDe
 function handleAgentCard(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
   if (!deps.defaultProfile.interop?.a2a) return sendJson(res, 404, { error: 'A2A not enabled' })
   const host = req.headers.host ?? 'localhost'
-  sendJson(res, 200, buildAgentCard(deps.defaultProfile, deps.skills, host))
+  const proto = (req.headers['x-forwarded-proto'] as string | undefined)
+    ?? ((req.socket as any)?.encrypted ? 'https' : 'http')
+  sendJson(res, 200, buildAgentCard(deps.defaultProfile, deps.skills, host, proto))
 }
 
 async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: RestDeps): Promise<void> {
@@ -460,46 +482,53 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
 }
 
 export function createRestHandler(deps: RestDeps) {
+  const acpInFlight = new Set<string>()
+
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = (req.url ?? '/').split('?')[0]
     const method = req.method ?? 'GET'
 
-    if (method === 'GET' && url === '/health') {
-      return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, version: VERSION })
+    try {
+      if (method === 'GET' && url === '/health') {
+        return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, version: VERSION })
+      }
+
+      if (deps.apiKey && req.headers['authorization'] !== `Bearer ${deps.apiKey}`) {
+        return sendJson(res, 401, { error: 'unauthorized' })
+      }
+
+      if (method === 'GET' && url === '/agents') return handleAcpAgents(req, res, deps)
+
+      if (method === 'POST' && url.startsWith('/agents/') && url.endsWith('/runs')) {
+        return handleAcpCreateRun(req, res, deps, url.slice('/agents/'.length, -'/runs'.length))
+      }
+
+      if (method === 'GET' && url === '/.well-known/agent.json') return handleAgentCard(req, res, deps)
+
+      if (method === 'POST' && url === '/a2a') return handleA2ATask(req, res, deps)
+
+      if (method === 'POST' && url === '/run') return handleRun(req, res, deps)
+      if (method === 'POST' && url === '/stream') return handleStream(req, res, deps)
+
+      if (method === 'GET' && url === '/runs') return handleListRuns(req, res, deps)
+      if (method === 'GET' && url.startsWith('/runs/') && url.endsWith('/messages')) {
+        return handleAcpMessages(req, res, deps, url.slice('/runs/'.length, -'/messages'.length), acpInFlight)
+      }
+      if (method === 'GET' && url.startsWith('/runs/') && !url.includes('/webhooks')) {
+        return handleGetRun(req, res, deps, url.slice('/runs/'.length))
+      }
+      if (method === 'DELETE' && url.startsWith('/runs/')) {
+        return handleDeleteRun(req, res, deps, url.slice('/runs/'.length))
+      }
+
+      if (method === 'POST' && url.startsWith('/webhooks/')) {
+        return handleWebhook(req, res, deps, url.slice('/webhooks/'.length))
+      }
+
+      return sendJson(res, 404, { error: 'not found' })
+    } catch (e: any) {
+      if (e?.statusCode === 413) return sendJson(res, 413, { error: 'request body too large' })
+      throw e
     }
-
-    if (deps.apiKey && req.headers['authorization'] !== `Bearer ${deps.apiKey}`) {
-      return sendJson(res, 401, { error: 'unauthorized' })
-    }
-
-    if (method === 'GET' && url === '/agents') return handleAcpAgents(req, res, deps)
-
-    if (method === 'POST' && url.startsWith('/agents/') && url.endsWith('/runs')) {
-      return handleAcpCreateRun(req, res, deps, url.slice('/agents/'.length, -'/runs'.length))
-    }
-
-    if (method === 'GET' && url === '/.well-known/agent.json') return handleAgentCard(req, res, deps)
-
-    if (method === 'POST' && url === '/a2a') return handleA2ATask(req, res, deps)
-
-    if (method === 'POST' && url === '/run') return handleRun(req, res, deps)
-    if (method === 'POST' && url === '/stream') return handleStream(req, res, deps)
-
-    if (method === 'GET' && url === '/runs') return handleListRuns(req, res, deps)
-    if (method === 'GET' && url.startsWith('/runs/') && url.endsWith('/messages')) {
-      return handleAcpMessages(req, res, deps, url.slice('/runs/'.length, -'/messages'.length))
-    }
-    if (method === 'GET' && url.startsWith('/runs/') && !url.includes('/webhooks')) {
-      return handleGetRun(req, res, deps, url.slice('/runs/'.length))
-    }
-    if (method === 'DELETE' && url.startsWith('/runs/')) {
-      return handleDeleteRun(req, res, deps, url.slice('/runs/'.length))
-    }
-
-    if (method === 'POST' && url.startsWith('/webhooks/')) {
-      return handleWebhook(req, res, deps, url.slice('/webhooks/'.length))
-    }
-
-    return sendJson(res, 404, { error: 'not found' })
   }
 }
