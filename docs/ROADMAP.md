@@ -57,14 +57,18 @@ Any profile callable as a tool by another agent. Orchestrator spawns workers, co
 
 ---
 
-### ❌ 4. Programmatic agent contracts (REST + typed I/O)
+### ✅ 4. Programmatic agent contracts (REST + typed I/O)
 Today the only interface is WS streaming chat. This makes the harness usable as a backend component.
 
-**To build:**
-- Typed input/output schema per profile (Zod/JSON schema in YAML)
-- One-shot `POST /run` HTTP endpoint: `{ profile, input }` → `{ output, usage }` (no WS)
-- Streaming `POST /stream` SSE endpoint for callers that want token streaming without WS
-- Profile-level output shape definition (structured JSON vs freeform text)
+**What shipped:**
+- Shared `http.Server` hosts REST + WS on one port (7337)
+- `POST /run` — one-shot `{ profile?, user?, input }` → `{ output, usage, session_id }`
+- `POST /stream` — SSE: token / tool_start / tool_end / stats / result / error events
+- `GET /health` — liveness + profile name + version
+- Optional per-profile `contract: { input?, output? }` block; ajv hard-validation (422 on violation)
+- Optional bearer auth via `HARNESS_API_KEY`; `user` body field scopes session/memory/usage
+- Headless tool safety: REST runs auto-deny `prompt`-ACL tools (no interactive approver)
+- `runProfileOnce()` shared one-shot helper; `src/shared/json-contract.ts` shared with `runner.ts`
 
 **Why:** Turns harness from "chat tool" into a building block for apps and pipelines.
 

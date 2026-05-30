@@ -1,3 +1,5 @@
+import { createServer } from 'http'
+import { createRestHandler } from './rest.js'
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir, userInfo } from 'os'
@@ -60,8 +62,17 @@ async function main() {
   const skillIndex = buildSkillIndex(skills)
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
 
-  const wss = new WebSocketServer({ port: PORT })
-  console.log(`Harness server on ws://localhost:${PORT} [profile: ${profile.name}]`)
+  const apiKey = process.env.HARNESS_API_KEY
+  const restHandler = createRestHandler({ defaultProfile: profile, apiKey })
+  const httpServer = createServer((req, res) => { void restHandler(req, res) })
+  const wss = new WebSocketServer({ server: httpServer })
+  httpServer.listen(PORT, () => {
+    console.log(`Harness server on ws://localhost:${PORT} [profile: ${profile.name}]`)
+    console.log(`REST endpoints: http://localhost:${PORT} (/run, /stream, /health)`)
+    if (!apiKey) {
+      console.warn('[rest] HARNESS_API_KEY not set — REST endpoints are UNAUTHENTICATED')
+    }
+  })
 
   const openSockets = new Set<WebSocket>()
 
@@ -221,6 +232,7 @@ async function main() {
     console.log('\nShutting down...')
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
+    httpServer.close()
     process.exit(0)
   })
 }

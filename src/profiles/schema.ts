@@ -129,6 +129,10 @@ export const ProfileSchema = z.object({
   ).optional(),
   max_depth: z.number().min(1).optional().default(2),
   agents: z.array(AgentEntrySchema).optional().default([]),
+  contract: z.object({
+    input: z.record(z.string(), z.unknown()).optional(),
+    output: z.record(z.string(), z.unknown()).optional(),
+  }).optional(),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
