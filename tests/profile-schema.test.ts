@@ -55,3 +55,31 @@ describe('ProfileSchema – agents + max_depth', () => {
     ).toThrow()
   })
 })
+
+describe('ProfileSchema – triggers block', () => {
+  it('triggers defaults to undefined when absent', () => {
+    const p = ProfileSchema.parse(BASE)
+    expect(p.triggers).toBeUndefined()
+  })
+
+  it('parses triggers.cron expression', () => {
+    const p = ProfileSchema.parse({ ...BASE, triggers: { cron: '0 9 * * *' } })
+    expect(p.triggers?.cron).toBe('0 9 * * *')
+    expect(p.triggers?.webhook).toBe(false)
+  })
+
+  it('parses triggers.webhook true', () => {
+    const p = ProfileSchema.parse({ ...BASE, triggers: { webhook: true } })
+    expect(p.triggers?.webhook).toBe(true)
+  })
+
+  it('parses triggers.cron_input payload', () => {
+    const p = ProfileSchema.parse({ ...BASE, triggers: { cron: '* * * * *', cron_input: { task: 'run' } } })
+    expect(p.triggers?.cron_input).toEqual({ task: 'run' })
+  })
+
+  it('triggers.webhook defaults to false when only cron is set', () => {
+    const p = ProfileSchema.parse({ ...BASE, triggers: { cron: '* * * * *' } })
+    expect(p.triggers?.webhook).toBe(false)
+  })
+})

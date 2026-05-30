@@ -6,6 +6,9 @@ import { homedir, userInfo } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { recordUsage } from '../usage/ledger.js'
+import { RunStore } from '../runs/store.js'
+import { CronScheduler } from '../scheduler/cron.js'
+import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
@@ -47,6 +50,33 @@ async function main() {
 
   const profile = loadProfile(profilePath)
 
+  const runStore = new RunStore()
+  const abortRegistry = new Map<string, AbortController>()
+
+  // Crash recovery: re-queue any runs left in 'running' state from a prior crash
+  const stalledRuns = runStore.scanRunning()
+  for (const run of stalledRuns) {
+    const candidates = [
+      resolve(process.cwd(), 'profiles', `${run.profile}.yaml`),
+      resolve(homedir(), '.harness', 'profiles', `${run.profile}.yaml`),
+    ]
+    const runProfilePath = candidates.find(p => existsSync(p))
+    if (!runProfilePath) {
+      runStore.update(run.id, { status: 'failed', error: 'profile not found on restart', finished_at: new Date().toISOString() })
+      console.warn(`[runs] stalled run ${run.id} failed: profile '${run.profile}' not found`)
+      continue
+    }
+    const stalledProfile = loadProfile(runProfilePath)
+    void runProfileOnce({
+      profile: stalledProfile, userId: run.user,
+      userMessage: typeof run.input === 'string' ? run.input : JSON.stringify(run.input),
+      events: { onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {}, onToolPrompt: async () => false, onSessionEnd: () => {}, onStats: () => {} },
+    })
+      .then(r => runStore.update(run.id, { status: 'completed', session_id: r.session.id, finished_at: new Date().toISOString() }))
+      .catch(e => runStore.update(run.id, { status: 'failed', error: e.message, finished_at: new Date().toISOString() }))
+    console.log(`[runs] re-queued stalled run ${run.id} (profile: ${run.profile})`)
+  }
+
   clearRegistry()
   registerAll()
 
@@ -63,7 +93,14 @@ async function main() {
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
 
   const apiKey = process.env.HARNESS_API_KEY
-  const restHandler = createRestHandler({ defaultProfile: profile, apiKey })
+
+  const scheduler = new CronScheduler(profile, runStore, abortRegistry)
+  scheduler.init()
+  if (profile.triggers?.cron) {
+    console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
+  }
+
+  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({ server: httpServer })
   httpServer.listen(PORT, () => {
@@ -230,6 +267,7 @@ async function main() {
 
   process.on('SIGINT', () => {
     console.log('\nShutting down...')
+    scheduler.stop()
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
     httpServer.close()
