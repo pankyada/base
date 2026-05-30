@@ -94,9 +94,13 @@ export async function runAgentLoop(
     const toolCalls = [...toolCallMap.values()]
 
     if (toolCalls.length === 0) {
-      session.messages.push({ role: 'assistant', content: assistantContent })
-
       const markerIdx = assistantContent.indexOf('__ARTIFACTS__')
+      // Strip the marker+JSON from transcript so it doesn't re-enter LLM context
+      const contentToStore = markerIdx !== -1
+        ? assistantContent.slice(0, markerIdx).trimEnd()
+        : assistantContent
+      session.messages.push({ role: 'assistant', content: contentToStore })
+
       if (markerIdx !== -1 && events.onArtifacts) {
         try {
           const artifactsJson = assistantContent.slice(markerIdx + '__ARTIFACTS__'.length).trim()
@@ -104,7 +108,7 @@ export async function runAgentLoop(
           if (Array.isArray(artifacts)) {
             events.onArtifacts(session.id, artifacts)
           }
-        } catch (e) {
+        } catch {
           // Ignore invalid artifacts format
         }
       }

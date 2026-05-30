@@ -1,5 +1,5 @@
 'use client'
-import { useState, useReducer, useEffect } from 'react'
+import { useState, useReducer, useEffect, useRef } from 'react'
 import { TopBar } from './TopBar.js'
 import { StatusBar } from './StatusBar.js'
 import { ConvColumn } from './ConvColumn.js'
@@ -33,12 +33,13 @@ interface State {
 type Action =
   | { type: 'INPUT'; payload: string }
   | { type: 'USER_MSG'; payload: string }
-  | { type: 'SERVER_MSG'; payload: any } // Simplify for brevity, actual logic below handles it
+  | { type: 'SERVER_MSG'; payload: any }
   | { type: 'TOGGLE_PALETTE' }
   | { type: 'TOGGLE_TWEAKS' }
   | { type: 'SET_TAB'; payload: number }
   | { type: 'TOGGLE_FOCUS' }
   | { type: 'CLEAR' }
+  | { type: 'RESOLVE_APPROVAL' }
   | { type: 'SET_THEME'; theme: string; palette: string; density: string }
 
 function reducer(state: State, action: Action): State {
@@ -56,6 +57,7 @@ function reducer(state: State, action: Action): State {
     case 'SET_TAB': return { ...state, activeTab: action.payload }
     case 'TOGGLE_FOCUS': return { ...state, focusPane: state.focusPane === 'conv' ? 'work' : 'conv' }
     case 'CLEAR': return { ...state, messages: [], tabs: [], busy: false, pendingApproval: null }
+    case 'RESOLVE_APPROVAL': return { ...state, pendingApproval: null }
     case 'SET_THEME': return { ...state, theme: action.theme, palette: action.palette, density: action.density }
     case 'SERVER_MSG': {
       const msg = action.payload
@@ -105,12 +107,19 @@ export function HarnessApp() {
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
   const { send, status, reconnect } = useHarnessWS(wsUrl, msg => dispatch({ type: 'SERVER_MSG', payload: msg }))
 
+  // Ref so the stable keydown handler can read current state without re-registering
+  const stateRef = useRef(state)
+  stateRef.current = state
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey && e.key === 'k') { e.preventDefault(); dispatch({ type: 'TOGGLE_PALETTE' }) }
       if (e.metaKey && e.key === 'l') { e.preventDefault(); dispatch({ type: 'CLEAR' }) }
-      if (e.key === 'Escape') { dispatch({ type: 'TOGGLE_PALETTE' }); dispatch({ type: 'TOGGLE_TWEAKS' }) }
-      // Mock toggle tweaks for testing without specific keybind
+      if (e.key === 'Escape') {
+        // Close whichever panel is open — never open both simultaneously
+        if (stateRef.current.paletteOpen) dispatch({ type: 'TOGGLE_PALETTE' })
+        else if (stateRef.current.tweaksOpen) dispatch({ type: 'TOGGLE_TWEAKS' })
+      }
       if (e.metaKey && e.key === ',') { e.preventDefault(); dispatch({ type: 'TOGGLE_TWEAKS' }) }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -133,17 +142,34 @@ export function HarnessApp() {
 
   const handleApprove = () => {
     if (state.pendingApproval) send({ type: 'tool_approve', id: state.pendingApproval.id })
-    dispatch({ type: 'CLEAR' }) // Hack: just clear pending for now
+    dispatch({ type: 'RESOLVE_APPROVAL' })
   }
 
   const handleDeny = () => {
     if (state.pendingApproval) send({ type: 'tool_deny', id: state.pendingApproval.id })
-    dispatch({ type: 'CLEAR' })
+    dispatch({ type: 'RESOLVE_APPROVAL' })
   }
 
-  const agentMessages = state.messages.filter(m => m.role === 'agent')
-  const lastAgentMsg = agentMessages[agentMessages.length - 1]
-  const toolMessages = state.messages.filter(m => m.role === 'tool-call')
+  // Group messages into turns for multi-turn rendering
+  type Turn = { type: 'user'; msg: UIMessage } | { type: 'agent'; tools: UIMessage[]; agentMsg?: UIMessage }
+  const turns = (() => {
+    const result: Turn[] = []
+    let cur: { tools: UIMessage[]; agentMsg?: UIMessage } | null = null
+    for (const m of state.messages) {
+      if (m.role === 'user') {
+        if (cur) { result.push({ type: 'agent', ...cur }); cur = null }
+        result.push({ type: 'user', msg: m })
+      } else if (m.role === 'tool-call') {
+        if (!cur) cur = { tools: [] }
+        cur.tools.push(m)
+      } else if (m.role === 'agent') {
+        if (!cur) cur = { tools: [] }
+        cur.agentMsg = m
+      }
+    }
+    if (cur) result.push({ type: 'agent', ...cur })
+    return result
+  })()
 
   return (
     <div className="app">
@@ -165,14 +191,13 @@ export function HarnessApp() {
             <Hero onSelect={handleSuggest} />
           ) : (
             <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-              {state.messages.filter(m => m.role === 'user').map(m => (
-                <Message key={m.id} role="user" time={new Date().toLocaleTimeString()}>{m.content}</Message>
-              ))}
-              {(lastAgentMsg || toolMessages.length > 0) && (
-                <Message role="agent" time={new Date().toLocaleTimeString()}>
-                  <AgentTurn message={lastAgentMsg || { id: '0', role: 'agent' }} tools={toolMessages} />
+              {turns.map((t, i) => t.type === 'user' ? (
+                <Message key={t.msg.id} role="user" time={new Date().toLocaleTimeString()}>{t.msg.content}</Message>
+              ) : (
+                <Message key={`agent-${i}`} role="agent" time={new Date().toLocaleTimeString()}>
+                  <AgentTurn message={t.agentMsg || { id: '0', role: 'agent' }} tools={t.tools} />
                 </Message>
-              )}
+              ))}
             </div>
           )}
           <Composer

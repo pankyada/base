@@ -208,6 +208,9 @@ async function main() {
           onStats: (tokens_in, tokens_out, cost_usd) => {
             send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: profile.context_window?.max_tokens ?? 0 })
           },
+          onArtifacts: (sessionId, artifacts) => {
+            send({ type: 'artifacts', sessionId, artifacts })
+          },
         }
         const agentTools = await loadAgentTools(profile)
         const context: ToolContext = {

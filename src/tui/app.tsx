@@ -37,6 +37,7 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [tokens, setTokens] = useState({ in: 0, out: 0 })
   const [theme, setTheme] = useState('dark')
+  const [pendingApproval, setPendingApproval] = useState<{ id: string; name: string; input: unknown } | null>(null)
 
   const handleMessage = useCallback((msg: ServerMessage) => {
     if (msg.type === 'token') {
@@ -68,6 +69,9 @@ export function App() {
         return m
       })
     }
+    if (msg.type === 'tool_prompt') {
+      setPendingApproval({ id: msg.id, name: msg.name, input: msg.input })
+    }
     if (msg.type === 'stats') setTokens({ in: msg.tokens_in, out: msg.tokens_out })
     if (msg.type === 'session_end' || msg.type === 'error') setBusy(false)
     if (msg.type === 'artifacts') {
@@ -98,6 +102,17 @@ export function App() {
   }
 
   useInput((keyInput, key) => {
+    // While approval is pending, only y/n are handled
+    if (pendingApproval) {
+      if (keyInput === 'y') {
+        send({ type: 'tool_approve', id: pendingApproval.id })
+        setPendingApproval(null)
+      } else if (keyInput === 'n') {
+        send({ type: 'tool_deny', id: pendingApproval.id })
+        setPendingApproval(null)
+      }
+      return
+    }
     if (key.ctrl && keyInput === 'k') { setPaletteOpen(o => !o); return }
     if (key.ctrl && keyInput === 'l') { handleClear(); return }
     if (key.escape) { setPaletteOpen(false); return }
@@ -114,9 +129,26 @@ export function App() {
   const cWidth = convWidth(cols, workspaceOpen)
   const wWidth = workWidth(cols, cWidth)
 
-  const agentMessages = messages.filter(m => m.role === 'agent')
-  const lastAgentMsg = agentMessages[agentMessages.length - 1]
-  const toolMessages = messages.filter(m => m.role === 'tool-call')
+  // Group messages into turns so all agent responses are visible in multi-turn conversations
+  type Turn = { type: 'user'; msg: UIMessage } | { type: 'agent'; tools: UIMessage[]; agentMsg?: UIMessage }
+  const turns = (() => {
+    const result: Turn[] = []
+    let cur: { tools: UIMessage[]; agentMsg?: UIMessage } | null = null
+    for (const m of messages) {
+      if (m.role === 'user') {
+        if (cur) { result.push({ type: 'agent', ...cur }); cur = null }
+        result.push({ type: 'user', msg: m })
+      } else if (m.role === 'tool-call') {
+        if (!cur) cur = { tools: [] }
+        cur.tools.push(m)
+      } else if (m.role === 'agent') {
+        if (!cur) cur = { tools: [] }
+        cur.agentMsg = m
+      }
+    }
+    if (cur) result.push({ type: 'agent', ...cur })
+    return result
+  })()
 
   return (
     <Box flexDirection="column" height={rows}>
@@ -135,16 +167,15 @@ export function App() {
               <Hero onSelect={handleSuggest} />
             ) : (
               <Box flexGrow={1} flexDirection="column">
-                {messages.filter(m => m.role === 'user').map(m => (
-                  <Message key={m.id} role="user" time="--:--:--">
-                    <Text>{m.content}</Text>
+                {turns.map((t, i) => t.type === 'user' ? (
+                  <Message key={t.msg.id} role="user" time="--:--:--">
+                    <Text>{t.msg.content}</Text>
+                  </Message>
+                ) : (
+                  <Message key={`agent-${i}`} role="agent" time="--:--:--">
+                    <AgentTurn message={t.agentMsg ?? {}} tools={t.tools} />
                   </Message>
                 ))}
-                {(lastAgentMsg || toolMessages.length > 0) && (
-                  <Message role="agent" time="--:--:--">
-                    <AgentTurn message={lastAgentMsg || { id: '0', role: 'agent' }} tools={toolMessages} />
-                  </Message>
-                )}
               </Box>
             )}
             <Composer
@@ -182,6 +213,19 @@ export function App() {
 
       {paletteOpen && (
         <Palette onClose={() => setPaletteOpen(false)} onRun={handleSuggest} onReset={handleClear} />
+      )}
+
+      {pendingApproval && (
+        <Box position="absolute" width="100%" height="100%" justifyContent="center" alignItems="center">
+          <Box width={60} flexDirection="column" borderStyle="single" borderColor={C.accent} padding={1}>
+            <Text color={C.accent} bold>Tool Approval Required</Text>
+            <Text>Run: <Text color={C.info}>{pendingApproval.name}</Text></Text>
+            <Text color={C.dim} wrap="truncate">{JSON.stringify(pendingApproval.input).slice(0, 120)}</Text>
+            <Box marginTop={1}>
+              <Text color={C.dim}>[y] Allow  [n] Deny</Text>
+            </Box>
+          </Box>
+        </Box>
       )}
     </Box>
   )

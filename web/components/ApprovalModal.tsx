@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+'use client'
+import { useEffect, useRef } from 'react'
 
 interface Props {
   toolName: string
@@ -8,14 +9,20 @@ interface Props {
 }
 
 export function ApprovalModal({ toolName, toolInput, onApprove, onDeny }: Props) {
+  // Refs keep callbacks current without re-adding the listener on every render
+  const onApproveRef = useRef(onApprove)
+  const onDenyRef = useRef(onDeny)
+  onApproveRef.current = onApprove
+  onDenyRef.current = onDeny
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'y' || e.key === 'Enter') onApprove()
-      if (e.key === 'n' || e.key === 'Escape') onDeny()
+      if (e.key === 'y' || e.key === 'Enter') onApproveRef.current()
+      if (e.key === 'n' || e.key === 'Escape') onDenyRef.current()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onApprove, onDeny])
+  }, []) // empty — refs keep callbacks fresh without re-registering
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
