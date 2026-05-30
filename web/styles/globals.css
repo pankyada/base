@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+:root[data-theme="dark"][data-palette="amber"] {
+  --bg: #0b0c0e;
+  --bg-deep: #08090a;
+  --panel: #111317;
+  --border: #262b33;
+  --border-hi: #3a414e;
+  --text: #e7e9ee;
+  --dim: #99a0ad;
+  --faint: #595f6b;
+  --accent: #f1a44d;
+  --accent-dim: #a9712f;
+  --ok: #74c79a;
+  --add: #74c79a;
+  --del: #e87f8d;
+  --info: #6cb6d9;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-jb), monospace;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.stage {
+  flex-grow: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.stage.idle {
+  justify-content: center;
+}
+
+.stage.split .col-conv {
+  width: 42%;
+  border-right: 1px solid var(--border);
+}
+
+.stage.split .col-work {
+  flex-grow: 1;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.col-conv, .col-work {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.topbar, .statusbar {
+  background-color: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+.statusbar {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+}
+
+.spin {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  color: var(--accent);
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
+.cap {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.5rem;
+}

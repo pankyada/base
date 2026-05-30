@@ -1,175 +1,188 @@
-import React, { useState, useCallback, useRef } from 'react'
-import { Box, useApp, useInput } from 'ink'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
+import { Box, useApp, useInput, Text } from 'ink'
 import { useWs } from './hooks/use-ws.js'
-import { useMessages } from './hooks/use-messages.js'
-import { useTools } from './hooks/use-tools.js'
-import { useMemory } from './hooks/use-memory.js'
-import { useNarrator } from './hooks/use-narrator.js'
-import { useTokenRate } from './hooks/use-token-rate.js'
-import { Header } from './components/header.js'
-import { ChatPane } from './components/chat-pane.js'
-import { RightPanel } from './components/right-panel.js'
-import { InputBar } from './components/input-bar.js'
-import type { TabId } from './components/tabs.js'
-import type { ClientMessage, ServerMessage } from '../types.js'
+import { TopBar } from './components/TopBar.js'
+import { StatusBar } from './components/StatusBar.js'
+import { ConvColumn } from './components/ConvColumn.js'
+import { Workspace } from './components/Workspace.js'
+import { Palette } from './components/Palette.js'
+import { Hero } from './components/Hero.js'
+import { Message } from './components/Message.js'
+import { AgentTurn } from './components/AgentTurn.js'
+import { Composer } from './components/Composer.js'
+import { GenWidget } from './widgets/GenWidget.js'
+import { Tab } from './components/TabBar.js'
+import { C } from './theme.js'
+import { useTermSize } from './hooks/useTermSize.js'
+import { convWidth, workWidth } from './layout.js'
+import type { ClientMessage, ServerMessage, UIMessage, ArtifactWidget } from '../types.js'
 
 const PROFILE = process.env.HARNESS_PROFILE ?? 'coding'
 const SESSION_ID = Math.random().toString(36).slice(2, 10)
 
-const TAB_ORDER: TabId[] = ['tools', 'memory', 'stats']
+interface TabState extends Tab {
+  artifacts: ArtifactWidget[]
+}
 
 export function App() {
   const { exit } = useApp()
+  const { cols, rows } = useTermSize()
 
-  const { messages, dispatch, handleMessage: messagesHandler } = useMessages()
-  const { tools, handleMessage: toolsHandler } = useTools()
-  const { memoryKeys, handleMessage: memoryHandler } = useMemory()
+  const [messages, setMessages] = useState<UIMessage[]>([])
+  const [tabs, setTabs] = useState<TabState[]>([])
+  const [activeTab, setActiveTab] = useState(0)
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [focusPane, setFocusPane] = useState<'conv'|'work'>('conv')
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [tokens, setTokens] = useState({ in: 0, out: 0 })
+  const [theme, setTheme] = useState('dark')
 
-  const [tokensIn, setTokensIn] = useState(0)
-  const [tokensOut, setTokensOut] = useState(0)
-  const [costUsd, setCostUsd] = useState(0)
-  const [contextWindow, setContextWindow] = useState(0)
-  const [scrollOffset, setScrollOffset] = useState(0)
-  const [generating, setGenerating] = useState(false)
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const [activeTab, setActiveTab] = useState<TabId>('tools')
-  const [sessionStart, setSessionStart] = useState(0)
-
-  const { text: narratorText, slow: narratorSlow } = useNarrator(messages)
-  const { bars: waveBars, rate: waveRate, addToken } = useTokenRate(generating)
-
-  /**
-   * Single message handler passed to useWs — called directly from the WS
-   * onmessage event, bypassing React state so no tokens are dropped when
-   * streaming arrives faster than React can re-render.
-   */
   const handleMessage = useCallback((msg: ServerMessage) => {
-    messagesHandler(msg)
-    toolsHandler(msg)
-    memoryHandler(msg)
-
-    if (msg.type === 'stats') {
-      setTokensIn(msg.tokens_in)
-      setTokensOut(msg.tokens_out)
-      setCostUsd(msg.cost_usd)
-      if (msg.context_window) setContextWindow(msg.context_window)
-    }
     if (msg.type === 'token') {
-      setGenerating(true)
-      addToken()
-      // Record session start on first token
-      setSessionStart(prev => prev === 0 ? Date.now() : prev)
+      setMessages(prev => {
+        const m = [...prev]
+        const last = m[m.length - 1]
+        if (last && last.role === 'agent') {
+          m[m.length - 1] = { ...last, content: (last.content || '') + msg.content }
+        } else {
+          m.push({ id: Math.random().toString(), role: 'agent', content: msg.content })
+        }
+        return m
+      })
     }
     if (msg.type === 'tool_start') {
-      setSessionStart(prev => prev === 0 ? Date.now() : prev)
+      setMessages(prev => [...prev, { id: Math.random().toString(), role: 'tool-call', name: msg.name, input: msg.input, status: 'running' }])
     }
-    if (msg.type === 'session_end') setGenerating(false)
-    if (msg.type === 'error') setGenerating(false)
-  }, [messagesHandler, toolsHandler, memoryHandler, addToken])
+    if (msg.type === 'tool_end') {
+      setMessages(prev => {
+        const m = [...prev]
+        let idx = -1
+        for (let i = m.length - 1; i >= 0; i--) {
+          if (m[i].role === 'tool-call' && m[i].name === msg.name && m[i].status === 'running') {
+            idx = i
+            break
+          }
+        }
+        if (idx >= 0) m[idx] = { ...m[idx], status: 'done', result: msg.result }
+        return m
+      })
+    }
+    if (msg.type === 'stats') setTokens({ in: msg.tokens_in, out: msg.tokens_out })
+    if (msg.type === 'session_end' || msg.type === 'error') setBusy(false)
+    if (msg.type === 'artifacts') {
+      setTabs(prev => [...prev, { id: Math.random().toString(), label: 'Artifacts', artifacts: msg.artifacts }])
+      setActiveTab(prev => prev)
+    }
+  }, [])
 
   const { connected, send } = useWs(handleMessage)
 
-  // Find pending tool prompt id (most recent unresolved tool-prompt message)
-  const pendingPrompt = messages
-    .filter(m => m.role === 'tool-prompt' && m.pending)
-    .at(-1)
-  const pendingToolId = pendingPrompt?.id ?? null
+  const handleSend = (value: string) => {
+    if (!value.trim()) return
+    setMessages(prev => [...prev, { id: Math.random().toString(), role: 'user', content: value }])
+    setBusy(true)
+    setInput('')
+    send({ type: 'message', content: value })
+  }
 
-  const handleSend = useCallback((msg: ClientMessage) => {
-    if (msg.type === 'message') {
-      dispatch({ event: 'user', content: msg.content })
-      setGenerating(true)
-      setScrollOffset(0)
-    }
-    if (msg.type === 'tool_approve' || msg.type === 'tool_deny') {
-      dispatch({ event: 'tool_prompt_resolve', id: msg.id })
-    }
-    if (msg.type === 'cancel') setGenerating(false)
-    send(msg)
-  }, [send, dispatch])
+  const handleSuggest = (id: string) => {
+    const value = `Run the ${id} task.`
+    handleSend(value)
+  }
 
-  const handleClear = useCallback(() => {
-    dispatch({ event: 'clear' })
-    setExpandedIds(new Set())
-    setScrollOffset(0)
-  }, [dispatch])
+  const handleClear = () => {
+    setMessages([])
+    setTabs([])
+    setBusy(false)
+  }
 
-  const handleScroll = useCallback((delta: number) => {
-    setScrollOffset(o => Math.max(0, o + delta))
-  }, [])
-
-  const handleExpandToggle = useCallback((id: string) => {
-    setExpandedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  /** Ctrl+E — toggle the most recent completed tool-call */
-  const handleExpandLast = useCallback(() => {
-    const last = [...messages]
-      .reverse()
-      .find(m => m.role === 'tool-call' && m.status !== 'running')
-    if (last) handleExpandToggle(last.id)
-  }, [messages, handleExpandToggle])
-
-  /** Tab key — cycle right panel tabs */
-  useInput((_input, key) => {
-    if (key.tab) {
-      setActiveTab(prev => {
-        const idx = TAB_ORDER.indexOf(prev)
-        return TAB_ORDER[(idx + 1) % TAB_ORDER.length]
-      })
+  useInput((keyInput, key) => {
+    if (key.ctrl && keyInput === 'k') { setPaletteOpen(o => !o); return }
+    if (key.ctrl && keyInput === 'l') { handleClear(); return }
+    if (key.escape) { setPaletteOpen(false); return }
+    if (keyInput === '/') { setFocusPane('conv'); return }
+    if (key.tab && tabs.length > 0) { setFocusPane(p => p === 'conv' ? 'work' : 'conv'); return }
+    if (/^[1-9]$/.test(keyInput) && tabs.length > 0) {
+      const idx = parseInt(keyInput) - 1
+      if (idx < tabs.length) setActiveTab(idx)
+      return
     }
   })
 
-  void exit
+  const workspaceOpen = tabs.length > 0
+  const cWidth = convWidth(cols, workspaceOpen)
+  const wWidth = workWidth(cols, cWidth)
+
+  const agentMessages = messages.filter(m => m.role === 'agent')
+  const lastAgentMsg = agentMessages[agentMessages.length - 1]
+  const toolMessages = messages.filter(m => m.role === 'tool-call')
 
   return (
-    <Box flexDirection="column" height="100%">
-      <Header
-        profile={PROFILE}
-        sessionId={SESSION_ID}
-        tokensIn={tokensIn}
-        tokensOut={tokensOut}
-        costUsd={costUsd}
-        connected={connected}
-        generating={generating}
-        narratorText={narratorText}
-        narratorSlow={narratorSlow}
-        waveBars={waveBars}
-        waveRate={waveRate}
-        contextWindow={contextWindow}
-      />
-      <Box flexDirection="row" flexGrow={1}>
-        <ChatPane
-          messages={messages}
-          scrollOffset={scrollOffset}
-          onScroll={handleScroll}
-          onSend={handleSend}
-          expandedIds={expandedIds}
-          onExpandToggle={handleExpandToggle}
-        />
-        <RightPanel
-          tools={tools}
-          memoryKeys={memoryKeys}
-          tokensIn={tokensIn}
-          tokensOut={tokensOut}
-          costUsd={costUsd}
-          activeTab={activeTab}
-          sessionStart={sessionStart}
-        />
+    <Box flexDirection="column" height={rows}>
+      <TopBar profileName={PROFILE} sessionId={SESSION_ID} busy={busy} />
+
+      {!connected && (
+        <Box backgroundColor={C.del} paddingX={1}>
+          <Text color={C.bgDeep}>Disconnected. Waiting for reconnect...</Text>
+        </Box>
+      )}
+
+      <Box flexGrow={1} flexDirection="row">
+        <Box width={cWidth} flexDirection="column">
+          <ConvColumn split={workspaceOpen}>
+            {messages.length === 0 ? (
+              <Hero onSelect={handleSuggest} />
+            ) : (
+              <Box flexGrow={1} flexDirection="column">
+                {messages.filter(m => m.role === 'user').map(m => (
+                  <Message key={m.id} role="user" time="--:--:--">
+                    <Text>{m.content}</Text>
+                  </Message>
+                ))}
+                {(lastAgentMsg || toolMessages.length > 0) && (
+                  <Message role="agent" time="--:--:--">
+                    <AgentTurn message={lastAgentMsg || { id: '0', role: 'agent' }} tools={toolMessages} />
+                  </Message>
+                )}
+              </Box>
+            )}
+            <Composer
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSend}
+              busy={busy}
+              compact={workspaceOpen}
+            />
+          </ConvColumn>
+        </Box>
+
+        {workspaceOpen && (
+          <Box width={wWidth} flexDirection="column" marginLeft={2}>
+            <Workspace tabs={tabs} activeTab={activeTab}>
+              {tabs[activeTab]?.artifacts.map((a, i) => (
+                <Box key={i} flexDirection="column" marginBottom={1}>
+                  <Box borderStyle="single" borderTop={false} borderLeft={false} borderRight={false} borderBottomColor={C.border} marginBottom={1}>
+                    <Text color={C.dim} bold>{a.icon} {a.title} {a.meta && `· ${a.meta}`}</Text>
+                  </Box>
+                  <GenWidget artifact={a} />
+                </Box>
+              ))}
+            </Workspace>
+          </Box>
+        )}
       </Box>
-      <InputBar
-        onSend={handleSend}
-        onClear={handleClear}
-        onScroll={handleScroll}
-        onExpandLast={handleExpandLast}
-        pendingToolId={pendingToolId}
-        disabled={generating}
+
+      <StatusBar
+        busy={busy}
+        focusPane={focusPane}
+        tokens={tokens}
+        theme={theme}
       />
+
+      {paletteOpen && (
+        <Palette onClose={() => setPaletteOpen(false)} onRun={handleSuggest} onReset={handleClear} />
+      )}
     </Box>
   )
 }
