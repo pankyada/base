@@ -110,7 +110,7 @@ Make the harness interoperable with the broader agent ecosystem. Both protocols 
 
 ---
 
-### ❌ 7. TUI uplift — richer power and animation
+### ✅ 7. TUI uplift — richer power and animation
 
 Evolve the Ink TUI from functional to genuinely impressive: more visual density, smoother animation, and new power-user capabilities that make the terminal experience feel native and fast.
 
@@ -123,11 +123,13 @@ Evolve the Ink TUI from functional to genuinely impressive: more visual density,
 - **Keyboard power-ups** — `/` to open command palette (switch profile, clear session, export transcript); `Ctrl+T` to toggle tool timeline; `Ctrl+M` to toggle memory panel
 - **Spinners and transitions** — replace static "thinking…" with per-tool spinners (braille unicode); smooth panel slide-in/out using Ink's `useTransition`-equivalent
 
+**What shipped:** Breathing orb, animated token stream, tool timeline with status icons, memory panel, session breadcrumb with live cost ticker, keyboard palette (`Ctrl+K`), per-tool spinners, tabbed workspace panel, multiline composer.
+
 **Why:** The TUI is the primary dev interface. A richer experience reduces cognitive load and makes debugging agent behavior faster.
 
 ---
 
-### ❌ 8. Web client (Next.js)
+### ✅ 8. Web client (Next.js)
 
 A first-class browser client for the harness — connects to the WS server, renders the agent conversation, and exposes the full tool/memory/session surface in a polished UI.
 
@@ -143,11 +145,31 @@ A first-class browser client for the harness — connects to the WS server, rend
 - **Connection status** — banner showing WS connection state; auto-reconnect with exponential backoff
 - **Responsive layout** — full-screen on desktop; mobile-friendly single-column on small screens
 
+**What shipped:** Streaming chat UI, tool approval modal, hero screen, workspace panel with artifact widgets, session management, WS auto-reconnect, Tweaks panel (theme/palette/density), keyboard shortcuts (`Cmd+K` palette, `Cmd+L` clear, `Cmd+,` tweaks).
+
 **Why:** Opens the harness to non-terminal users and makes it deployable as a product surface (internal tool, customer-facing assistant, etc.).
 
 ---
 
-### ❌ 9. Comprehensive product documentation (GitHub Pages)
+### 🔄 9. Agent input requests + todo tool
+**Assigned to: Jules**
+
+Agent can pause its loop and ask the user a question; agents get a built-in todo list with live display in both TUI and web.
+
+**Plan:** `docs/superpowers/plans/2026-05-30-agent-input-and-todos.md`
+
+**To build:**
+- `AskUser` built-in tool — suspends loop, sends `input_request` ServerMessage, awaits `input_response` from client; supports `text`, `select`, `multi_select` kinds
+- `TodoWrite` / `TodoRead` built-in tools — session-scoped todo list, broadcasts `todos` ServerMessage on every write
+- Protocol: `input_request`, `input_response`, `todos` message types in `src/types.ts` + `web/lib/types.ts`
+- TUI: `InputRequestModal` + `TodoPanel` components wired into `app.tsx`
+- Web: `InputRequestModal` + `TodoPanel` components wired into `HarnessApp.tsx`
+
+**Why:** Agents that can ask clarifying questions and track their own tasks are dramatically more reliable for multi-step work.
+
+---
+
+### ❌ 10. Comprehensive product documentation (GitHub Pages)
 
 Public-facing docs site hosted on GitHub Pages covering everything a developer needs to understand, configure, and extend the harness.
 
@@ -171,7 +193,7 @@ Public-facing docs site hosted on GitHub Pages covering everything a developer n
 
 ---
 
-### ❌ 10. Pluggable code execution (WASM / Docker / E2B / Daytona)
+### ❌ 11. Pluggable code execution (WASM / Docker / E2B / Daytona)
 
 Sandboxed code execution routed by profile config. WASM runs in the user's browser — zero server-side risk. Docker and cloud sandboxes handle heavy workloads and headless contexts.
 
@@ -211,7 +233,7 @@ executor:
 
 ---
 
-### ❌ 11. Instance modes (developer / analyst / assistant / production)
+### ❌ 12. Instance modes (developer / analyst / assistant / production)
 
 First-class `mode:` field on profiles that sets the trust model, default tool ACLs, and documentation for what kind of deployment this is. Operators know what they're running; users know what they're connecting to.
 
@@ -243,14 +265,15 @@ mode: analyst   # sets defaults; individual tools.builtin overrides still apply
 ## Suggested sequencing
 
 ```
-#4 REST + typed I/O         ← enables #5 and #6 to share HTTP layer
-#5 Triggered + durable      ← builds on #4's HTTP foundation
-#6 A2A + ACP                ← builds on #4's HTTP layer; do after REST is solid
-#7 TUI uplift               ← can run in parallel with any of the above
-#8 Web client (Next.js)     ← builds on #4 REST + WS; can run in parallel
-#9 Docs site                ← can run in parallel; best after #7 + #8 exist to document
-#10 Pluggable code execution ← prerequisite for analyst mode (#11)
-#11 Instance modes           ← builds on #10; do after ExecuteCode exists
+✅ #4 REST + typed I/O
+✅ #5 Triggered + durable
+✅ #6 A2A + ACP
+✅ #7 TUI uplift
+✅ #8 Web client (Next.js)
+🔄 #9 Agent input + todos    ← in progress (Jules)
+❌ #10 Docs site              ← good next pick; #7 + #8 now exist to document
+❌ #11 Pluggable code exec    ← prerequisite for analyst mode (#12)
+❌ #12 Instance modes         ← builds on #11; do after ExecuteCode exists
 ```
 
 ---
