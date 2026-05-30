@@ -83,3 +83,30 @@ describe('ProfileSchema – triggers block', () => {
     expect(p.triggers?.webhook).toBe(false)
   })
 })
+
+describe('ProfileSchema – description + interop', () => {
+  it('description defaults to undefined when absent', () => {
+    const p = ProfileSchema.parse(BASE)
+    expect(p.description).toBeUndefined()
+  })
+
+  it('parses a description string', () => {
+    const p = ProfileSchema.parse({ ...BASE, description: 'A helpful agent' })
+    expect(p.description).toBe('A helpful agent')
+  })
+
+  it('interop defaults to undefined when absent', () => {
+    const p = ProfileSchema.parse(BASE)
+    expect(p.interop).toBeUndefined()
+  })
+
+  it('parses interop.a2a: true', () => {
+    const p = ProfileSchema.parse({ ...BASE, interop: { a2a: true } })
+    expect(p.interop?.a2a).toBe(true)
+  })
+
+  it('interop.a2a defaults to false when not set', () => {
+    const p = ProfileSchema.parse({ ...BASE, interop: {} })
+    expect(p.interop?.a2a).toBe(false)
+  })
+})

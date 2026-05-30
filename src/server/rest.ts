@@ -11,6 +11,7 @@ import type { AgentLoopEvents } from '../tools/types.js'
 import { randomUUID } from 'crypto'
 import type { RunStore } from '../runs/store.js'
 import type { Run } from '../runs/types.js'
+import type { Skill } from '../tools/types.js'
 
 const VERSION = '0.1.0'
 
@@ -19,6 +20,29 @@ export interface RestDeps {
   apiKey?: string
   runStore: RunStore
   abortRegistry: Map<string, AbortController>
+  skills: Skill[]
+}
+
+interface AgentCard {
+  name: string
+  description: string
+  url: string
+  version: string
+  capabilities: { streaming: boolean }
+  skills: Array<{ id: string; name: string; description: string }>
+  authentication: { schemes: string[] }
+}
+
+function buildAgentCard(profile: Profile, skills: Skill[], host: string): AgentCard {
+  return {
+    name: profile.name,
+    description: profile.description ?? '',
+    url: `https://${host}/a2a`,
+    version: VERSION,
+    capabilities: { streaming: false },
+    skills: skills.map(s => ({ id: s.name, name: s.name, description: s.description })),
+    authentication: { schemes: ['bearer'] },
+  }
 }
 
 function makeRunId(): string {
@@ -263,6 +287,81 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
   }
 }
 
+function handleAgentCard(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
+  if (!deps.defaultProfile.interop?.a2a) return sendJson(res, 404, { error: 'A2A not enabled' })
+  const host = req.headers.host ?? 'localhost'
+  sendJson(res, 200, buildAgentCard(deps.defaultProfile, deps.skills, host))
+}
+
+async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: RestDeps): Promise<void> {
+  if (!deps.defaultProfile.interop?.a2a) return sendJson(res, 404, { error: 'A2A not enabled' })
+
+  let body: { id?: string; message?: { parts?: Array<{ type: string; text?: string }> } }
+  try {
+    body = JSON.parse(await readBody(req))
+  } catch {
+    return sendJson(res, 400, { error: 'malformed JSON body' })
+  }
+
+  const taskId = body.id ?? makeRunId()
+  const parts = body.message?.parts ?? []
+  const userMessage = parts
+    .filter(p => p.type === 'text')
+    .map(p => p.text ?? '')
+    .join('\n')
+
+  if (!userMessage) return sendJson(res, 400, { error: 'no text parts in message' })
+
+  const userId = sanitizeUserId(process.env.HARNESS_USER ?? 'anonymous')
+  const runId = makeRunId()
+  const abort = new AbortController()
+  deps.abortRegistry.set(runId, abort)
+  deps.runStore.create({
+    id: runId,
+    profile: deps.defaultProfile.name,
+    user: userId,
+    trigger: 'a2a',
+    input: userMessage,
+    status: 'running',
+    started_at: new Date().toISOString(),
+  })
+
+  try {
+    const result = await runProfileOnce({
+      profile: deps.defaultProfile,
+      userId,
+      userMessage,
+      events: headlessEvents(),
+      signal: abort.signal,
+    })
+    deps.abortRegistry.delete(runId)
+    deps.runStore.update(runId, {
+      status: 'completed',
+      session_id: result.session.id,
+      finished_at: new Date().toISOString(),
+    })
+    sendJson(res, 200, {
+      id: taskId,
+      status: { state: 'completed' },
+      artifacts: [{ parts: [{ type: 'text', text: result.finalText }] }],
+    })
+  } catch (e: any) {
+    deps.abortRegistry.delete(runId)
+    const existing = deps.runStore.get(runId)
+    if (existing?.status === 'running') {
+      deps.runStore.update(runId, {
+        status: 'failed',
+        error: e.message,
+        finished_at: new Date().toISOString(),
+      })
+    }
+    sendJson(res, 200, {
+      id: taskId,
+      status: { state: 'failed', error: { message: e.message } },
+    })
+  }
+}
+
 export function createRestHandler(deps: RestDeps) {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = (req.url ?? '/').split('?')[0]
@@ -275,6 +374,10 @@ export function createRestHandler(deps: RestDeps) {
     if (deps.apiKey && req.headers['authorization'] !== `Bearer ${deps.apiKey}`) {
       return sendJson(res, 401, { error: 'unauthorized' })
     }
+
+    if (method === 'GET' && url === '/.well-known/agent.json') return handleAgentCard(req, res, deps)
+
+    if (method === 'POST' && url === '/a2a') return handleA2ATask(req, res, deps)
 
     if (method === 'POST' && url === '/run') return handleRun(req, res, deps)
     if (method === 'POST' && url === '/stream') return handleStream(req, res, deps)

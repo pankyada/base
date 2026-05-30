@@ -100,7 +100,7 @@ async function main() {
     console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
   }
 
-  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry })
+  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({ server: httpServer })
   httpServer.listen(PORT, () => {
