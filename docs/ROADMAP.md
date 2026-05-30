@@ -151,19 +151,16 @@ A first-class browser client for the harness — connects to the WS server, rend
 
 ---
 
-### 🔄 9. Agent input requests + todo tool
-**Assigned to: Jules**
+### ✅ 9. Agent input requests + todo tool
 
 Agent can pause its loop and ask the user a question; agents get a built-in todo list with live display in both TUI and web.
 
-**Plan:** `docs/superpowers/plans/2026-05-30-agent-input-and-todos.md`
-
-**To build:**
-- `AskUser` built-in tool — suspends loop, sends `input_request` ServerMessage, awaits `input_response` from client; supports `text`, `select`, `multi_select` kinds
+**What shipped:**
+- `AskUser` built-in tool — suspends loop, sends `input_request` ServerMessage, awaits `input_response`; supports `text`, `select`, `multi_select` kinds
 - `TodoWrite` / `TodoRead` built-in tools — session-scoped todo list, broadcasts `todos` ServerMessage on every write
 - Protocol: `input_request`, `input_response`, `todos` message types in `src/types.ts` + `web/lib/types.ts`
-- TUI: `InputRequestModal` + `TodoPanel` components wired into `app.tsx`
-- Web: `InputRequestModal` + `TodoPanel` components wired into `HarnessApp.tsx`
+- TUI: `InputRequestModal` + `TodoPanel` components
+- Web: `InputRequestModal` + `TodoPanel` components
 
 **Why:** Agents that can ask clarifying questions and track their own tasks are dramatically more reliable for multi-step work.
 
@@ -270,7 +267,7 @@ mode: analyst   # sets defaults; individual tools.builtin overrides still apply
 ✅ #6 A2A + ACP
 ✅ #7 TUI uplift
 ✅ #8 Web client (Next.js)
-🔄 #9 Agent input + todos    ← in progress (Jules)
+✅ #9 Agent input + todos
 ❌ #10 Docs site              ← good next pick; #7 + #8 now exist to document
 ❌ #11 Pluggable code exec    ← prerequisite for analyst mode (#12)
 ❌ #12 Instance modes         ← builds on #11; do after ExecuteCode exists
