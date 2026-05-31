@@ -190,7 +190,7 @@ Public-facing docs site hosted on GitHub Pages covering everything a developer n
 
 ---
 
-### ❌ 11. Pluggable code execution (WASM / Docker / E2B / Daytona)
+### ✅ 11. Pluggable code execution (WASM / Docker / E2B / Daytona)
 
 Sandboxed code execution routed by profile config. WASM runs in the user's browser — zero server-side risk. Docker and cloud sandboxes handle heavy workloads and headless contexts.
 
@@ -279,7 +279,7 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 ✅ #8 Web client (Next.js)
 ✅ #9 Agent input + todos
 ❌ #10 Docs site              ← good next pick; #7 + #8 now exist to document
-❌ #11 Pluggable code exec    ← spec + plan ready; prerequisite for analyst mode (#12)
+✅ #11 Pluggable code execution
 ❌ #12 Instance modes         ← spec + plan ready; builds on #11
 ✅ #13 Simplified deployment
 ```
