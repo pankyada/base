@@ -81,6 +81,16 @@ const AgentEntrySchema = z.object({
 
 export type AgentEntry = z.infer<typeof AgentEntrySchema>
 
+const ExecutorSchema = z.object({
+  default: z.enum(['wasm', 'docker']).default('docker'),
+  fallback: z.literal('docker').default('docker'),
+  docker_image: z.string().default('python:3.12-slim'),
+  timeout_ms: z.number().default(30000),
+  allowed_packages: z.array(z.string()).default([]),
+})
+
+export type ExecutorConfig = z.infer<typeof ExecutorSchema>
+
 export const ProfileSchema = z.object({
   name: z.string(),
   model: z.object({
@@ -143,6 +153,7 @@ export const ProfileSchema = z.object({
     a2a: z.boolean().default(false),
     acp: z.boolean().default(false),
   }).optional(),
+  executor: ExecutorSchema.optional(),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>

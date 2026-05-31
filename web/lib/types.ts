@@ -26,13 +26,14 @@ export interface TelemetryEvent {
 }
 
 export type ClientMessage =
-  | { type: 'hello'; user_id: string }
+  | { type: 'hello'; user_id: string; wasm_supported?: boolean }
   | { type: 'message'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
   | { type: 'tool_approve'; id: string }
   | { type: 'tool_deny'; id: string }
   | { type: 'input_response'; id: string; value: string }
+  | { type: 'code_result'; id: string; stdout: string; stderr: string; exit_code: number; files: Record<string, string> }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -45,6 +46,7 @@ export type ServerMessage =
   | { type: 'artifacts'; sessionId: string; artifacts: Artifact[] }
   | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[] }
   | { type: 'todos'; todos: TodoItem[] }
+  | { type: 'code_execute'; id: string; code: string; language: string; data?: Record<string, unknown> }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 
