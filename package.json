@@ -13,6 +13,7 @@
     "dev:server": "tsx src/server/index.ts",
     "dev:cli": "tsx src/cli/index.ts",
     "dev:tui": "tsx src/tui/index.tsx",
+    "tui": "tsx src/tui/index.tsx",
     "build": "tsc -p tsconfig.json",
     "build:bin": "bun build src/server/index.ts --compile --outfile bin/harness-server --target bun && bun build src/cli/index.ts --compile --outfile bin/harness --target bun && bun build src/tui/index.tsx --compile --outfile bin/harness-tui --target bun --external react-devtools-core",
     "start": "node dist/cli/index.js",
