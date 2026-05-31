@@ -124,7 +124,9 @@ async function main() {
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
     const pendingInputRequests = new Map<string, (value: string) => void>()
+    const pendingCodeExecutions = new Map<string, (result: any) => void>()
     let mcpEntries: McpEntry[] = []
+    let wasmSupported = false
 
     // Init MCP clients async — handlers below work with [] until ready
     createMcpClients(profile)
@@ -148,6 +150,7 @@ async function main() {
         // Only honour hello before the session has any messages
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
+          wasmSupported = msg.wasm_supported ?? false
           session = createSession(profile.name, userId)
           memory = profile.memory?.provider === 'graph'
             ? new GraphMemoryProvider(profile.artifact_dir, session)
@@ -172,6 +175,15 @@ async function main() {
       if (msg.type === 'input_response') {
         const cb = pendingInputRequests.get(msg.id)
         if (cb) { pendingInputRequests.delete(msg.id); cb(msg.value) }
+        return
+      }
+
+      if (msg.type === 'code_result') {
+        const cb = pendingCodeExecutions.get(msg.id)
+        if (cb) {
+          pendingCodeExecutions.delete(msg.id)
+          cb({ id: msg.id, stdout: msg.stdout, stderr: msg.stderr, exit_code: msg.exit_code, files: msg.files, duration_ms: 0 })
+        }
         return
       }
 
@@ -225,6 +237,10 @@ async function main() {
           onTodosUpdate: (todos) => {
             send({ type: 'todos', todos })
           },
+          onCodeExecute: (id, code, language, data) => new Promise(resolve => {
+            pendingCodeExecutions.set(id, resolve)
+            send({ type: 'code_execute', id, code, language, data })
+          }),
         }
         const agentTools = await loadAgentTools(profile)
         const context: ToolContext = {
@@ -232,6 +248,7 @@ async function main() {
           events, openai, signal: abortController.signal, delegateDepth: 0,
           agentTools,
           maxDepth: profile.max_depth ?? 2,
+          wasmSupported,
         }
 
         try {
