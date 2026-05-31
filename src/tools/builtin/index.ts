@@ -16,6 +16,7 @@ import { delegateTool } from './delegate.js'
 import { askUserTool } from './ask-user.js'
 import { todoWriteTool } from './todo-write.js'
 import { todoReadTool } from './todo-read.js'
+import { executeCodeTool } from './execute-code.js'
 
 export { clearRegistry, registerTool } from '../registry.js'
 
@@ -37,4 +38,5 @@ export function registerAll(): void {
   registerTool(askUserTool)
   registerTool(todoWriteTool)
   registerTool(todoReadTool)
+  registerTool(executeCodeTool)
 }

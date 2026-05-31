@@ -16,6 +16,7 @@ const BuiltinToolsSchema = z.object({
   MemoryDelete: AclValue.default('allow'),
   Stats: AclValue.default('allow'),
   Delegate: AclValue.default('prompt'),
+  ExecuteCode: AclValue.default('allow'),
 }).passthrough()
 
 const McpAcl = z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const }))
