@@ -14,7 +14,11 @@ export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void)
     setStatus('connecting')
     const sock = new WebSocket(url)
     ws.current = sock
-    sock.onopen = () => { setStatus('open'); backoff.current = 1000 }
+    sock.onopen = () => {
+      setStatus('open')
+      backoff.current = 1000
+      sock.send(JSON.stringify({ type: 'hello', user_id: 'web-user', wasm_supported: true }))
+    }
     sock.onmessage = e => { try { onMessageRef.current(JSON.parse(e.data)) } catch {} }
     sock.onclose = () => {
       // Guard: if ws.current was nulled by cleanup, this socket is stale — don't reconnect

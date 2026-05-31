@@ -12,7 +12,8 @@ import { Message } from './Message.js'
 import { AgentTurn } from './AgentTurn.js'
 import { Composer } from './Composer.js'
 import { useHarnessWS } from '../hooks/useHarnessWS.js'
-import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind } from '../lib/types.js'
+import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind, ExecutionResult } from '../lib/types.js'
+import { HarnessPython } from './HarnessPython.js'
 import { InputRequestModal } from './InputRequestModal.js'
 import { TodoPanel } from './TodoPanel.js'
 
@@ -34,6 +35,7 @@ interface State {
   pendingInputRequest: {
     id: string; prompt: string; kind: InputRequestKind; options?: string[]
   } | null
+  pendingCodeExecution: { id: string; code: string; language: string; data?: Record<string, unknown> } | null
 }
 
 type Action =
@@ -50,6 +52,7 @@ type Action =
   | { type: 'INPUT_REQUEST'; payload: { id: string; prompt: string; kind: InputRequestKind; options?: string[] } }
   | { type: 'RESOLVE_INPUT_REQUEST' }
   | { type: 'SET_TODOS'; payload: TodoItem[] }
+  | { type: 'RESOLVE_CODE_EXECUTION' }
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -71,6 +74,7 @@ function reducer(state: State, action: Action): State {
     case 'INPUT_REQUEST': return { ...state, pendingInputRequest: action.payload }
     case 'RESOLVE_INPUT_REQUEST': return { ...state, pendingInputRequest: null }
     case 'SET_TODOS': return { ...state, todos: action.payload }
+    case 'RESOLVE_CODE_EXECUTION': return { ...state, pendingCodeExecution: null }
     case 'SERVER_MSG': {
       const msg = action.payload
       if (msg.type === 'token') {
@@ -105,6 +109,9 @@ function reducer(state: State, action: Action): State {
       if (msg.type === 'session_end' || msg.type === 'error') {
         return { ...state, busy: false }
       }
+      if (msg.type === 'code_execute') {
+        return { ...state, pendingCodeExecution: { id: msg.id, code: msg.code, language: msg.language, data: msg.data } }
+      }
       if (msg.type === 'artifacts') {
         const newTab = { id: Math.random().toString(), label: 'Artifacts', icon: '✦', artifacts: msg.artifacts }
         return { ...state, tabs: [...state.tabs, newTab], activeTab: state.tabs.length }
@@ -120,7 +127,7 @@ export function HarnessApp() {
     messages: [], tabs: [], activeTab: 0, input: '', busy: false,
     focusPane: 'conv', paletteOpen: false, tokens: { in: 0, out: 0 },
     pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular',
-    todos: [], pendingInputRequest: null
+    todos: [], pendingInputRequest: null, pendingCodeExecution: null
   })
 
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
@@ -172,6 +179,11 @@ export function HarnessApp() {
   const handleInputResponse = (id: string, value: string) => {
     send({ type: 'input_response', id, value })
     dispatch({ type: 'RESOLVE_INPUT_REQUEST' })
+  }
+
+  const handleCodeResult = (result: ExecutionResult) => {
+    send({ type: 'code_result', id: result.id, stdout: result.stdout, stderr: result.stderr, exit_code: result.exit_code, files: result.files })
+    dispatch({ type: 'RESOLVE_CODE_EXECUTION' })
   }
 
   // Group messages into turns for multi-turn rendering
@@ -269,6 +281,11 @@ export function HarnessApp() {
         theme={state.theme} setTheme={theme => dispatch({ type: 'SET_THEME', theme, palette: state.palette, density: state.density })}
         palette={state.palette} setPalette={palette => dispatch({ type: 'SET_THEME', theme: state.theme, palette, density: state.density })}
         density={state.density} setDensity={density => dispatch({ type: 'SET_THEME', theme: state.theme, palette: state.palette, density })}
+      />
+      <HarnessPython
+        pendingExecution={state.pendingCodeExecution}
+        allowedPackages={[]}
+        onResult={handleCodeResult}
       />
     </div>
   )
