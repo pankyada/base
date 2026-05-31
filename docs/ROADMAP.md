@@ -230,7 +230,7 @@ executor:
 
 ---
 
-### ❌ 12. Instance modes (developer / analyst / assistant / production)
+### ✅ 12. Instance modes (developer / analyst / assistant / production)
 
 First-class `mode:` field on profiles that sets the trust model, default tool ACLs, and documentation for what kind of deployment this is. Operators know what they're running; users know what they're connecting to.
 
@@ -248,16 +248,13 @@ First-class `mode:` field on profiles that sets the trust model, default tool AC
 mode: analyst   # sets defaults; individual tools.builtin overrides still apply
 ```
 
-**To build:**
-- `mode` field in `ProfileSchema` (enum: `developer | analyst | assistant | production`)
-- Mode-to-ACL default map: each mode ships with pre-configured `tools.builtin` defaults
-- `developer` mode logs a warning if `per_user_isolation: true` (destructive + multi-tenant = unsafe)
-- Profile validation: `analyst` mode without `executor:` block warns that code execution falls back to Bash (defeats sandboxing)
-- Documentation for each mode's trust model and intended deployment pattern (feeds into #9)
+**What shipped:**
+- `mode: developer | analyst | assistant | production` field in `ProfileSchema`
+- `MODE_DEFAULTS` constant with per-mode ACL presets; mode wins on conflict with profile `tools.builtin`
+- `applyModeDefaults()` — merges mode ACLs into profile at load time; production unlisted tools → `prompt`
+- `validateMode()` — hard error for developer+triggers; soft warnings for developer, analyst-without-executor, production-without-contract
 
 **Why:** Security model needs to be stated, not just implemented. Today a misconfigured profile can silently run Bash in a multi-tenant context. Mode makes the operator's intent explicit and validates it at startup.
-
-**Status:** spec + plan ready (`docs/superpowers/specs/2026-05-31-instance-modes-design.md`, `docs/superpowers/plans/2026-05-31-instance-modes.md`).
 
 ---
 
@@ -280,7 +277,7 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 ✅ #9 Agent input + todos
 ❌ #10 Docs site              ← good next pick; #7 + #8 now exist to document
 ✅ #11 Pluggable code execution
-❌ #12 Instance modes         ← spec + plan ready; builds on #11
+✅ #12 Instance modes
 ✅ #13 Simplified deployment
 ```
 
