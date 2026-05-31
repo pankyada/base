@@ -5,6 +5,8 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
+ARG NEXT_PUBLIC_HARNESS_WS_URL=ws://localhost:7337
+ENV NEXT_PUBLIC_HARNESS_WS_URL=$NEXT_PUBLIC_HARNESS_WS_URL
 RUN pnpm build
 
 # ---- runtime ----
