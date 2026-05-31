@@ -60,6 +60,15 @@ export interface Artifact {
   [key: string]: unknown
 }
 
+export interface ExecutionResult {
+  id: string
+  stdout: string
+  stderr: string
+  exit_code: number
+  files: Record<string, string>
+  duration_ms: number
+}
+
 export interface WorkspaceTab {
   id: string
   label: string
