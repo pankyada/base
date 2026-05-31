@@ -261,20 +261,11 @@ mode: analyst   # sets defaults; individual tools.builtin overrides still apply
 
 ---
 
-### ❌ 13. Simplified deployment & usage
+### ✅ 13. Simplified deployment & usage
 
 Make the harness trivial to run. Today a TUI session needs two terminals (server + TUI) and there is no container story.
 
-**To build:**
-- **Single-command TUI** — `pnpm tui` (and the compiled `bin/harness-tui`) auto-spawns a server if none is running, waits for health, renders the TUI, and tears down only the server it spawned. Logic in `src/tui/bootstrap.ts`.
-- **Backend Dockerfile** — multi-stage Node image running `dist/server/index.js` with a `/health` healthcheck.
-- **Frontend Dockerfile** — multi-stage Next.js standalone image.
-- **docker-compose.yml** — `server` + `web` stack; browser connects to the published backend port; bind-mounted `./.harness-data` for persistence.
-- **Supporting files** — `.env.example`, `.dockerignore`s, `docs/DEPLOYMENT.md`.
-
-**Why:** Lowers the barrier to running and deploying the harness from "read the source and run two processes" to "one command locally, `docker compose up` for a stack."
-
-**Status:** spec + plan ready (`docs/superpowers/specs/2026-05-31-simplified-deployment-design.md`).
+**What shipped:** `pnpm tui` single-command launcher (auto-spawns server), backend `Dockerfile`, frontend `web/Dockerfile`, `docker-compose.yml` with bind-mounted persistence, `.env.example`, `docs/DEPLOYMENT.md`.
 
 ---
 
@@ -290,7 +281,7 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 ❌ #10 Docs site              ← good next pick; #7 + #8 now exist to document
 ❌ #11 Pluggable code exec    ← spec + plan ready; prerequisite for analyst mode (#12)
 ❌ #12 Instance modes         ← spec + plan ready; builds on #11
-❌ #13 Simplified deployment  ← spec + plan ready; independent, can ship anytime
+✅ #13 Simplified deployment
 ```
 
 ---
