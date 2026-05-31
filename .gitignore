@@ -4,3 +4,4 @@ dist/
 .superpowers/
 bin/
 harness-server
+.harness-data/
