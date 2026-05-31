@@ -82,6 +82,35 @@ const AgentEntrySchema = z.object({
 
 export type AgentEntry = z.infer<typeof AgentEntrySchema>
 
+export const MODE_DEFAULTS: Record<string, Partial<Record<string, 'allow' | 'prompt' | 'deny'>>> = {
+  developer: {
+    Bash: 'allow', Read: 'allow', Write: 'allow', Edit: 'allow',
+    Grep: 'allow', Glob: 'allow', Skill: 'allow', Stats: 'allow',
+    Delegate: 'allow', AskUser: 'allow',
+    MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow',
+    TodoWrite: 'allow', TodoRead: 'allow',
+    ExecuteCode: 'allow',
+  },
+  analyst: {
+    Bash: 'deny', Write: 'deny', Edit: 'deny', Delegate: 'deny',
+    Read: 'allow', ExecuteCode: 'allow', AskUser: 'allow',
+    MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow',
+    TodoWrite: 'allow', TodoRead: 'allow',
+  },
+  assistant: {
+    Bash: 'deny', Write: 'deny', Edit: 'deny', Delegate: 'deny', ExecuteCode: 'deny',
+    Read: 'allow', AskUser: 'allow',
+    MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow',
+    TodoWrite: 'allow', TodoRead: 'allow',
+  },
+  production: {
+    Bash: 'deny', Write: 'deny', Edit: 'deny', Delegate: 'deny', ExecuteCode: 'deny',
+    Read: 'allow', AskUser: 'allow',
+    MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow',
+    TodoWrite: 'allow', TodoRead: 'allow',
+  },
+}
+
 const ExecutorSchema = z.object({
   default: z.enum(['wasm', 'docker']).default('docker'),
   fallback: z.literal('docker').default('docker'),
@@ -155,6 +184,7 @@ export const ProfileSchema = z.object({
     acp: z.boolean().default(false),
   }).optional(),
   executor: ExecutorSchema.optional(),
+  mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
