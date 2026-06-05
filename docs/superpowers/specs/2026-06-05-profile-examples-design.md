@@ -21,7 +21,7 @@ Create 4 example profile YAML files that each demonstrate a distinct harness fea
 | `profiles/writer.yaml` | none (explicit ACLs) | Typed I/O contract + `on_stop` git-stage hook | `claude-sonnet-4-6` |
 | `profiles/security.yaml` | none (explicit ACLs) | Webhook trigger — fires on CI push for automated code audit | `claude-opus-4-8` |
 
-> **Why no `mode:` field?** `applyModeDefaults` in `src/profiles/loader.ts` always overwrites profile-level `tools.builtin` entries — mode wins on conflict. Each profile needs at least one tool every preset mode denies (`Bash` for devops, `Delegate` for research, `Write` for writer, `Grep`+`Skill` for security). Explicit ACLs give full control without mode interference.
+> **Why no `mode:` field?** `applyModeDefaults` in `src/profiles/loader.ts` always overwrites profile-level `tools.builtin` entries — mode wins on conflict. `Bash` is denied by every non-developer mode (blocks devops); `Delegate` and `Write` are denied by every non-developer mode (blocks research and writer); for security, `developer`+webhook throws a hard validation error, `analyst` forces `ExecuteCode: allow`, and `production` sets `Grep`/`Skill`/`Glob` to `prompt`. Explicit ACLs give full control without these mode constraints.
 
 Sub-agent worker profiles for research orchestration:
 - `profiles/researcher.yaml` — fetch-only worker
