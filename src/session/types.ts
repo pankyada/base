@@ -12,7 +12,7 @@ export interface Session {
   id: string
   user: string
   profile: string
-  project?: string
+  project: string
   title?: string
   summary?: string
   created_at: string
