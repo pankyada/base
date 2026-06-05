@@ -36,7 +36,7 @@ hooks:
 
 ### `on_stop`
 
-Runs once when the agent loop terminates (user disconnect, error, or natural end). No tool env vars injected.
+Runs once when the agent loop terminates (user disconnect, error, or natural end). Receives `SESSION_ID` and `PROFILE` env vars.
 
 ```yaml
 hooks:
@@ -51,6 +51,8 @@ hooks:
 |----------|-------------|-------|
 | `TOOL_NAME` | `pre_tool`, `post_tool` | Name of the tool being called (e.g. `Bash`, `Write`) |
 | `TOOL_OK` | `post_tool` only | `true` if the tool succeeded, `false` if it threw |
+| `SESSION_ID` | `on_stop` only | Unique session identifier (e.g. `20260606_abc123def456`) |
+| `PROFILE` | `on_stop` only | Profile name from the loaded configuration |
 
 All other environment variables from the server process are also available (`ANTHROPIC_API_KEY`, `PATH`, etc.).
 
