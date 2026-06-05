@@ -32,10 +32,14 @@ export class GraphMemoryProvider implements MemoryProvider {
     return projectPaths(this.session.user, this.session.project ?? 'inbox').memoryDir
   }
 
+  private dirForScope(scope: 'profile' | 'user' | 'project'): string {
+    if (scope === 'profile') return this.sharedMemDir
+    if (scope === 'project') return this.projectMemDir
+    return this.privateMemDir
+  }
+
   private getGraphPath(scope: 'profile' | 'user' | 'project'): string {
-    const dir = scope === 'profile' ? this.sharedMemDir
-      : scope === 'project' ? this.projectMemDir
-      : this.privateMemDir
+    const dir = this.dirForScope(scope)
     mkdirSync(dir, { recursive: true })
     return join(dir, 'graph.json')
   }
@@ -151,9 +155,7 @@ export class GraphMemoryProvider implements MemoryProvider {
       return `- **${e.key}**: ${e.preview.replace(/\n/g, ' ')}${linksStr}`
     })
 
-    const dir = scope === 'profile' ? this.sharedMemDir
-      : scope === 'project' ? this.projectMemDir
-      : this.privateMemDir
+    const dir = this.dirForScope(scope)
     writeFileSync(join(dir, 'MEMORY.md'), `# Memory Index\n\n${lines.join('\n')}\n`, 'utf-8')
   }
 }
