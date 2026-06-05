@@ -169,7 +169,7 @@ Default scope is `user` (private). Use `profile` to share across all users.
 
 Graph traversal — finds entries that the key links to (forward) and entries that link to the key (reverse).
 
-**ACL default:** `allow`
+**ACL default:** `prompt`
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
