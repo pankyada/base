@@ -1,0 +1,93 @@
+name: research
+description: "Research orchestrator. Fans work out to researcher and summariser sub-agents; synthesises findings into a structured report."
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-opus-4-8
+system_prompt: ./prompts/research.md
+working_dir: $CWD
+artifact_dir: .harness/research
+tools:
+  builtin:
+    Read: allow
+    Write: deny
+    Edit: deny
+    Bash: deny
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: allow
+    MemoryList: allow
+    MemoryDelete: allow
+    Stats: allow
+    Delegate: allow
+    AskUser: allow
+    TodoWrite: allow
+    TodoRead: allow
+    ExecuteCode: deny
+  mcp_servers:
+    - name: fetch
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-fetch"]
+      acl:
+        fetch: allow
+        "*": deny
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+      acl:
+        brave_web_search: allow
+        "*": deny
+agents:
+  - name: researcher
+    profile: ./researcher.yaml
+    input:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+    output:
+      type: object
+      required:
+        - findings
+      properties:
+        findings:
+          type: array
+          items:
+            type: object
+  - name: summariser
+    profile: ./summariser.yaml
+    input:
+      type: object
+      required:
+        - findings
+      properties:
+        findings:
+          type: array
+        format:
+          type: string
+          enum:
+            - markdown
+            - html
+            - plain
+    output:
+      type: object
+      required:
+        - report
+      properties:
+        report:
+          type: string
+improvement:
+  enabled: true
+  mine_skills_every_n_sessions: 10
