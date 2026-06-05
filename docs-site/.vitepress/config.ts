@@ -4,6 +4,7 @@ export default defineConfig({
   title: 'Harness',
   description: 'A WebSocket-based agent harness — profile-driven, MCP-native, multi-agent.',
   base: '/base/',
+  ignoreDeadLinks: 'localhostLinks',
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/getting-started' },
