@@ -330,7 +330,20 @@ export function HarnessApp() {
       <TodoPanel todos={state.todos} />
 
       {state.paletteOpen && (
-        <Palette onClose={() => dispatch({ type: 'TOGGLE_PALETTE' })} onRun={handleSuggest} onReset={() => dispatch({ type: 'CLEAR' })} />
+        <Palette
+          onClose={() => dispatch({ type: 'TOGGLE_PALETTE' })}
+          onRun={handleSuggest}
+          onReset={() => dispatch({ type: 'CLEAR' })}
+          activeProject={state.activeProject}
+          projects={state.projects}
+          history={state.history}
+          onRequestProjects={() => send({ type: 'project_list' })}
+          onRequestHistory={(projectId) => send({ type: 'session_list', ...(projectId ? { projectId } : {}) })}
+          onSwitchProject={(id, name) => { dispatch({ type: 'SET_ACTIVE_PROJECT', id, name }); send({ type: 'session_list', projectId: id }) }}
+          onNewProject={(name) => send({ type: 'project_create', name })}
+          onResume={(sessionId, project) => { send({ type: 'resume', sessionId }); const p = state.projects.find(x => x.id === project); dispatch({ type: 'SET_ACTIVE_PROJECT', id: project, name: p?.name ?? 'Inbox' }) }}
+          onAssign={(projectId) => { if (state.sessionId && state.sessionId !== '…') send({ type: 'project_assign', sessionId: state.sessionId, projectId }) }}
+        />
       )}
       {state.pendingApproval && (
         <ApprovalModal toolName={state.pendingApproval.name} toolInput={state.pendingApproval.input} onApprove={handleApprove} onDeny={handleDeny} />
