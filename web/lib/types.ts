@@ -95,6 +95,8 @@ export interface Project {
 export interface SessionSummary {
   id: string
   project: string
+  title?: string
+  summary?: string
   created_at: string
   usage: { input: number; output: number; cost_usd: number }
 }

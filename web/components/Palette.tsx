@@ -77,8 +77,8 @@ export function Palette(props: Props) {
       .map(p => ({ key: p.id, label: p.name, act: () => { props.onAssign(p.id); onClose() } }))
   } else if (mode === 'history' || mode === 'history_all') {
     rows = history
-      .filter(h => h.id.toLowerCase().includes(lower) || h.project.toLowerCase().includes(lower))
-      .map(h => ({ key: h.id, label: h.id.slice(0, 8), group: h.project, act: () => { props.onResume(h.id, h.project); onClose() } }))
+      .filter(h => (h.title ?? h.id).toLowerCase().includes(lower))
+      .map(h => ({ key: h.id, label: h.title ?? h.id.slice(0, 8), group: h.summary, act: () => { props.onResume(h.id, h.project); onClose() } }))
   }
 
   const submitNewProject = () => {
