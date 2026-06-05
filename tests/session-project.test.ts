@@ -20,4 +20,11 @@ describe('session project + title', () => {
     saveSession(s)
     expect(loadSession('gwen', s.id)!.title).toBe('Refactor the auth flow please and thanks')
   })
+
+  it('does not set a title for a whitespace-only first message', () => {
+    const s = createSession('coding', 'hugo')
+    s.messages.push({ role: 'user', content: '   \n\t  ' })
+    saveSession(s)
+    expect(loadSession('hugo', s.id)!.title).toBeUndefined()
+  })
 })

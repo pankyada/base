@@ -25,7 +25,8 @@ export function saveSession(session: Session): void {
     const firstUser = (session.messages as Array<{ role?: string; content?: unknown }>)
       .find(m => m?.role === 'user' && typeof m.content === 'string')
     if (firstUser && typeof firstUser.content === 'string') {
-      session.title = firstUser.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+      const derived = firstUser.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+      if (derived) session.title = derived
     }
   }
   const { sessionsDir } = userPaths(session.user, '')
