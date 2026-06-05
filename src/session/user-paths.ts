@@ -23,3 +23,17 @@ export function userPaths(user: string, artifactDir: string): UserPaths {
     usageFile: join(homedir(), '.harness', 'usage', `${safe}.json`),
   }
 }
+
+export interface ProjectPaths {
+  recordFile: string
+  memoryDir: string
+}
+
+export function projectPaths(user: string, projectId: string): ProjectPaths {
+  const safe = sanitizeUserId(user)
+  const base = join(homedir(), '.harness', 'projects', safe)
+  return {
+    recordFile: join(base, `${projectId}.json`),
+    memoryDir: join(base, projectId, 'memory'),
+  }
+}
