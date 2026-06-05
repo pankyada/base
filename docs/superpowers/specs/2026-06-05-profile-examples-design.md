@@ -14,12 +14,14 @@ Create 4 example profile YAML files that each demonstrate a distinct harness fea
 
 ## Profiles Overview
 
-| File | Mode | Unique feature | Model |
-|------|------|----------------|-------|
-| `profiles/devops.yaml` | `developer` | Cron trigger — daily infra health check at 08:00 | `claude-sonnet-4-6` |
-| `profiles/research.yaml` | `analyst` | `agents:` block — orchestrator + researcher + summariser sub-agents | `claude-opus-4-8` |
-| `profiles/writer.yaml` | `assistant` | Typed I/O contract + `on_stop` git-stage hook | `claude-sonnet-4-6` |
-| `profiles/security.yaml` | `developer` | Webhook trigger — fires on CI push for automated code audit | `claude-opus-4-8` |
+| File | Mode | Unique harness feature | Model |
+|------|------|------------------------|-------|
+| `profiles/devops.yaml` | none (explicit ACLs) | Cron trigger — daily infra health check at 08:00 | `claude-sonnet-4-6` |
+| `profiles/research.yaml` | none (explicit ACLs) | `agents:` block — orchestrator + researcher + summariser sub-agents | `claude-opus-4-8` |
+| `profiles/writer.yaml` | none (explicit ACLs) | Typed I/O contract + `on_stop` git-stage hook | `claude-sonnet-4-6` |
+| `profiles/security.yaml` | none (explicit ACLs) | Webhook trigger — fires on CI push for automated code audit | `claude-opus-4-8` |
+
+> **Why no `mode:` field?** `applyModeDefaults` in `src/profiles/loader.ts` always overwrites profile-level `tools.builtin` entries — mode wins on conflict. Each profile needs at least one tool every preset mode denies (`Bash` for devops, `Delegate` for research, `Write` for writer, `Grep`+`Skill` for security). Explicit ACLs give full control without mode interference.
 
 Sub-agent worker profiles for research orchestration:
 - `profiles/researcher.yaml` — fetch-only worker
@@ -33,7 +35,7 @@ Sub-agent worker profiles for research orchestration:
 
 **What it does:** Infra health-check agent. Wakes daily at 08:00 via cron, checks system state, writes a dated report to `.harness/devops/reports/`. Also usable interactively for shell tasks, Docker ops, GitHub CI queries.
 
-**Mode:** `developer` — Bash, Read, Write, Edit, Delegate all allowed by default.
+**Mode:** none — explicit ACLs
 
 **Cron trigger:**
 ```yaml
@@ -57,7 +59,7 @@ triggers:
 
 **What it does:** Orchestrator that fans work to two sub-agents. The `researcher` fetches and reads sources; the `summariser` synthesises findings into a structured report. Parent agent coordinates via `Delegate` and `DelegateFanout`, does not fetch directly.
 
-**Mode:** `analyst` — Bash/Write/Edit denied. `Delegate: allow` overrides analyst default `deny` (needed for orchestration).
+**Mode:** none — explicit ACLs
 
 **`agents:` block:**
 ```yaml
@@ -95,7 +97,7 @@ agents:
 
 **What it does:** Content-generation agent for docs, changelogs, blog posts, emails. Accepts a typed input contract. On stop, a shell hook stages drafts with `git add` so nothing is lost.
 
-**Mode:** `assistant` — no shell, no code exec. `Write: allow` overrides assistant default `deny`, scoped by prompt to `artifacts/writer/drafts/` only.
+**Mode:** none — explicit ACLs
 
 **Typed I/O contract:**
 ```yaml
@@ -132,7 +134,7 @@ hooks:
 
 **What it does:** Code-audit agent. Fires via webhook on CI push (`POST /webhooks/security`). Reads source files, runs analysis via Bash (grep-based pattern matching, language-specific linters), writes a findings report. Also works interactively for manual audits.
 
-**Mode:** `developer` with `Write: deny` override — reads and executes analysis, never modifies source files. Prevents accidental patch application.
+**Mode:** none — explicit ACLs
 
 **Webhook trigger:**
 ```yaml
