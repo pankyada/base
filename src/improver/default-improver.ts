@@ -6,6 +6,7 @@ import { MemoryProvider } from '../memory/interface.js'
 import { Improver, ProposedSkill } from './interface.js'
 import { queryEvents } from '../telemetry/query.js'
 import { Profile } from '../profiles/schema.js'
+import { saveSession } from '../session/store.js'
 
 export class DefaultImprover implements Improver {
   constructor(
@@ -34,14 +35,18 @@ export class DefaultImprover implements Improver {
         model: this.modelId,
         messages: [{
           role: 'user',
-          content: `Review this agent session. Identify 0-3 things worth remembering for future sessions. Output ONLY a JSON array: [{"key":"slug","content":"markdown"}]. Empty array if nothing significant.\n\nCurrent memory:${memSection}\n\nTranscript:\n${transcript}`,
+          content: `Review this agent session. Identify 0-3 things worth remembering for future sessions. Output ONLY JSON: {"summary":"one short line describing the session","memories":[{"key":"slug","content":"markdown"}]} (memories may be empty).\n\nCurrent memory:${memSection}\n\nTranscript:\n${transcript}`,
         }],
       })
-      const raw = response.choices[0].message.content ?? '[]'
+      const raw = response.choices[0].message.content ?? '{}'
       // strip markdown code fences if present
       const cleaned = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim()
-      memories = JSON.parse(cleaned)
-      if (!Array.isArray(memories)) memories = []
+      const parsed = JSON.parse(cleaned) as { summary?: string; memories?: Array<{ key: string; content: string }> }
+      memories = Array.isArray(parsed.memories) ? parsed.memories : []
+      if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+        session.summary = parsed.summary.trim()
+        saveSession(session)
+      }
     } catch {
       return
     }
