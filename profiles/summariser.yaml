@@ -1,0 +1,32 @@
+name: summariser
+description: "Synthesis worker. Takes research findings and writes a structured report. Called by the research orchestrator."
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-sonnet-4-6
+system_prompt: ./prompts/summariser.md
+working_dir: $CWD
+artifact_dir: .harness/summariser
+tools:
+  builtin:
+    Read: allow
+    Write: allow
+    Edit: deny
+    Bash: deny
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: deny
+    MemoryList: allow
+    MemoryDelete: deny
+    Stats: allow
+    Delegate: deny
+    AskUser: deny
+    TodoWrite: deny
+    TodoRead: deny
+    ExecuteCode: deny
+  mcp_servers: []
+improvement:
+  enabled: false
+  mine_skills_every_n_sessions: 10

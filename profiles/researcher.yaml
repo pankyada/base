@@ -1,0 +1,48 @@
+name: researcher
+description: "Fetch-only research worker. Retrieves web sources and extracts structured findings. Called by the research orchestrator."
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-sonnet-4-6
+system_prompt: ./prompts/researcher.md
+working_dir: $CWD
+artifact_dir: .harness/researcher
+tools:
+  builtin:
+    Read: allow
+    Write: deny
+    Edit: deny
+    Bash: deny
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: allow
+    MemoryList: allow
+    MemoryDelete: deny
+    Stats: allow
+    Delegate: deny
+    AskUser: deny
+    TodoWrite: deny
+    TodoRead: deny
+    ExecuteCode: deny
+  mcp_servers:
+    - name: fetch
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-fetch"]
+      acl:
+        fetch: allow
+        "*": deny
+    - name: brave-search
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-brave-search"]
+      env:
+        BRAVE_API_KEY: "${BRAVE_API_KEY}"
+      acl:
+        brave_web_search: allow
+        "*": deny
+improvement:
+  enabled: false
+  mine_skills_every_n_sessions: 10
