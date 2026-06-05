@@ -8,9 +8,10 @@ The harness provides persistent key-value memory with three scopes and two stora
 |-------|-----------------|---------|------------|
 | `session` | In-memory on `Session` | No | No — cleared when session ends |
 | `profile` | `<artifact_dir>/memory/*.md` | Yes — all users | Yes |
-| `user` | `~/.harness/memory/<profile>/<user>/*.md` | No — private | Yes |
+| `user` | `<artifact_dir>/users/<user>/memory/*.md` | No — private per-user | Yes |
+| `project` | `~/.harness/projects/<user>/<projectId>/memory/*.md` | No — private per-project | Yes |
 
-`MemoryWrite` defaults to `user` scope. Use `profile` to share data across all users of a profile.
+`MemoryWrite` defaults to `user` scope. Use `profile` to share data across all users of a profile. Use `project` to store data scoped to a specific project context.
 
 ## Providers
 
@@ -79,16 +80,27 @@ MemoryLinked({
 
 ## System prompt injection
 
-At session start, the server reads all `profile`-scope memory and injects it into the system prompt:
+At session start, the server reads memory from up to three scopes and injects them into the system prompt:
+
+- **`profile` (shared)** — injected as `## Memory (shared)` — visible to all users of the profile
+- **`user` (private)** — injected as `## Memory (yours)` — private to the current user
+- **`project`** — injected as `## Memory (project)` — only included when the session has a non-`inbox` project set
+
+Example injected section:
 
 ```
-## Shared Memory
+## Memory (shared)
 
-### project-context
-This project uses a pnpm monorepo...
+- **project-context**: This project uses a pnpm monorepo...
+- **deployment-notes**: Deploy via docker compose. Port 7337.
 
-### deployment-notes
-Deploy via docker compose. Port 7337.
+## Memory (yours)
+
+- **perf-issue**: N+1 query in /api/users — fix with eager load
+
+## Memory (project)
+
+- **sprint-goal**: Ship auth v2 by end of week
 ```
 
 This means the agent always has context from previous sessions without an explicit `MemoryRead` call.
