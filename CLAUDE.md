@@ -73,6 +73,21 @@ Server (ws:7337)
 
 Profiles live in `profiles/` (project-local) or `~/.harness/profiles/`. Load order for paths in profile YAML: `$CWD` expands to `process.cwd()`, `~` to `homedir()`.
 
+Example profiles in `profiles/` (each demonstrates a distinct harness feature):
+
+| Profile | Feature | Model |
+|---------|---------|-------|
+| `coding.yaml` | Baseline dev assistant | gpt-5.4-mini |
+| `data.yaml` | Read-only data analysis | gpt-4o |
+| `devops.yaml` | Cron trigger + GitHub/log MCP | claude-sonnet-4-6 |
+| `research.yaml` | `agents:` block — orchestrator + 2 workers | claude-opus-4-8 |
+| `researcher.yaml` | Worker: fetch + brave-search MCP | claude-sonnet-4-6 |
+| `summariser.yaml` | Worker: synthesis, no MCP | claude-sonnet-4-6 |
+| `writer.yaml` | Typed I/O contract + `on_stop` git hook | claude-sonnet-4-6 |
+| `security.yaml` | Webhook trigger + read-only ACL | claude-opus-4-8 |
+
+All Anthropic profiles use `base_url: https://api.anthropic.com/v1` (OpenAI-compatible endpoint). No `mode:` field is used — `applyModeDefaults` always wins over profile-level overrides, so these profiles use explicit ACLs for full control. See `docs/superpowers/specs/2026-06-05-profile-examples-design.md` for the design rationale.
+
 ### Skills
 
 Skills are directories under `.agents/skills/<name>/` containing a `SKILL.md` file with gray-matter frontmatter (`name`, `description`). Optional subdirs: `scripts/`, `references/`, `assets/`.

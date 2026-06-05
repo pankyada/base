@@ -10,9 +10,9 @@ It contains the master feature list with status (✅ done / 🔄 in progress / �
 
 ## Suggested next feature
 
-**#3 — First-class multi-agent composition** (see ROADMAP.md for full spec).
+**#10 — Comprehensive product documentation (GitHub Pages)** (see ROADMAP.md for full spec).
 
-This is the highest-leverage item remaining. The `Delegate` tool (`src/tools/builtin/delegate.ts`) is a working foundation — build on it rather than around it.
+This is the only remaining `❌` item. All runtime features are done; the blocker is discoverability. VitePress is the recommended stack — zero-config, Markdown-native, fast. The TUI (#7), web client (#8), and example profiles (`profiles/devops.yaml`, `profiles/research.yaml`, `profiles/writer.yaml`, `profiles/security.yaml`) are the primary things to document.
 
 ## Architecture overview
 
