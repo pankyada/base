@@ -1,0 +1,68 @@
+name: writer
+description: "Content-generation agent for blog posts, changelogs, email drafts, and docs. Accepts typed input; drafts are staged with git on stop."
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-sonnet-4-6
+system_prompt: ./prompts/writer.md
+working_dir: $CWD
+artifact_dir: .harness/writer
+tools:
+  builtin:
+    Read: allow
+    Write: allow
+    Edit: deny
+    Bash: deny
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: allow
+    MemoryList: allow
+    MemoryDelete: allow
+    Stats: allow
+    Delegate: deny
+    AskUser: allow
+    TodoWrite: allow
+    TodoRead: allow
+    ExecuteCode: deny
+  mcp_servers: []
+contract:
+  input:
+    type: object
+    required:
+      - topic
+      - format
+    properties:
+      topic:
+        type: string
+        description: "What to write about"
+      format:
+        type: string
+        enum:
+          - blog
+          - changelog
+          - email
+          - docs
+      tone:
+        type: string
+        enum:
+          - formal
+          - casual
+          - technical
+        default: formal
+  output:
+    type: object
+    properties:
+      draft:
+        type: string
+      word_count:
+        type: integer
+hooks:
+  pre_tool: []
+  post_tool: []
+  on_stop:
+    - "git add .harness/writer/drafts 2>/dev/null || true"
+improvement:
+  enabled: true
+  mine_skills_every_n_sessions: 10
