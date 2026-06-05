@@ -275,6 +275,7 @@ export function HarnessApp() {
     <div className="app">
       <TopBar
         profileName={state.profile}
+        projectName={state.activeProjectName}
         sessionId={state.sessionId}
         busy={state.busy}
         onPalette={() => dispatch({ type: 'TOGGLE_PALETTE' })}
