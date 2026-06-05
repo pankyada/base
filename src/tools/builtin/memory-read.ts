@@ -6,13 +6,13 @@ export const memoryReadTool: ToolDefinition = {
   parameters: {
     type: 'object',
     properties: {
-      scope: { type: 'string', enum: ['session', 'profile', 'user'] },
+      scope: { type: 'string', enum: ['session', 'profile', 'user', 'project'] },
       key: { type: 'string' },
     },
     required: ['scope', 'key'],
   },
   async execute(input, ctx: ToolContext) {
-    const { scope, key } = input as { scope: 'session' | 'profile' | 'user'; key: string }
+    const { scope, key } = input as { scope: 'session' | 'profile' | 'user' | 'project'; key: string }
     const val = await ctx.memory.read(scope, key)
     if (!val) return `(no memory entry for key: ${key})`
 
