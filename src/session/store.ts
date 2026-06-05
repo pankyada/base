@@ -9,6 +9,7 @@ export function createSession(profileName: string, user: string): Session {
     id: randomUUID().replace(/-/g, '').slice(0, 8),
     user: sanitizeUserId(user),
     profile: profileName,
+    project: 'inbox',
     created_at: new Date().toISOString(),
     messages: [],
     tool_calls: [],
@@ -19,6 +20,14 @@ export function createSession(profileName: string, user: string): Session {
 }
 
 export function saveSession(session: Session): void {
+  if (!session.project) session.project = 'inbox'
+  if (!session.title) {
+    const firstUser = (session.messages as Array<{ role?: string; content?: unknown }>)
+      .find(m => m?.role === 'user' && typeof m.content === 'string')
+    if (firstUser && typeof firstUser.content === 'string') {
+      session.title = firstUser.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+    }
+  }
   const { sessionsDir } = userPaths(session.user, '')
   mkdirSync(sessionsDir, { recursive: true })
   const date = session.created_at.slice(0, 10)

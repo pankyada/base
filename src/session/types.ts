@@ -12,6 +12,9 @@ export interface Session {
   id: string
   user: string
   profile: string
+  project: string       // projectId — always set; defaults to "inbox"
+  title?: string        // auto-derived from first user message
+  summary?: string      // LLM-generated at session end
   created_at: string
   messages: unknown[]
   tool_calls: SessionToolCall[]
