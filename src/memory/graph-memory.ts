@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { MemoryProvider, MemoryEntry, MemoryLink } from './interface.js'
 import { Session } from '../session/types.js'
-import { userPaths } from '../session/user-paths.js'
+import { userPaths, projectPaths } from '../session/user-paths.js'
 
 interface GraphNode {
   key: string
@@ -28,13 +28,19 @@ export class GraphMemoryProvider implements MemoryProvider {
     return userPaths(this.session.user, this.artifactDir).privateMemDir
   }
 
-  private getGraphPath(scope: 'profile' | 'user'): string {
-    const dir = scope === 'profile' ? this.sharedMemDir : this.privateMemDir
+  private get projectMemDir(): string {
+    return projectPaths(this.session.user, this.session.project ?? 'inbox').memoryDir
+  }
+
+  private getGraphPath(scope: 'profile' | 'user' | 'project'): string {
+    const dir = scope === 'profile' ? this.sharedMemDir
+      : scope === 'project' ? this.projectMemDir
+      : this.privateMemDir
     mkdirSync(dir, { recursive: true })
     return join(dir, 'graph.json')
   }
 
-  private loadGraph(scope: 'profile' | 'user'): GraphData {
+  private loadGraph(scope: 'profile' | 'user' | 'project'): GraphData {
     const path = this.getGraphPath(scope)
     if (existsSync(path)) {
       try {
@@ -46,12 +52,12 @@ export class GraphMemoryProvider implements MemoryProvider {
     return { nodes: {} }
   }
 
-  private saveGraph(scope: 'profile' | 'user', data: GraphData): void {
+  private saveGraph(scope: 'profile' | 'user' | 'project', data: GraphData): void {
     const path = this.getGraphPath(scope)
     writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8')
   }
 
-  async read(scope: 'session' | 'profile' | 'user', key: string): Promise<{content: string, links?: MemoryLink[]} | null> {
+  async read(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<{content: string, links?: MemoryLink[]} | null> {
     if (scope === 'session') {
       const val = this.session.session_memory[key]
       if (!val) return null
@@ -68,7 +74,7 @@ export class GraphMemoryProvider implements MemoryProvider {
     return { content: node.content, links: node.links }
   }
 
-  async write(scope: 'session' | 'profile' | 'user', key: string, content: string, links?: MemoryLink[]): Promise<void> {
+  async write(scope: 'session' | 'profile' | 'user' | 'project', key: string, content: string, links?: MemoryLink[]): Promise<void> {
     if (scope === 'session') {
       this.session.session_memory[key] = JSON.stringify({ content, links })
       return
@@ -79,7 +85,7 @@ export class GraphMemoryProvider implements MemoryProvider {
     await this.rebuildIndex(scope)
   }
 
-  async delete(scope: 'session' | 'profile' | 'user', key: string): Promise<void> {
+  async delete(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<void> {
     if (scope === 'session') {
       delete this.session.session_memory[key]
       return
@@ -92,7 +98,7 @@ export class GraphMemoryProvider implements MemoryProvider {
     }
   }
 
-  async list(scope: 'session' | 'profile' | 'user'): Promise<MemoryEntry[]> {
+  async list(scope: 'session' | 'profile' | 'user' | 'project'): Promise<MemoryEntry[]> {
     if (scope === 'session') {
       return Object.entries(this.session.session_memory).map(([key, val]) => {
         let preview = val.slice(0, 100)
@@ -126,10 +132,17 @@ export class GraphMemoryProvider implements MemoryProvider {
       parts.push(`## Memory (yours)\n${readFileSync(privateIndex, 'utf-8')}`)
     }
 
+    if ((this.session.project ?? 'inbox') !== 'inbox') {
+      const projectIndex = join(this.projectMemDir, 'MEMORY.md')
+      if (existsSync(projectIndex)) {
+        parts.push(`## Memory (project)\n${readFileSync(projectIndex, 'utf-8')}`)
+      }
+    }
+
     return parts.length > 0 ? '\n\n' + parts.join('\n\n') : ''
   }
 
-  private async rebuildIndex(scope: 'profile' | 'user'): Promise<void> {
+  private async rebuildIndex(scope: 'profile' | 'user' | 'project'): Promise<void> {
     const entries = await this.list(scope)
     const lines = entries.map(e => {
       const linksStr = e.links && e.links.length > 0
@@ -138,7 +151,9 @@ export class GraphMemoryProvider implements MemoryProvider {
       return `- **${e.key}**: ${e.preview.replace(/\n/g, ' ')}${linksStr}`
     })
 
-    const dir = scope === 'profile' ? this.sharedMemDir : this.privateMemDir
+    const dir = scope === 'profile' ? this.sharedMemDir
+      : scope === 'project' ? this.projectMemDir
+      : this.privateMemDir
     writeFileSync(join(dir, 'MEMORY.md'), `# Memory Index\n\n${lines.join('\n')}\n`, 'utf-8')
   }
 }
