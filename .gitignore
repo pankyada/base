@@ -5,3 +5,4 @@ dist/
 bin/
 harness-server
 .harness-data/
+docs-site/.vitepress/cache/

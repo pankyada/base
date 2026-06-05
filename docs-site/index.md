@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: Get Started
-      link: /base/getting-started
+      link: /getting-started
     - theme: alt
       text: GitHub
       link: https://github.com/pankyada/base
