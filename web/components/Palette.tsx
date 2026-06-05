@@ -11,7 +11,7 @@ interface Props {
   projects: Project[]
   history: SessionSummary[]
   onRequestProjects: () => void
-  onRequestHistory: (projectId?: string) => void
+  onRequestHistory: (projectId: string) => void
   onSwitchProject: (id: string, name: string) => void
   onNewProject: (name: string) => void
   onResume: (sessionId: string, project: string) => void
@@ -87,7 +87,7 @@ export function Palette(props: Props) {
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') { mode === 'root' ? onClose() : (setMode('root'), setFilter('')) ; return }
+    if (e.key === 'Escape') { e.stopPropagation(); mode === 'root' ? onClose() : (setMode('root'), setFilter('')) ; return }
     if (mode === 'project_new') {
       if (e.key === 'Enter') submitNewProject()
       return
