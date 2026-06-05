@@ -1,0 +1,61 @@
+name: devops
+description: "Infra health-check and DevOps automation agent. Runs daily at 08:00 via cron; usable interactively too."
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-sonnet-4-6
+  fallback_id: claude-sonnet-4-6
+system_prompt: ./prompts/devops.md
+working_dir: $CWD
+artifact_dir: .harness/devops
+tools:
+  builtin:
+    Read: allow
+    Write: allow
+    Edit: allow
+    Bash: allow
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: allow
+    MemoryList: allow
+    MemoryDelete: allow
+    Stats: allow
+    Delegate: allow
+    AskUser: allow
+    TodoWrite: allow
+    TodoRead: allow
+    ExecuteCode: deny
+  mcp_servers:
+    - name: github
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+      acl:
+        list_pull_requests: allow
+        get_pull_request: allow
+        list_commits: allow
+        get_file_contents: allow
+        "*": prompt
+    - name: logs
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/var/log"]
+      acl:
+        read_file: allow
+        list_directory: allow
+        "*": deny
+triggers:
+  cron: "0 8 * * *"
+  cron_input:
+    task: "Run daily infra health check. Check disk usage (df -h), top 5 memory consumers (ps aux --sort=-%mem | head -6), and open GitHub PRs. Write a dated Markdown report to reports/."
+hooks:
+  pre_tool: []
+  post_tool: []
+  on_stop: []
+improvement:
+  enabled: true
+  mine_skills_every_n_sessions: 10
