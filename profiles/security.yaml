@@ -1,0 +1,71 @@
+name: security
+description: "Read-only code-audit agent. Fires on CI push via webhook; inspects source files for vulnerability patterns and writes a findings report."
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-opus-4-8
+system_prompt: ./prompts/security.md
+working_dir: $CWD
+artifact_dir: .harness/security
+tools:
+  builtin:
+    Read: allow
+    Write: deny
+    Edit: deny
+    Bash: deny
+    Grep: allow
+    Glob: allow
+    Skill: allow
+    MemoryRead: allow
+    MemoryWrite: allow
+    MemoryList: allow
+    MemoryDelete: allow
+    Stats: allow
+    Delegate: deny
+    AskUser: deny
+    TodoWrite: allow
+    TodoRead: allow
+    ExecuteCode: deny
+  mcp_servers:
+    - name: codebase
+      transport: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "$CWD"]
+      acl:
+        read_file: allow
+        list_directory: allow
+        "*": deny
+triggers:
+  webhook: true
+contract:
+  input:
+    type: object
+    required:
+      - repo_path
+      - commit_sha
+    properties:
+      repo_path:
+        type: string
+        description: "Absolute path to the repository root"
+      commit_sha:
+        type: string
+        description: "The commit SHA to audit"
+      languages:
+        type: array
+        items:
+          type: string
+        description: "Languages present in the repo e.g. ['typescript', 'python']"
+  output:
+    type: object
+    properties:
+      findings:
+        type: array
+        items:
+          type: object
+      severity_counts:
+        type: object
+      report_path:
+        type: string
+improvement:
+  enabled: true
+  mine_skills_every_n_sessions: 10
