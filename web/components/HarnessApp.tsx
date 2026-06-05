@@ -12,12 +12,12 @@ import { Message } from './Message'
 import { AgentTurn } from './AgentTurn'
 import { Composer } from './Composer'
 import { useHarnessWS } from '../hooks/useHarnessWS'
-import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind, ExecutionResult } from '../lib/types'
+import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind, ExecutionResult, Project, SessionSummary } from '../lib/types'
 import { HarnessPython } from './HarnessPython'
 import { InputRequestModal } from './InputRequestModal'
 import { TodoPanel } from './TodoPanel'
 
-interface State {
+export interface State {
   messages: UIMessage[]
   tabs: WorkspaceTab[]
   activeTab: number
@@ -38,9 +38,13 @@ interface State {
     id: string; prompt: string; kind: InputRequestKind; options?: string[]
   } | null
   pendingCodeExecution: { id: string; code: string; language: string; data?: Record<string, unknown> } | null
+  activeProject: string
+  activeProjectName: string
+  projects: Project[]
+  history: SessionSummary[]
 }
 
-type Action =
+export type Action =
   | { type: 'INPUT'; payload: string }
   | { type: 'USER_MSG'; payload: string }
   | { type: 'SERVER_MSG'; payload: any }
@@ -55,8 +59,11 @@ type Action =
   | { type: 'RESOLVE_INPUT_REQUEST' }
   | { type: 'SET_TODOS'; payload: TodoItem[] }
   | { type: 'RESOLVE_CODE_EXECUTION' }
+  | { type: 'SET_ACTIVE_PROJECT'; id: string; name: string }
+  | { type: 'SET_PROJECTS'; payload: Project[] }
+  | { type: 'SET_HISTORY'; payload: SessionSummary[] }
 
-function reducer(state: State, action: Action): State {
+export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'INPUT': return { ...state, input: action.payload }
     case 'USER_MSG':
@@ -77,6 +84,9 @@ function reducer(state: State, action: Action): State {
     case 'RESOLVE_INPUT_REQUEST': return { ...state, pendingInputRequest: null }
     case 'SET_TODOS': return { ...state, todos: action.payload }
     case 'RESOLVE_CODE_EXECUTION': return { ...state, pendingCodeExecution: null }
+    case 'SET_ACTIVE_PROJECT': return { ...state, activeProject: action.id, activeProjectName: action.name }
+    case 'SET_PROJECTS': return { ...state, projects: action.payload }
+    case 'SET_HISTORY': return { ...state, history: action.payload }
     case 'SERVER_MSG': {
       const msg = action.payload
       if (msg.type === 'token') {
@@ -128,6 +138,15 @@ function reducer(state: State, action: Action): State {
         const newTab = { id: Math.random().toString(), label: 'Artifacts', icon: '✦', artifacts: msg.artifacts }
         return { ...state, tabs: [...state.tabs, newTab], activeTab: state.tabs.length }
       }
+      if (msg.type === 'projects') {
+        return { ...state, projects: msg.projects }
+      }
+      if (msg.type === 'project_created') {
+        return { ...state, projects: [...state.projects, msg.project], activeProject: msg.project.id, activeProjectName: msg.project.name }
+      }
+      if (msg.type === 'sessions') {
+        return { ...state, history: msg.sessions }
+      }
       return state
     }
     default: return state
@@ -140,7 +159,8 @@ export function HarnessApp() {
     focusPane: 'conv', paletteOpen: false, tokens: { in: 0, out: 0 },
     pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular',
     todos: [], pendingInputRequest: null, pendingCodeExecution: null,
-    profile: '…', sessionId: '…'
+    profile: '…', sessionId: '…',
+    activeProject: 'inbox', activeProjectName: 'Inbox', projects: [], history: [],
   })
 
   // YOLO mode — persisted to localStorage, reconnects WS when toggled
