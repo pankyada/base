@@ -2,6 +2,23 @@ export type AclValue = 'allow' | 'prompt' | 'deny'
 
 export type InputRequestKind = 'text' | 'select' | 'multi_select'
 
+export interface Project {
+  id: string
+  user: string
+  name: string
+  created_at: string
+  description?: string
+}
+
+export interface SessionSummary {
+  id: string
+  project: string
+  title?: string
+  summary?: string
+  created_at: string
+  usage: { input: number; output: number; cost_usd: number }
+}
+
 export interface TodoItem {
   id: string
   content: string
@@ -34,6 +51,10 @@ export type ClientMessage =
   | { type: 'tool_deny'; id: string }
   | { type: 'input_response'; id: string; value: string }
   | { type: 'code_result'; id: string; stdout: string; stderr: string; exit_code: number; files: Record<string, string> }
+  | { type: 'project_create'; name: string; description?: string }
+  | { type: 'project_list' }
+  | { type: 'project_assign'; sessionId: string; projectId: string }
+  | { type: 'session_list'; projectId?: string }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -49,6 +70,9 @@ export type ServerMessage =
   | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[] }
   | { type: 'todos'; todos: TodoItem[] }
   | { type: 'code_execute'; id: string; code: string; language: string; data?: Record<string, unknown> }
+  | { type: 'project_created'; project: Project }
+  | { type: 'projects'; projects: Project[] }
+  | { type: 'sessions'; sessions: SessionSummary[] }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 
