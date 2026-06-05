@@ -19,8 +19,13 @@ tools:
     MemoryRead: allow
     MemoryWrite: allow
     MemoryList: allow
+    MemoryDelete: allow
     Stats: allow
     Delegate: prompt
+    TodoWrite: allow
+    TodoRead: allow
+    AskUser: allow
+    ExecuteCode: allow
   mcp_servers: []
 hooks:
   pre_tool: []

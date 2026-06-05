@@ -27,7 +27,7 @@ export function ApprovalModal({ toolName, toolInput, onApprove, onDeny }: Props)
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
       <div style={{ width: '500px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '0.5rem', padding: '1rem' }}>
-        <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '1rem' }}>Tool Approval Required</div>
+        <div style={{ color: 'var(--accent)', marginBottom: '1rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Tool Approval Required</div>
         <div style={{ marginBottom: '0.5rem' }}>The agent wants to run: <span style={{ color: 'var(--info)' }}>{toolName}</span></div>
         <pre style={{ background: 'var(--bg)', padding: '0.5rem', border: '1px solid var(--border)', overflowX: 'auto', marginBottom: '1rem', color: 'var(--dim)' }}>
           {JSON.stringify(toolInput, null, 2)}

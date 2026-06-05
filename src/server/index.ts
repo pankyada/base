@@ -11,7 +11,7 @@ import { CronScheduler } from '../scheduler/cron.js'
 import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
-import { loadProfile } from '../profiles/loader.js'
+import { loadProfile, applyModeDefaults } from '../profiles/loader.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
@@ -55,6 +55,8 @@ async function main() {
 
   // Crash recovery: re-queue any runs left in 'running' state from a prior crash
   const stalledRuns = runStore.scanRunning()
+  const stalledFailed = new Map<string, number>() // profile → count
+  const stalledRequeued: string[] = []
   for (const run of stalledRuns) {
     const candidates = [
       resolve(process.cwd(), 'profiles', `${run.profile}.yaml`),
@@ -63,7 +65,7 @@ async function main() {
     const runProfilePath = candidates.find(p => existsSync(p))
     if (!runProfilePath) {
       runStore.update(run.id, { status: 'failed', error: 'profile not found on restart', finished_at: new Date().toISOString() })
-      console.warn(`[runs] stalled run ${run.id} failed: profile '${run.profile}' not found`)
+      stalledFailed.set(run.profile, (stalledFailed.get(run.profile) ?? 0) + 1)
       continue
     }
     const stalledProfile = loadProfile(runProfilePath)
@@ -74,7 +76,13 @@ async function main() {
     })
       .then(r => runStore.update(run.id, { status: 'completed', session_id: r.session.id, finished_at: new Date().toISOString() }))
       .catch(e => runStore.update(run.id, { status: 'failed', error: e.message, finished_at: new Date().toISOString() }))
-    console.log(`[runs] re-queued stalled run ${run.id} (profile: ${run.profile})`)
+    stalledRequeued.push(run.id)
+  }
+  for (const [profile, count] of stalledFailed) {
+    console.warn(`[runs] ${count} stalled run(s) failed: profile '${profile}' not found`)
+  }
+  if (stalledRequeued.length) {
+    console.log(`[runs] re-queued ${stalledRequeued.length} stalled run(s)`)
   }
 
   clearRegistry()
@@ -127,6 +135,7 @@ async function main() {
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     let mcpEntries: McpEntry[] = []
     let wasmSupported = false
+    let connectionProfile = profile  // may be overridden to developer mode via yolo
 
     // Init MCP clients async — handlers below work with [] until ready
     createMcpClients(profile)
@@ -151,12 +160,17 @@ async function main() {
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
           wasmSupported = msg.wasm_supported ?? false
-          session = createSession(profile.name, userId)
-          memory = profile.memory?.provider === 'graph'
-            ? new GraphMemoryProvider(profile.artifact_dir, session)
-            : new FsMemoryProvider(profile.artifact_dir, session)
+          // YOLO mode: apply developer ACL preset (all tools = allow) for this connection
+          connectionProfile = msg.yolo
+            ? applyModeDefaults({ ...profile, mode: 'developer' })
+            : profile
+          session = createSession(connectionProfile.name, userId)
+          memory = connectionProfile.memory?.provider === 'graph'
+            ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
+            : new FsMemoryProvider(connectionProfile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
         }
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, yolo: msg.yolo ?? false })
         return
       }
 
@@ -195,7 +209,7 @@ async function main() {
             ? new GraphMemoryProvider(profile.artifact_dir, session)
             : new FsMemoryProvider(profile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
-          send({ type: 'session_end', sessionId: session.id })
+          send({ type: 'session_resumed', sessionId: session.id })
         } else {
           send({ type: 'error', message: `Session ${msg.sessionId} not found` })
         }
@@ -242,17 +256,17 @@ async function main() {
             send({ type: 'code_execute', id, code, language, data })
           }),
         }
-        const agentTools = await loadAgentTools(profile)
+        const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
-          profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
+          profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
           events, openai, signal: abortController.signal, delegateDepth: 0,
           agentTools,
-          maxDepth: profile.max_depth ?? 2,
+          maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
         }
 
         try {
-          await runAgentLoop(msg.content, profile, session, context, events, openai, abortController.signal)
+          await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, abortController.signal)
         } catch (e: any) {
           if (e.name !== 'AbortError') {
             send({ type: 'error', message: e.message })

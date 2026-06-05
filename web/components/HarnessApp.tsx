@@ -1,21 +1,21 @@
 'use client'
 import { useState, useReducer, useEffect, useRef } from 'react'
-import { TopBar } from './TopBar.js'
-import { StatusBar } from './StatusBar.js'
-import { ConvColumn } from './ConvColumn.js'
-import { Workspace } from './Workspace.js'
-import { Palette } from './Palette.js'
-import { Tweaks } from './Tweaks.js'
-import { ApprovalModal } from './ApprovalModal.js'
-import { Hero } from './Hero.js'
-import { Message } from './Message.js'
-import { AgentTurn } from './AgentTurn.js'
-import { Composer } from './Composer.js'
-import { useHarnessWS } from '../hooks/useHarnessWS.js'
-import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind, ExecutionResult } from '../lib/types.js'
-import { HarnessPython } from './HarnessPython.js'
-import { InputRequestModal } from './InputRequestModal.js'
-import { TodoPanel } from './TodoPanel.js'
+import { TopBar } from './TopBar'
+import { StatusBar } from './StatusBar'
+import { ConvColumn } from './ConvColumn'
+import { Workspace } from './Workspace'
+import { Palette } from './Palette'
+import { Tweaks } from './Tweaks'
+import { ApprovalModal } from './ApprovalModal'
+import { Hero } from './Hero'
+import { Message } from './Message'
+import { AgentTurn } from './AgentTurn'
+import { Composer } from './Composer'
+import { useHarnessWS } from '../hooks/useHarnessWS'
+import { UIMessage, WorkspaceTab, Artifact, TodoItem, InputRequestKind, ExecutionResult } from '../lib/types'
+import { HarnessPython } from './HarnessPython'
+import { InputRequestModal } from './InputRequestModal'
+import { TodoPanel } from './TodoPanel'
 
 interface State {
   messages: UIMessage[]
@@ -32,6 +32,8 @@ interface State {
   palette: string
   density: string
   todos: TodoItem[]
+  profile: string
+  sessionId: string
   pendingInputRequest: {
     id: string; prompt: string; kind: InputRequestKind; options?: string[]
   } | null
@@ -103,11 +105,21 @@ function reducer(state: State, action: Action): State {
       if (msg.type === 'todos') {
         return { ...state, todos: msg.todos }
       }
+      if (msg.type === 'session_ready') {
+        return { ...state, profile: msg.profile, sessionId: msg.sessionId }
+      }
       if (msg.type === 'stats') {
         return { ...state, tokens: { in: msg.tokens_in, out: msg.tokens_out } }
       }
-      if (msg.type === 'session_end' || msg.type === 'error') {
+      if (msg.type === 'session_end' || msg.type === 'session_resumed') {
         return { ...state, busy: false }
+      }
+      if (msg.type === 'error') {
+        return {
+          ...state,
+          busy: false,
+          messages: [...state.messages, { id: Math.random().toString(), role: 'agent' as const, content: `⚠ ${msg.message}` }],
+        }
       }
       if (msg.type === 'code_execute') {
         return { ...state, pendingCodeExecution: { id: msg.id, code: msg.code, language: msg.language, data: msg.data } }
@@ -127,11 +139,33 @@ export function HarnessApp() {
     messages: [], tabs: [], activeTab: 0, input: '', busy: false,
     focusPane: 'conv', paletteOpen: false, tokens: { in: 0, out: 0 },
     pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular',
-    todos: [], pendingInputRequest: null, pendingCodeExecution: null
+    todos: [], pendingInputRequest: null, pendingCodeExecution: null,
+    profile: '…', sessionId: '…'
   })
 
+  // YOLO mode — persisted to localStorage, reconnects WS when toggled
+  const [yolo, setYolo] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('harness-yolo') === 'true'
+  })
+
+  const toggleYolo = () => {
+    const next = !yolo
+    localStorage.setItem('harness-yolo', String(next))
+    setYolo(next)
+  }
+
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
-  const { send, status, reconnect } = useHarnessWS(wsUrl, msg => dispatch({ type: 'SERVER_MSG', payload: msg }))
+  const { send, status, reconnect } = useHarnessWS(
+    wsUrl,
+    msg => dispatch({ type: 'SERVER_MSG', payload: msg }),
+    { yolo }
+  )
+
+  // Sync theme state → HTML attribute so CSS tokens apply
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', state.theme)
+  }, [state.theme])
 
   // Ref so the stable keydown handler can read current state without re-registering
   const stateRef = useRef(state)
@@ -210,8 +244,8 @@ export function HarnessApp() {
   return (
     <div className="app">
       <TopBar
-        profileName="harness-core"
-        sessionId="abc1234"
+        profileName={state.profile}
+        sessionId={state.sessionId}
         busy={state.busy}
         onPalette={() => dispatch({ type: 'TOGGLE_PALETTE' })}
       />
@@ -236,7 +270,6 @@ export function HarnessApp() {
               ))}
             </div>
           )}
-          <TodoPanel todos={state.todos} />
           <Composer
             value={state.input}
             onChange={v => dispatch({ type: 'INPUT', payload: v })}
@@ -258,8 +291,13 @@ export function HarnessApp() {
         focusPane={state.focusPane}
         tokens={state.tokens}
         theme={state.theme}
+        yolo={yolo}
         onToggleTheme={() => dispatch({ type: 'SET_THEME', theme: state.theme === 'dark' ? 'light' : 'dark', palette: state.palette, density: state.density })}
+        onToggleYolo={toggleYolo}
       />
+
+      {/* Floating task tracker */}
+      <TodoPanel todos={state.todos} />
 
       {state.paletteOpen && (
         <Palette onClose={() => dispatch({ type: 'TOGGLE_PALETTE' })} onRun={handleSuggest} onReset={() => dispatch({ type: 'CLEAR' })} />

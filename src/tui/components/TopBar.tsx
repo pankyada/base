@@ -17,7 +17,7 @@ export function TopBar({ profileName, sessionId, busy }: Props) {
       <Box>
         <Text color={C.accent} bold>◆ harness</Text>
         <Text color={C.dim}> │ </Text>
-        <Text>model {profileName}</Text>
+        <Text>profile {profileName}</Text>
         <Text color={C.dim}> │ </Text>
         <Text>session #{sessionId}</Text>
         <Text color={C.dim}> │ </Text>

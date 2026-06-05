@@ -6,6 +6,9 @@ export function getAcl(toolName: string, profile: Profile): AclValue {
   if (builtin && toolName in builtin) {
     return builtin[toolName]
   }
+  if (builtin && '*' in builtin) {
+    return builtin['*']
+  }
 
   // Fallback to custom tools ACL
   const custom = profile.tools?.custom as Record<string, AclValue> | undefined

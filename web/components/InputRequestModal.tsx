@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import type { InputRequestKind } from '../lib/types.js'
+import type { InputRequestKind } from '../lib/types'
 
 interface Props {
   id: string
@@ -49,8 +49,8 @@ export function InputRequestModal({ id, prompt, kind, options = [], onSubmit }: 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
       <div style={{ width: '520px', background: 'var(--panel)', border: '1px solid var(--accent)', borderRadius: '0.5rem', padding: '1.25rem' }}>
-        <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.75rem' }}>Agent Question</div>
-        <div style={{ marginBottom: '1rem', color: 'var(--fg)' }}>{prompt}</div>
+        <div style={{ color: 'var(--accent)', marginBottom: '0.75rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Agent Question</div>
+        <div style={{ marginBottom: '1rem', color: 'var(--text)' }}>{prompt}</div>
 
         {kind === 'text' && (
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -60,7 +60,7 @@ export function InputRequestModal({ id, prompt, kind, options = [], onSubmit }: 
               onChange={e => setTextValue(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && textValue.trim()) onSubmit(id, textValue.trim()) }}
               placeholder="Type your answer..."
-              style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--fg)', padding: '0.5rem', borderRadius: '0.25rem' }}
+              style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', padding: '0.5rem', borderRadius: '0.25rem' }}
             />
             <button
               onClick={() => textValue.trim() && onSubmit(id, textValue.trim())}
@@ -101,7 +101,7 @@ export function InputRequestModal({ id, prompt, kind, options = [], onSubmit }: 
                     display: 'flex',
                     alignItems: 'center',
                     gap: '0.5rem',
-                    color: 'var(--fg)',
+                    color: 'var(--text)',
                   }}
                 >
                   <span style={{ color: isSelected || (kind === 'select' && isActive) ? 'var(--accent)' : 'var(--dim)' }}>

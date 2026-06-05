@@ -49,6 +49,10 @@ ws.on('message', (raw) => {
       process.stdout.write(`\n[session: ${msg.sessionId}]\n`)
       prompt()
       break
+    case 'session_resumed':
+      process.stdout.write(`\n[resumed: ${msg.sessionId}]\n`)
+      prompt()
+      break
     case 'error':
       process.stdout.write(`\n[error] ${msg.message}\n`)
       prompt()

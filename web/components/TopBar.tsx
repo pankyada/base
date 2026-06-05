@@ -1,4 +1,4 @@
-import { useClock } from '../hooks/useClock.js'
+import { useClock } from '../hooks/useClock'
 
 interface Props {
   profileName: string
@@ -12,9 +12,9 @@ export function TopBar({ profileName, sessionId, busy, onPalette }: Props) {
   return (
     <div className="topbar">
       <div>
-        <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>◆ harness</span>
+        <span style={{ color: 'var(--accent)' }}>◆ harness</span>
         <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>
-        <span>model {profileName}</span>
+        <span>profile {profileName}</span>
         <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>
         <span>session #{sessionId.slice(0, 4)}</span>
         <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>

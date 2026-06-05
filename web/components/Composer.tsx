@@ -18,7 +18,7 @@ export function Composer({ value, onChange, onSubmit, busy, compact }: Props) {
 
   return (
     <div className="composer" style={{ padding: '1rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '1rem' }}>
-      <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>›</span>
+      <span style={{ color: 'var(--accent)' }}>›</span>
       <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         <textarea
           value={value}

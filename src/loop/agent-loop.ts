@@ -46,6 +46,7 @@ export async function runAgentLoop(
       messages: session.messages as OpenAI.ChatCompletionMessageParam[],
       tools: openaiTools.length > 0 ? openaiTools : undefined,
       stream: true,
+      stream_options: { include_usage: true },
     }, { signal })
 
     let assistantContent = ''

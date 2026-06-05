@@ -1,4 +1,4 @@
-import { Artifact } from '../lib/types.js'
+import { Artifact } from '../lib/types'
 
 // Simple placeholder components for all widgets to pass typechecking first
 export function Metrics({ data }: { data: unknown }) { return <div>Metrics Widget</div> }

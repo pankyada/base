@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef } from 'react'
-import type { ExecutionResult } from '../lib/types.js'
+import type { ExecutionResult } from '../lib/types'
 
 interface PendingExecution {
   id: string

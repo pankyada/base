@@ -3,7 +3,6 @@ import { Box, useApp, useInput, Text } from 'ink'
 import { useWs } from './hooks/use-ws.js'
 import { TopBar } from './components/TopBar.js'
 import { StatusBar } from './components/StatusBar.js'
-import { ConvColumn } from './components/ConvColumn.js'
 import { Workspace } from './components/Workspace.js'
 import { Palette } from './components/Palette.js'
 import { Hero } from './components/Hero.js'
@@ -22,6 +21,8 @@ import { TodoPanel } from './components/TodoPanel.js'
 const PROFILE = process.env.HARNESS_PROFILE ?? 'coding'
 const SESSION_ID = Math.random().toString(36).slice(2, 10)
 
+const now = () => new Date().toLocaleTimeString('en-US', { hour12: false })
+
 interface TabState extends Tab {
   artifacts: ArtifactWidget[]
 }
@@ -37,6 +38,7 @@ export function App() {
   const [busy, setBusy] = useState(false)
   const [focusPane, setFocusPane] = useState<'conv'|'work'>('conv')
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [toolsExpanded, setToolsExpanded] = useState(false)
   const [tokens, setTokens] = useState({ in: 0, out: 0 })
   const [theme, setTheme] = useState('dark')
   const [pendingApproval, setPendingApproval] = useState<{ id: string; name: string; input: unknown } | null>(null)
@@ -57,7 +59,7 @@ export function App() {
         if (last && last.role === 'agent') {
           m[m.length - 1] = { ...last, content: (last.content || '') + msg.content }
         } else {
-          m.push({ id: Math.random().toString(), role: 'agent', content: msg.content })
+          m.push({ id: Math.random().toString(), role: 'agent', time: now(), content: msg.content })
         }
         return m
       })
@@ -98,7 +100,11 @@ export function App() {
       setTodos(msg.todos)
     }
     if (msg.type === 'stats') setTokens({ in: msg.tokens_in, out: msg.tokens_out })
-    if (msg.type === 'session_end' || msg.type === 'error') setBusy(false)
+    if (msg.type === 'session_end' || msg.type === 'session_resumed') setBusy(false)
+    if (msg.type === 'error') {
+      setBusy(false)
+      setMessages(prev => [...prev, { id: Math.random().toString(), role: 'agent', time: now(), content: `⚠ ${msg.message}` }])
+    }
     if (msg.type === 'artifacts') {
       setTabs(prev => [...prev, { id: Math.random().toString(), label: 'Artifacts', artifacts: msg.artifacts }])
       setActiveTab(prev => prev)
@@ -126,7 +132,7 @@ export function App() {
 
   const handleSend = (value: string) => {
     if (!value.trim()) return
-    setMessages(prev => [...prev, { id: Math.random().toString(), role: 'user', content: value }])
+    setMessages(prev => [...prev, { id: Math.random().toString(), role: 'user', time: now(), content: value }])
     setBusy(true)
     setInput('')
     send({ type: 'message', content: value })
@@ -157,6 +163,7 @@ export function App() {
     }
     if (key.ctrl && keyInput === 'k') { setPaletteOpen(o => !o); return }
     if (key.ctrl && keyInput === 'l') { handleClear(); return }
+    if (key.ctrl && keyInput === 'o') { setToolsExpanded(o => !o); return }
     if (key.escape) { setPaletteOpen(false); return }
     if (keyInput === '/') { setFocusPane('conv'); return }
     if (key.tab && tabs.length > 0) { setFocusPane(p => p === 'conv' ? 'work' : 'conv'); return }
@@ -202,33 +209,35 @@ export function App() {
         </Box>
       )}
 
-      <Box flexGrow={1} flexDirection="row">
-        <Box width={cWidth} flexDirection="column">
-          <ConvColumn split={workspaceOpen}>
+      <Box flexGrow={1} flexDirection="row" minHeight={0}>
+        <Box width={cWidth} flexDirection="column" minHeight={0}>
+          {/* Scroll viewport: fixed-height, clipped, pinned to newest (auto-tail) */}
+          <Box flexGrow={1} flexDirection="column" justifyContent="flex-end" overflow="hidden" minHeight={0}>
             {messages.length === 0 ? (
-              <Hero onSelect={handleSuggest} />
+              <Hero onSelect={handleSuggest} cols={cols} />
             ) : (
-              <Box flexGrow={1} flexDirection="column">
+              <Box flexDirection="column">
                 {turns.map((t, i) => t.type === 'user' ? (
-                  <Message key={t.msg.id} role="user" time="--:--:--">
+                  <Message key={t.msg.id} role="user" time={t.msg.time ?? ''}>
                     <Text>{t.msg.content}</Text>
                   </Message>
                 ) : (
-                  <Message key={`agent-${i}`} role="agent" time="--:--:--">
-                    <AgentTurn message={t.agentMsg ?? {}} tools={t.tools} />
+                  <Message key={`agent-${i}`} role="agent" time={t.agentMsg?.time ?? ''}>
+                    <AgentTurn message={t.agentMsg ?? {}} tools={t.tools} expanded={toolsExpanded} />
                   </Message>
                 ))}
               </Box>
             )}
-            {todos.length > 0 && <TodoPanel todos={todos} />}
-            <Composer
-              value={input}
-              onChange={setInput}
-              onSubmit={handleSend}
-              busy={busy}
-              compact={workspaceOpen}
-            />
-          </ConvColumn>
+          </Box>
+          {/* Fixed chrome below the viewport */}
+          {todos.length > 0 && <TodoPanel todos={todos} />}
+          <Composer
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSend}
+            busy={busy}
+            compact={workspaceOpen}
+          />
         </Box>
 
         {workspaceOpen && (
@@ -252,6 +261,7 @@ export function App() {
         focusPane={focusPane}
         tokens={tokens}
         theme={theme}
+        toolsExpanded={toolsExpanded}
       />
 
       {paletteOpen && (

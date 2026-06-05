@@ -26,7 +26,7 @@ export interface TelemetryEvent {
 }
 
 export type ClientMessage =
-  | { type: 'hello'; user_id: string; wasm_supported?: boolean }
+  | { type: 'hello'; user_id: string; wasm_supported?: boolean; yolo?: boolean }
   | { type: 'message'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
@@ -40,7 +40,9 @@ export type ServerMessage =
   | { type: 'tool_start'; name: string; input: Record<string, unknown> }
   | { type: 'tool_end'; name: string; result: string }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'session_ready'; sessionId: string; profile: string; yolo: boolean }
   | { type: 'session_end'; sessionId: string }
+  | { type: 'session_resumed'; sessionId: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number }
   | { type: 'error'; message: string }
   | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[] }
@@ -63,6 +65,7 @@ export interface ArtifactWidget {
 export interface UIMessage {
   id: string;
   role: 'user' | 'agent' | 'tool-prompt' | 'tool-call';
+  time?: string;
   content?: string;
   name?: string;
   input?: Record<string, unknown>;

@@ -7,9 +7,10 @@ import type { UIMessage } from '../../types.js'
 interface Props {
   message: { content?: string }
   tools: any[]
+  expanded?: boolean
 }
 
-export function AgentTurn({ message, tools }: Props) {
+export function AgentTurn({ message, tools, expanded = false }: Props) {
   const isDone = tools.every(t => t.status === 'done')
   const activeIdx = tools.findIndex(t => t.status === 'running')
   return (
@@ -22,6 +23,7 @@ export function AgentTurn({ message, tools }: Props) {
           key={t.id}
           tool={{ type: t.name || '', arg: JSON.stringify(t.input || {}), out: t.result || '', done: t.status === 'done' }}
           running={t.status === 'running'}
+          expanded={expanded}
         />
       ))}
       {message.content && (

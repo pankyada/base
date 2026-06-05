@@ -1,5 +1,5 @@
-import { ArtifactKind, WorkspaceTab } from '../lib/types.js'
-import { GenWidget } from '../widgets/GenWidget.js'
+import { ArtifactKind, WorkspaceTab } from '../lib/types'
+import { GenWidget } from '../widgets/GenWidget'
 
 interface Props {
   tabs: WorkspaceTab[]

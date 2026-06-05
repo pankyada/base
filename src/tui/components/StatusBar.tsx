@@ -10,9 +10,10 @@ interface Props {
   surfaceTotal?: number
   tokens: { in: number; out: number }
   theme: string
+  toolsExpanded?: boolean
 }
 
-export function StatusBar({ busy, focusPane, surface, surfaceIdx, surfaceTotal, tokens, theme }: Props) {
+export function StatusBar({ busy, focusPane, surface, surfaceIdx, surfaceTotal, tokens, theme, toolsExpanded }: Props) {
   return (
     <Box width="100%" justifyContent="space-between" marginTop={1}>
       <Box>
@@ -33,6 +34,8 @@ export function StatusBar({ busy, focusPane, surface, surfaceIdx, surfaceTotal, 
         <Text>{tokens.in} in / {tokens.out} out</Text>
       </Box>
       <Box>
+        <Text color={C.dim}>^O tools: {toolsExpanded ? 'on' : 'off'}</Text>
+        <Text color={C.dim}> │ </Text>
         <Text>theme: {theme}</Text>
       </Box>
     </Box>

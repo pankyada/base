@@ -5,12 +5,13 @@ import { C } from '../theme.js'
 interface Props {
   tool: { type: string; arg: string; out: string; done: boolean }
   running: boolean
+  expanded?: boolean
 }
 
-export function ToolCall({ tool, running }: Props) {
-  // We mock the open state for Ink since there's no native mouse click.
-  // We'll default to expanded if there's output for now.
-  const open = tool.done && tool.out && tool.out.length > 0
+export function ToolCall({ tool, running, expanded = false }: Props) {
+  // Collapsed by default; ctrl+o toggles expansion of all tool output.
+  const hasOut = tool.done && !!tool.out && tool.out.length > 0
+  const open = expanded && hasOut
 
   return (
     <Box flexDirection="column" marginY={0}>

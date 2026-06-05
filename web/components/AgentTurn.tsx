@@ -1,6 +1,6 @@
-import { Thinking } from './Thinking.js'
-import { ToolCall } from './ToolCall.js'
-import { UIMessage } from '../lib/types.js'
+import { Thinking } from './Thinking'
+import { ToolCall } from './ToolCall'
+import { UIMessage } from '../lib/types'
 
 interface Props {
   message: UIMessage
