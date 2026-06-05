@@ -195,7 +195,7 @@ export function App() {
     if (key.ctrl && keyInput === 'k') { setPaletteOpen(o => !o); return }
     if (key.ctrl && keyInput === 'l') { handleClear(); return }
     if (key.ctrl && keyInput === 'o') { setToolsExpanded(o => !o); return }
-    if (key.escape) { setPaletteOpen(false); return }
+    if (key.escape) { if (paletteOpen) return; return }
     if (keyInput === '/') { setFocusPane('conv'); return }
     if (key.tab && tabs.length > 0) { setFocusPane(p => p === 'conv' ? 'work' : 'conv'); return }
     if (/^[1-9]$/.test(keyInput) && tabs.length > 0) {

@@ -108,7 +108,7 @@ export function Palette({
       else { setMode(result.mode); setFilter('') }
       return
     }
-    if (key.downArrow) setSelectedIndex(i => Math.min(i + 1, items.length - 1))
+    if (key.downArrow) setSelectedIndex(i => Math.min(i + 1, Math.max(items.length - 1, 0)))
     if (key.upArrow) setSelectedIndex(i => Math.max(i - 1, 0))
     if (key.return && items.length > 0) {
       const item = items[selectedIndex]
