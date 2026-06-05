@@ -182,6 +182,16 @@ export function HarnessApp() {
     { yolo }
   )
 
+  // Auto-assign new sessions to the active project (skip inbox — that's the default)
+  const assignedFor = useRef<string>('')
+  useEffect(() => {
+    const sid = state.sessionId
+    if (sid && sid !== '…' && state.activeProject !== 'inbox' && assignedFor.current !== sid) {
+      assignedFor.current = sid
+      send({ type: 'project_assign', sessionId: sid, projectId: state.activeProject })
+    }
+  }, [state.sessionId, state.activeProject, send])
+
   // Sync theme state → HTML attribute so CSS tokens apply
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', state.theme)
