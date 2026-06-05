@@ -7,10 +7,11 @@ interface Props {
   profileName: string
   sessionId: string
   busy: boolean
+  activeProjectName?: string
   onPalette?: () => void
 }
 
-export function TopBar({ profileName, sessionId, busy }: Props) {
+export function TopBar({ profileName, sessionId, busy, activeProjectName }: Props) {
   const clock = useClock()
   return (
     <Box width="100%" justifyContent="space-between">
@@ -20,6 +21,8 @@ export function TopBar({ profileName, sessionId, busy }: Props) {
         <Text>profile {profileName}</Text>
         <Text color={C.dim}> │ </Text>
         <Text>session #{sessionId}</Text>
+        <Text color={C.dim}> │ </Text>
+        <Text color={C.info}>{activeProjectName ?? 'Inbox'}</Text>
         <Text color={C.dim}> │ </Text>
         <Text color={busy ? C.accent : C.ok}>●</Text>
         <Text> {busy ? 'working' : 'ready'}</Text>
