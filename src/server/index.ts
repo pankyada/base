@@ -26,6 +26,7 @@ import { buildSkillIndex } from '../skills/indexer.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
+import { handleProjectMessage } from './project-handlers.js'
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
 
@@ -215,6 +216,9 @@ async function main() {
         }
         return
       }
+
+      const projectReply = handleProjectMessage(msg, userId)
+      if (projectReply) { send(projectReply); return }
 
       if (msg.type === 'message') {
         // Build system prompt with memory on first turn
