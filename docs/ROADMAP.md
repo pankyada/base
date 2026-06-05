@@ -166,7 +166,7 @@ Agent can pause its loop and ask the user a question; agents get a built-in todo
 
 ---
 
-### ❌ 10. Comprehensive product documentation (GitHub Pages)
+### ✅ 10. Comprehensive product documentation (GitHub Pages)
 
 Public-facing docs site hosted on GitHub Pages covering everything a developer needs to understand, configure, and extend the harness.
 
@@ -275,7 +275,7 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 ✅ #7 TUI uplift
 ✅ #8 Web client (Next.js)
 ✅ #9 Agent input + todos
-❌ #10 Docs site              ← good next pick; #7 + #8 now exist to document
+✅ #10 Docs site
 ✅ #11 Pluggable code execution
 ✅ #12 Instance modes
 ✅ #13 Simplified deployment
