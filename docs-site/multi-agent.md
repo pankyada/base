@@ -42,13 +42,29 @@ agents:
 ```
 
 Each `agents:` entry declares:
-- `name` — how the orchestrator calls the worker (e.g. `Delegate({ profile: "researcher", task: "..." })`)
+- `name` — becomes a **named tool** the orchestrator calls directly (e.g. `researcher({ "query": "..." })`)
 - `profile` — path to the worker's profile YAML (relative to the orchestrator's profile)
 - `input` / `output` — full JSON Schema objects, validated at call time
 
-## `Delegate` tool
+When `agents:` is declared, the harness registers one tool per entry using the entry's `name`. The orchestrator invokes workers by calling those tools directly — **not** via the standalone `Delegate` tool. A `DelegateFanout` tool is also injected automatically for parallel dispatch.
 
-Dispatches a single sub-agent synchronously. Returns the worker's final reply plus a tool usage summary.
+## Calling named agent tools
+
+Each entry in `agents:` becomes a callable tool with the agent's name. The tool accepts the fields declared in the entry's `input` schema:
+
+```json
+researcher({ "query": "transformer efficiency" })
+```
+
+```json
+summariser({ "findings": [...], "format": "markdown" })
+```
+
+The tool runs the worker's full agent loop and returns the worker's output as a JSON string matching the declared `output` schema.
+
+## `Delegate` tool (standalone, no `agents:` block)
+
+`Delegate` is a **separate built-in tool** for ad-hoc profile calls when no `agents:` block is declared. It dispatches a single sub-agent by profile name with a free-text task description. Returns the worker's final reply plus a tool usage summary.
 
 ```json
 Delegate({
@@ -57,11 +73,13 @@ Delegate({
 })
 ```
 
-The worker runs its own full agent loop (with its own tools, memory, and MCP servers) and returns when complete. The orchestrator receives both the final text response and a summary of which tools the sub-agent used.
+Use `Delegate` when you need to call a worker on the fly without pre-declaring typed I/O contracts. The worker runs its own full agent loop and returns when complete.
+
+> **Note:** `Delegate` has a hardcoded depth limit of 1 — sub-agents called via `Delegate` cannot delegate further.
 
 ## `DelegateFanout`
 
-Dispatch N sub-agents in parallel. Pass an array of tasks — all run concurrently, results collected when all complete.
+Dispatch N named sub-agents in parallel. `DelegateFanout` is automatically available when `agents:` is declared — no extra configuration needed. Pass an array of tasks — all run concurrently, results collected when all complete.
 
 ```json
 DelegateFanout({
@@ -77,17 +95,21 @@ Each task specifies:
 - `agent` — name of a sub-agent declared in the orchestrator's `agents:` block
 - `input` — an object matching that agent's declared `input` schema
 
-Returns an array of results, each containing `{ agent, output }` or `{ agent, error }` in the same order as input tasks. Successful results include the agent's final output; failed tasks include an error message instead.
+Returns an array of results in the same order as the input tasks, each containing `{ agent, output }` or `{ agent, error }`. Successful results include the agent's validated output object; failed tasks include an error message instead.
 
 ## Depth limit
 
-`max_depth` in the profile prevents infinite recursive delegation. Default: `2`.
+`max_depth` in the orchestrator's profile prevents infinite recursive delegation. Default: `2`.
 
 - Depth 0 = the orchestrator itself
-- Depth 1 = first-level workers called via `Delegate` or `DelegateFanout`
+- Depth 1 = first-level workers called via named agent tools or `DelegateFanout`
 - Depth 2 = workers spawned by workers (if `max_depth: 2`)
 
-At max depth, `Delegate` calls are rejected with an error.
+At max depth, further delegation is rejected with an error. Set `max_depth` in the profile:
+
+```yaml
+max_depth: 3  # allow three levels of nesting
+```
 
 ## Typed I/O contracts
 
@@ -101,7 +123,7 @@ Input and output schemas declared in the orchestrator's `agents:` block are enfo
 The `research` profile demonstrates a two-worker orchestration pattern:
 
 ```yaml
-name: research-orchestrator
+name: research
 model:
   base_url: https://api.anthropic.com/v1
   api_key_env: ANTHROPIC_API_KEY
@@ -109,15 +131,14 @@ model:
 
 system_prompt: ./prompts/research.md
 artifact_dir: .harness/research
-max_depth: 2
 
 tools:
   builtin:
-    Delegate: allow        # orchestrator needs delegation
-    DelegateFanout: allow  # or parallel delegation (optional)
     Read: allow
-    Write: allow
-    Bash: deny             # orchestrator doesn't run shell commands
+    Grep: allow
+    Glob: allow
+    Write: deny
+    Bash: deny
     ExecuteCode: deny
 
 agents:
@@ -150,6 +171,8 @@ agents:
         report: { type: string }
 ```
 
+Named agent tools (`researcher`, `summariser`) and `DelegateFanout` are injected automatically from the `agents:` block — no `tools.builtin` entries needed for them.
+
 **Worker profiles:**
 
 `profiles/researcher.yaml` — fetch + brave-search MCP, no Write or Delegate. Focuses on sourcing.
@@ -159,14 +182,14 @@ agents:
 **How the orchestrator uses them:**
 
 1. Receives research query from user
-2. `Delegate({ profile: "researcher", task: "Find sources on X" })` → gets `findings`
-3. `Delegate({ profile: "summariser", task: "Summarise these findings as a report", ... })` → gets `report`
+2. `researcher({ "query": "Find sources on X" })` → returns `{ "findings": [...] }`
+3. `summariser({ "findings": [...], "format": "markdown" })` → returns `{ "report": "..." }`
 4. Returns the report to the user
 
 Alternatively, for parallel research across multiple topics:
 
-1. `DelegateFanout({ tasks: [ { agent: "researcher", input: { query: "topic A" } }, { agent: "researcher", input: { query: "topic B" } } ] })` → all run in parallel
-2. Collect all findings, then pass to `Delegate({ profile: "summariser", ... })` for unified synthesis
+1. `DelegateFanout({ "tasks": [ { "agent": "researcher", "input": { "query": "topic A" } }, { "agent": "researcher", "input": { "query": "topic B" } } ] })` → all run in parallel
+2. Collect all findings, then pass to `summariser({ "findings": [...], "format": "markdown" })` for unified synthesis
 
 ## Worker profile tips
 
