@@ -48,5 +48,5 @@ Worker profiles (sub-agents) should typically set `enabled: false` — they run 
 ## Storage
 
 - Per-session learnings: appended to `<artifact_dir>/learnings/<YYYY-MM-DD>.md`
-- Memories: written to `~/.harness/memory/<profile>/<user>/` via `MemoryWrite`
+- Memories: written to `<artifact_dir>/users/<user>/memory/` via `MemoryWrite`
 - Session count (for N-session trigger): `<artifact_dir>/session-count.json`
