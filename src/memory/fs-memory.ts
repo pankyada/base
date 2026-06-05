@@ -3,7 +3,7 @@ import { join } from 'path'
 import matter from 'gray-matter'
 import { MemoryProvider, MemoryEntry, MemoryLink } from './interface.js'
 import { Session } from '../session/types.js'
-import { userPaths } from '../session/user-paths.js'
+import { userPaths, projectPaths } from '../session/user-paths.js'
 
 export class FsMemoryProvider implements MemoryProvider {
   constructor(
@@ -19,11 +19,17 @@ export class FsMemoryProvider implements MemoryProvider {
     return userPaths(this.session.user, this.artifactDir).privateMemDir
   }
 
-  private dirFor(scope: 'profile' | 'user'): string {
-    return scope === 'profile' ? this.sharedMemDir : this.privateMemDir
+  private get projectMemDir(): string {
+    return projectPaths(this.session.user, this.session.project ?? 'inbox').memoryDir
   }
 
-  async read(scope: 'session' | 'profile' | 'user', key: string): Promise<{content: string, links?: MemoryLink[]} | null> {
+  private dirFor(scope: 'profile' | 'user' | 'project'): string {
+    if (scope === 'profile') return this.sharedMemDir
+    if (scope === 'project') return this.projectMemDir
+    return this.privateMemDir
+  }
+
+  async read(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<{content: string, links?: MemoryLink[]} | null> {
     if (scope === 'session') {
       const val = this.session.session_memory[key]
       if (!val) return null
@@ -44,7 +50,7 @@ export class FsMemoryProvider implements MemoryProvider {
     }
   }
 
-  async write(scope: 'session' | 'profile' | 'user', key: string, content: string, links?: MemoryLink[]): Promise<void> {
+  async write(scope: 'session' | 'profile' | 'user' | 'project', key: string, content: string, links?: MemoryLink[]): Promise<void> {
     if (scope === 'session') {
       this.session.session_memory[key] = JSON.stringify({ content, links })
       return
@@ -58,7 +64,7 @@ export class FsMemoryProvider implements MemoryProvider {
     await this.rebuildIndex(scope)
   }
 
-  async delete(scope: 'session' | 'profile' | 'user', key: string): Promise<void> {
+  async delete(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<void> {
     if (scope === 'session') {
       delete this.session.session_memory[key]
       return
@@ -70,7 +76,7 @@ export class FsMemoryProvider implements MemoryProvider {
     }
   }
 
-  async list(scope: 'session' | 'profile' | 'user'): Promise<MemoryEntry[]> {
+  async list(scope: 'session' | 'profile' | 'user' | 'project'): Promise<MemoryEntry[]> {
     if (scope === 'session') {
       return Object.entries(this.session.session_memory).map(([key, val]) => {
         let preview = val.slice(0, 100)
@@ -112,10 +118,17 @@ export class FsMemoryProvider implements MemoryProvider {
       parts.push(`## Memory (yours)\n${readFileSync(privateIndex, 'utf-8')}`)
     }
 
+    if ((this.session.project ?? 'inbox') !== 'inbox') {
+      const projectIndex = join(this.projectMemDir, 'MEMORY.md')
+      if (existsSync(projectIndex)) {
+        parts.push(`## Memory (project)\n${readFileSync(projectIndex, 'utf-8')}`)
+      }
+    }
+
     return parts.length > 0 ? '\n\n' + parts.join('\n\n') : ''
   }
 
-  private async rebuildIndex(scope: 'profile' | 'user'): Promise<void> {
+  private async rebuildIndex(scope: 'profile' | 'user' | 'project'): Promise<void> {
     const entries = await this.list(scope)
     const lines = entries.map(e => {
       const linksStr = e.links && e.links.length > 0
