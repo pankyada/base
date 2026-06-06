@@ -6,12 +6,12 @@ export const memoryListTool: ToolDefinition = {
   parameters: {
     type: 'object',
     properties: {
-      scope: { type: 'string', enum: ['session', 'profile', 'user'] },
+      scope: { type: 'string', enum: ['session', 'profile', 'user', 'project'] },
     },
     required: ['scope'],
   },
   async execute(input, ctx: ToolContext) {
-    const { scope } = input as { scope: 'session' | 'profile' | 'user' }
+    const { scope } = input as { scope: 'session' | 'profile' | 'user' | 'project' }
     const entries = await ctx.memory.list(scope)
     if (entries.length === 0) return `(no entries in ${scope} memory)`
     return entries.map(e => {

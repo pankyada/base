@@ -2,14 +2,14 @@ import { ToolDefinition, ToolContext } from '../types.js'
 
 export const memoryWriteTool: ToolDefinition = {
   name: 'MemoryWrite',
-  description: 'Write a memory entry. "user" scope (default) is private to this user. "profile" scope is shared across all users. "session" scope is in-memory only.',
+  description: 'Write a memory entry. "user" scope (default) is private to this user. "profile" scope is shared across all users. "session" scope is in-memory only. "project" scope is shared across sessions in the current project.',
   parameters: {
     type: 'object',
     properties: {
       scope: {
         type: 'string',
-        enum: ['session', 'profile', 'user'],
-        description: 'Defaults to "user" (private). Use "profile" to share with all users.',
+        enum: ['session', 'profile', 'user', 'project'],
+        description: 'Defaults to "user" (private). Use "profile" to share with all users. "project" is shared across sessions in the current project.',
       },
       key: { type: 'string', description: 'Short slug (e.g. project-context)' },
       content: { type: 'string', description: 'Markdown content to store' },
@@ -30,7 +30,7 @@ export const memoryWriteTool: ToolDefinition = {
   },
   async execute(input, ctx: ToolContext) {
     const { key, content, links } = input as { key: string; content: string; links?: { target: string, relation?: string }[] }
-    const scope = ((input as any).scope ?? 'user') as 'session' | 'profile' | 'user'
+    const scope = ((input as any).scope ?? 'user') as 'session' | 'profile' | 'user' | 'project'
     await ctx.memory.write(scope, key, content, links)
     return `Memory written: ${scope}/${key}${links?.length ? ` (with ${links.length} links)` : ''}`
   },
