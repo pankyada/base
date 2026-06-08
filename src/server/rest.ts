@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto'
 import type { RunStore } from '../runs/store.js'
 import type { Run } from '../runs/types.js'
 import type { Skill } from '../tools/types.js'
+import { ensureInbox, listProjects, createProject, assignSession, listSessionSummaries } from '../session/projects.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
@@ -243,6 +244,44 @@ function handleDeleteRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
   deps.abortRegistry.get(id)?.abort()
   deps.runStore.update(id, { status: 'cancelled', finished_at: new Date().toISOString() })
   sendJson(res, 200, { ok: true })
+}
+
+function queryUser(req: IncomingMessage): string | null {
+  const raw = (req.url ?? '').split('?')[1] ?? ''
+  const u = new URLSearchParams(raw).get('user')
+  return u ? sanitizeUserId(u) : null
+}
+
+function handleListProjects(req: IncomingMessage, res: ServerResponse): void {
+  const user = queryUser(req)
+  if (!user) return sendJson(res, 400, { error: 'missing user' })
+  ensureInbox(user)
+  sendJson(res, 200, { projects: listProjects(user) })
+}
+
+async function handleCreateProject(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: { user?: string; name?: string; description?: string }
+  try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  const user = body.user ? sanitizeUserId(body.user) : null
+  if (!user) return sendJson(res, 400, { error: 'missing user' })
+  if (!body.name) return sendJson(res, 400, { error: 'missing name' })
+  sendJson(res, 201, { project: createProject(user, body.name, body.description) })
+}
+
+function handleProjectSessions(req: IncomingMessage, res: ServerResponse, projectId: string): void {
+  const user = queryUser(req)
+  if (!user) return sendJson(res, 400, { error: 'missing user' })
+  sendJson(res, 200, { sessions: listSessionSummaries(user, projectId) })
+}
+
+async function handleAssignSession(req: IncomingMessage, res: ServerResponse, sessionId: string): Promise<void> {
+  let body: { user?: string; projectId?: string }
+  try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  const user = body.user ? sanitizeUserId(body.user) : null
+  if (!user) return sendJson(res, 400, { error: 'missing user' })
+  if (!body.projectId) return sendJson(res, 400, { error: 'missing projectId' })
+  assignSession(user, sessionId, body.projectId)
+  sendJson(res, 200, { sessions: listSessionSummaries(user) })
 }
 
 async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: RestDeps, profileName: string): Promise<void> {
@@ -523,6 +562,15 @@ export function createRestHandler(deps: RestDeps) {
 
       if (method === 'POST' && url.startsWith('/webhooks/')) {
         return handleWebhook(req, res, deps, url.slice('/webhooks/'.length))
+      }
+
+      if (method === 'GET' && url === '/projects') return handleListProjects(req, res)
+      if (method === 'POST' && url === '/projects') return handleCreateProject(req, res)
+      if (method === 'GET' && url.startsWith('/projects/') && url.endsWith('/sessions')) {
+        return handleProjectSessions(req, res, url.slice('/projects/'.length, -'/sessions'.length))
+      }
+      if (method === 'PATCH' && url.startsWith('/sessions/')) {
+        return handleAssignSession(req, res, url.slice('/sessions/'.length))
       }
 
       return sendJson(res, 404, { error: 'not found' })
