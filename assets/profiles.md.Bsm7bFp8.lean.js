@@ -1,0 +1,1 @@
+import{c as i,Q as a,j as t,m as n}from"./chunks/framework.rlpw0eGz.js";const o=JSON.parse('{"title":"Profiles","description":"","frontmatter":{},"headers":[],"relativePath":"profiles.md","filePath":"profiles.md"}'),l={name:"profiles.md"};function e(h,s,p,k,d,r){return a(),t("div",null,[...s[0]||(s[0]=[n("",74)])])}const g=i(l,[["render",e]]);export{o as __pageData,g as default};

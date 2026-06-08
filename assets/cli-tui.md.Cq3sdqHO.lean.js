@@ -1,0 +1,1 @@
+import{c as s,Q as a,j as e,m as i}from"./chunks/framework.rlpw0eGz.js";const k=JSON.parse('{"title":"CLI & TUI","description":"","frontmatter":{},"headers":[],"relativePath":"cli-tui.md","filePath":"cli-tui.md"}'),n={name:"cli-tui.md"};function d(l,t,h,o,r,p){return a(),e("div",null,[...t[0]||(t[0]=[i("",30)])])}const u=s(n,[["render",d]]);export{k as __pageData,u as default};

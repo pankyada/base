@@ -1,1 +1,0 @@
-import{c as s,Q as a,j as t,m as i}from"./chunks/framework.D4_JBPJs.js";const k=JSON.parse('{"title":"Hooks","description":"","frontmatter":{},"headers":[],"relativePath":"hooks.md","filePath":"hooks.md"}'),o={name:"hooks.md"};function n(l,e,d,h,r,p){return a(),t("div",null,[...e[0]||(e[0]=[i("",27)])])}const u=s(o,[["render",n]]);export{k as __pageData,u as default};
