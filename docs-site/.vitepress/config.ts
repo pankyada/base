@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Harness',
   description: 'A WebSocket-based agent harness — profile-driven, MCP-native, multi-agent.',
-  base: '/base/',
+  base: '/',
   ignoreDeadLinks: 'localhostLinks',
   themeConfig: {
     nav: [

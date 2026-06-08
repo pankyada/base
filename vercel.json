@@ -1,0 +1,5 @@
+{
+  "buildCommand": "pnpm --filter harness-docs build",
+  "outputDirectory": "docs-site/.vitepress/dist",
+  "installCommand": "pnpm install --frozen-lockfile"
+}
