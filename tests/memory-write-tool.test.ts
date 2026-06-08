@@ -5,8 +5,7 @@ describe('MemoryWrite tool project scope', () => {
   it('routes scope "project" to the memory provider', async () => {
     const calls: any[] = []
     const ctx: any = { memory: { write: async (...a: any[]) => { calls.push(a) } } }
-    const input = { scope: 'project' as const, key: 'k', content: 'c' }
-    const msg = await memoryWriteTool.execute(input as any, ctx)
+    const msg = await memoryWriteTool.execute({ scope: 'project', key: 'k', content: 'c' }, ctx)
     expect(calls[0][0]).toBe('project')
     expect(msg).toContain('project/k')
   })

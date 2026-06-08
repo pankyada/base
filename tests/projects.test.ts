@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { ensureInbox, listProjects, createProject, assignSession, listSessionSummaries } from '../src/session/projects.js'
-import { createSession, saveSession } from '../src/session/store.js'
+import { ensureInbox, listProjects, createProject } from '../src/projects/store.js'
+import { createSession, saveSession, assignSession, listSessionSummaries } from '../src/session/store.js'
 
 const user = 'projects-test-user'
 

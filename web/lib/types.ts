@@ -102,6 +102,22 @@ export interface WorkspaceTab {
   artifacts: Artifact[]
 }
 
+export interface Project {
+  id: string
+  user: string
+  name: string
+  created_at: string
+}
+
+export interface SessionSummary {
+  id: string
+  project: string
+  title?: string
+  summary?: string
+  created_at: string
+  usage: { input: number; output: number; cost_usd: number }
+}
+
 export interface UIMessage {
   id: string;
   role: 'user' | 'agent' | 'tool-prompt' | 'tool-call';

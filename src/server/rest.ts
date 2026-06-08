@@ -12,7 +12,8 @@ import { randomUUID } from 'crypto'
 import type { RunStore } from '../runs/store.js'
 import type { Run } from '../runs/types.js'
 import type { Skill } from '../tools/types.js'
-import { ensureInbox, listProjects, createProject, assignSession, listSessionSummaries } from '../session/projects.js'
+import { createProject, listProjects, ensureInbox } from '../projects/store.js'
+import { listSessionSummaries, assignSession } from '../session/store.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB

@@ -2,12 +2,13 @@ import { useClock } from '../hooks/useClock'
 
 interface Props {
   profileName: string
+  projectName: string
   sessionId: string
   busy: boolean
   onPalette: () => void
 }
 
-export function TopBar({ profileName, sessionId, busy, onPalette }: Props) {
+export function TopBar({ profileName, projectName, sessionId, busy, onPalette }: Props) {
   const time = useClock()
   return (
     <div className="topbar">
@@ -15,6 +16,8 @@ export function TopBar({ profileName, sessionId, busy, onPalette }: Props) {
         <span style={{ color: 'var(--accent)' }}>◆ harness</span>
         <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>
         <span>profile {profileName}</span>
+        <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>
+        <span>project {projectName}</span>
         <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>
         <span>session #{sessionId.slice(0, 4)}</span>
         <span style={{ color: 'var(--dim)', margin: '0 0.5rem' }}>│</span>

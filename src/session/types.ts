@@ -12,13 +12,22 @@ export interface Session {
   id: string
   user: string
   profile: string
-  project: string       // projectId — always set; defaults to "inbox"
-  title?: string        // auto-derived from first user message
-  summary?: string      // LLM-generated at session end
+  project: string
+  title?: string
+  summary?: string
   created_at: string
   messages: unknown[]
   tool_calls: SessionToolCall[]
   usage: { input: number; output: number; cost_usd: number }
   session_memory: Record<string, string>
   todos: TodoItem[]
+}
+
+export interface SessionSummary {
+  id: string
+  project: string
+  title?: string
+  summary?: string
+  created_at: string
+  usage: { input: number; output: number; cost_usd: number }
 }

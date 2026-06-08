@@ -15,6 +15,8 @@ import { C } from './theme.js'
 import { useTermSize } from './hooks/useTermSize.js'
 import { convWidth, workWidth } from './layout.js'
 import type { ClientMessage, ServerMessage, UIMessage, ArtifactWidget, TodoItem, InputRequestKind } from '../types.js'
+import type { Project } from '../projects/types.js'
+import type { SessionSummary } from '../session/types.js'
 import { InputRequestModal } from './components/InputRequestModal.js'
 import { TodoPanel } from './components/TodoPanel.js'
 
@@ -44,6 +46,13 @@ export function App() {
   const [pendingApproval, setPendingApproval] = useState<{ id: string; name: string; input: unknown } | null>(null)
 
   const [todos, setTodos] = useState<TodoItem[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [history, setHistory] = useState<SessionSummary[]>([])
+  const [activeProject, setActiveProject] = useState('inbox')
+  const [activeProjectName, setActiveProjectName] = useState('Inbox')
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const assignedSessionRef = useRef<string | null>(null)
+
   const [pendingInputRequest, setPendingInputRequest] = useState<{
     id: string; prompt: string; kind: InputRequestKind; options?: string[]
     resolve: (v: string) => void
@@ -99,6 +108,20 @@ export function App() {
     if (msg.type === 'todos') {
       setTodos(msg.todos)
     }
+    if (msg.type === 'session_ready') {
+      setCurrentSessionId(msg.sessionId)
+    }
+    if (msg.type === 'projects') {
+      setProjects(msg.projects)
+    }
+    if (msg.type === 'project_created') {
+      setProjects(p => [...p, msg.project])
+      setActiveProject(msg.project.id)
+      setActiveProjectName(msg.project.name)
+    }
+    if (msg.type === 'sessions') {
+      setHistory(msg.sessions)
+    }
     if (msg.type === 'stats') setTokens({ in: msg.tokens_in, out: msg.tokens_out })
     if (msg.type === 'session_end' || msg.type === 'session_resumed') setBusy(false)
     if (msg.type === 'error') {
@@ -112,6 +135,14 @@ export function App() {
   }, [])
 
   const { connected, send } = useWs(handleMessage)
+
+  // Auto-assign session to active project when session starts (once per session id)
+  useEffect(() => {
+    if (currentSessionId && activeProject !== 'inbox' && assignedSessionRef.current !== currentSessionId) {
+      assignedSessionRef.current = currentSessionId
+      send({ type: 'project_assign', sessionId: currentSessionId, projectId: activeProject })
+    }
+  }, [currentSessionId, activeProject, send])
 
   // Fix up the resolve callback now that we have `send`
   useEffect(() => {
@@ -164,7 +195,7 @@ export function App() {
     if (key.ctrl && keyInput === 'k') { setPaletteOpen(o => !o); return }
     if (key.ctrl && keyInput === 'l') { handleClear(); return }
     if (key.ctrl && keyInput === 'o') { setToolsExpanded(o => !o); return }
-    if (key.escape) { setPaletteOpen(false); return }
+    if (key.escape) { if (paletteOpen) return; return }
     if (keyInput === '/') { setFocusPane('conv'); return }
     if (key.tab && tabs.length > 0) { setFocusPane(p => p === 'conv' ? 'work' : 'conv'); return }
     if (/^[1-9]$/.test(keyInput) && tabs.length > 0) {
@@ -201,7 +232,7 @@ export function App() {
 
   return (
     <Box flexDirection="column" height={rows}>
-      <TopBar profileName={PROFILE} sessionId={SESSION_ID} busy={busy} />
+      <TopBar profileName={PROFILE} sessionId={SESSION_ID} busy={busy} activeProjectName={activeProjectName} />
 
       {!connected && (
         <Box backgroundColor={C.del} paddingX={1}>
@@ -265,7 +296,33 @@ export function App() {
       />
 
       {paletteOpen && (
-        <Palette onClose={() => setPaletteOpen(false)} onRun={handleSuggest} onReset={handleClear} />
+        <Palette
+          onClose={() => setPaletteOpen(false)}
+          onRun={handleSuggest}
+          onReset={handleClear}
+          activeProject={activeProject}
+          projects={projects}
+          history={history}
+          onRequestProjects={() => send({ type: 'project_list' })}
+          onRequestHistory={(projectId) => send({ type: 'session_list', ...(projectId ? { projectId } : {}) })}
+          onSwitchProject={(id, name) => {
+            setActiveProject(id)
+            setActiveProjectName(name)
+            send({ type: 'session_list', projectId: id })
+          }}
+          onNewProject={(name) => send({ type: 'project_create', name })}
+          onResume={(sessionId, project) => {
+            send({ type: 'resume', sessionId })
+            setActiveProject(project)
+            const p = projects.find(x => x.id === project)
+            setActiveProjectName(p?.name ?? 'Inbox')
+          }}
+          onAssign={(projectId) => {
+            if (currentSessionId) {
+              send({ type: 'project_assign', sessionId: currentSessionId, projectId })
+            }
+          }}
+        />
       )}
 
       {pendingApproval && (
