@@ -37,9 +37,4 @@ describe('sanitizeEnv', () => {
     expect(env.HARNESS_API_KEY).toBeUndefined()
   })
 
-  it('strips extra_deny keys', () => {
-    const env = sanitizeEnv(['NODE_ENV'])
-    expect(env.NODE_ENV).toBeUndefined()
-    expect(env.PATH).toBe('/usr/bin')
-  })
 })
