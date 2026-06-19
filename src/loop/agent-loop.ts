@@ -240,7 +240,30 @@ export async function runAgentLoop(
   }
 }
 
-function estimateCost(model: string, tokensIn: number, tokensOut: number): number {
-  void model
-  return (tokensIn * 0.000003) + (tokensOut * 0.000015)
+// USD per token. Source: provider pricing pages (as of 2026-06).
+const MODEL_PRICES: Record<string, { input: number; output: number }> = {
+  // Anthropic Claude 4.x
+  'claude-opus-4-8':           { input: 0.000015,  output: 0.000075  },
+  'claude-sonnet-4-6':         { input: 0.000003,  output: 0.000015  },
+  'claude-haiku-4-5-20251001': { input: 0.0000008, output: 0.000004  },
+  // Anthropic Claude 3.x
+  'claude-3-5-sonnet-20241022':{ input: 0.000003,  output: 0.000015  },
+  'claude-3-haiku-20240307':   { input: 0.00000025,output: 0.00000125},
+  // OpenAI GPT-4o family
+  'gpt-4o':                    { input: 0.0000025, output: 0.00001   },
+  'gpt-4o-mini':               { input: 0.00000015,output: 0.0000006 },
+  'gpt-5.4-mini-2026-03-17':   { input: 0.00000015,output: 0.0000006 },
+  'o3':                        { input: 0.00001,   output: 0.00004   },
+  'o4-mini':                   { input: 0.0000011, output: 0.0000044 },
+}
+
+const FALLBACK_PRICES = { input: 0.000003, output: 0.000015 }
+
+export function estimateCost(model: string, tokensIn: number, tokensOut: number): number {
+  const prices = MODEL_PRICES[model]
+  if (!prices) {
+    console.warn(`[cost] unknown model "${model}" — using fallback pricing`)
+  }
+  const { input, output } = prices ?? FALLBACK_PRICES
+  return tokensIn * input + tokensOut * output
 }
