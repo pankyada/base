@@ -111,7 +111,21 @@ async function main() {
 
   const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
-  const wss = new WebSocketServer({ server: httpServer })
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: (info, cb) => {
+      if (!apiKey) {
+        cb(true)  // no key set → open dev mode
+        return
+      }
+      const auth = info.req.headers['authorization']
+      if (auth === `Bearer ${apiKey}`) {
+        cb(true)
+      } else {
+        cb(false, 401, 'Unauthorized')
+      }
+    },
+  })
   httpServer.listen(PORT, () => {
     console.log(`Harness server on ws://localhost:${PORT} [profile: ${profile.name}]`)
     console.log(`REST endpoints: http://localhost:${PORT} (/run, /stream, /health)`)
