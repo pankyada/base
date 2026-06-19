@@ -101,7 +101,10 @@ async function main() {
   const skillIndex = buildSkillIndex(skills)
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
 
-  const apiKey = process.env.HARNESS_API_KEY
+  const apiKey = process.env.HARNESS_API_KEY?.trim() || undefined
+  if (process.env.HARNESS_API_KEY !== undefined && !apiKey) {
+    console.warn('[auth] HARNESS_API_KEY is set but empty — ignoring, server is unauthenticated')
+  }
 
   const scheduler = new CronScheduler(profile, runStore, abortRegistry)
   scheduler.init()
