@@ -26,7 +26,7 @@ const INTERPRETERS: Record<string, string[]> = {
 function truncateOutput(output: string, maxBytes: number): string {
   const encoded = Buffer.from(output, 'utf-8')
   if (encoded.length <= maxBytes) return output
-  const truncated = encoded.slice(0, maxBytes).toString('utf-8', 0, maxBytes)
+  const truncated = encoded.slice(0, maxBytes).toString('utf-8')
   return truncated + '\n[output truncated]'
 }
 
@@ -70,14 +70,10 @@ export class DockerExecutor implements Executor {
           proc.kill('SIGKILL')
         }, timeout)
         proc.stdout.on('data', (d: Buffer) => {
-          if (Buffer.from(stdout, 'utf-8').length < MAX_STDOUT_BYTES) {
-            stdout += d.toString()
-          }
+          stdout += d.toString()
         })
         proc.stderr.on('data', (d: Buffer) => {
-          if (Buffer.from(stderr, 'utf-8').length < MAX_STDERR_BYTES) {
-            stderr += d.toString()
-          }
+          stderr += d.toString()
         })
         proc.on('close', (code) => {
           clearTimeout(timer)
@@ -85,8 +81,8 @@ export class DockerExecutor implements Executor {
         })
         proc.on('error', (err) => {
           clearTimeout(timer)
-          stderr += `docker unavailable: ${err.message}`
-          reject(new Error(`docker unavailable: ${err.message}`))
+          stderr += `\ndocker unavailable: ${err.message}`
+          resolve(-1)
         })
       })
 
@@ -101,9 +97,6 @@ export class DockerExecutor implements Executor {
       const finalStdout = truncateOutput(stdout, MAX_STDOUT_BYTES)
       const finalStderr = truncateOutput(stderr, MAX_STDERR_BYTES)
       return { id: req.id, stdout: finalStdout, stderr: finalStderr, exit_code: exitCode, files, duration_ms: Date.now() - start }
-    } catch (err) {
-      // Handle spawn errors and other execution failures
-      return { id: req.id, stdout, stderr, exit_code: 1, files: {}, duration_ms: Date.now() - start }
     } finally {
       rmSync(workDir, { recursive: true, force: true })
     }
