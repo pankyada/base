@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import type { Executor, ExecutionRequest, ExecutionResult } from './interface.js'
 import type { ExecutorConfig } from '../profiles/schema.js'
+import { sanitizeEnv } from '../tools/builtin/env-filter.js'
 
 const EXTENSIONS: Record<string, string> = {
   python: 'py', javascript: 'js', typescript: 'ts',
@@ -52,7 +53,7 @@ export class DockerExecutor implements Executor {
 
     try {
       const exitCode = await new Promise<number>((resolve) => {
-        const proc = spawn('docker', dockerArgs, { stdio: ['ignore', 'pipe', 'pipe'] })
+        const proc = spawn('docker', dockerArgs, { env: sanitizeEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
         const timer = setTimeout(() => {
           timedOut = true
           proc.kill('SIGKILL')

@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { ToolDefinition } from '../types.js'
+import { sanitizeEnv } from './env-filter.js'
 
 const MAX_OUTPUT = 50_000
 
@@ -20,7 +21,7 @@ export const bashTool: ToolDefinition = {
     return new Promise((resolve, reject) => {
       let output = ''
       const proc = spawn('bash', ['-c', command], {
-        env: process.env,
+        env: sanitizeEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       const timer = setTimeout(() => {
