@@ -81,4 +81,23 @@ describe('DockerExecutor', () => {
     expect(typeof result.duration_ms).toBe('number')
     expect(result.duration_ms).toBeGreaterThanOrEqual(0)
   })
+
+  it('handles spawn error gracefully (docker not installed)', async () => {
+    const { EventEmitter } = require('events')
+    const proc: any = new EventEmitter()
+    proc.stdout = new EventEmitter()
+    proc.stderr = new EventEmitter()
+    proc.kill = vi.fn()
+    // Emit spawn error instead of close
+    setTimeout(() => {
+      proc.emit('error', new Error('spawn docker ENOENT'))
+    }, 5)
+    spawnMock.mockReturnValue(proc)
+    const executor = new DockerExecutor(defaultCfg)
+    const result = await executor.execute({ id: '5', code: 'print("test")', language: 'python' })
+    // Should return non-zero exit code and error message in stderr
+    expect(result.exit_code).not.toBe(0)
+    expect(result.stderr).toContain('docker unavailable')
+    expect(result.stderr).toContain('spawn docker ENOENT')
+  })
 })

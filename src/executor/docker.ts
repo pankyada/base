@@ -52,7 +52,7 @@ export class DockerExecutor implements Executor {
     let timedOut = false
 
     try {
-      const exitCode = await new Promise<number>((resolve) => {
+      const exitCode = await new Promise<number>((resolve, reject) => {
         const proc = spawn('docker', dockerArgs, { env: sanitizeEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
         const timer = setTimeout(() => {
           timedOut = true
@@ -64,6 +64,11 @@ export class DockerExecutor implements Executor {
           clearTimeout(timer)
           resolve(timedOut ? 124 : (code ?? 1))
         })
+        proc.on('error', (err) => {
+          clearTimeout(timer)
+          stderr += `docker unavailable: ${err.message}`
+          reject(new Error(`docker unavailable: ${err.message}`))
+        })
       })
 
       const files: Record<string, string> = {}
@@ -73,6 +78,9 @@ export class DockerExecutor implements Executor {
       }
 
       return { id: req.id, stdout, stderr, exit_code: exitCode, files, duration_ms: Date.now() - start }
+    } catch (err) {
+      // Handle spawn errors and other execution failures
+      return { id: req.id, stdout, stderr, exit_code: 1, files: {}, duration_ms: Date.now() - start }
     } finally {
       rmSync(workDir, { recursive: true, force: true })
     }
