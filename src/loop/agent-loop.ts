@@ -8,6 +8,7 @@ import { getAcl, getMcpAcl } from '../tools/acl.js'
 import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
 import { maybeCondenseMessages } from './context-manager.js'
+import { withRetry } from './retry.js'
 
 interface ToolResult {
   tool_call_id: string
@@ -41,13 +42,18 @@ export async function runAgentLoop(
 
     await maybeCondenseMessages(session, profile, openai)
 
-    const stream = await (openai.chat.completions as any).create({
-      model: profile.model.id,
-      messages: session.messages as OpenAI.ChatCompletionMessageParam[],
-      tools: openaiTools.length > 0 ? openaiTools : undefined,
-      stream: true,
-      stream_options: { include_usage: true },
-    }, { signal })
+    const stream = await withRetry(
+      () => (openai.chat.completions as any).create({
+        model: profile.model.id,
+        messages: session.messages as OpenAI.ChatCompletionMessageParam[],
+        tools: openaiTools.length > 0 ? openaiTools : undefined,
+        stream: true,
+        stream_options: { include_usage: true },
+      }, { signal }),
+      3,
+      1000,
+      (_attempt, _delay) => { events.onToken?.('\n[retrying...]\n') }
+    )
 
     let assistantContent = ''
     const toolCallMap = new Map<number, { id: string; name: string; args: string }>()
