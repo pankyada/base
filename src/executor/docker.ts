@@ -6,6 +6,10 @@ import type { Executor, ExecutionRequest, ExecutionResult } from './interface.js
 import type { ExecutorConfig } from '../profiles/schema.js'
 import { sanitizeEnv } from '../tools/builtin/env-filter.js'
 
+export const MAX_STDOUT_BYTES = 256_000
+export const MAX_STDERR_BYTES = 64_000
+export const MAX_FILE_BYTES = 512_000
+
 const EXTENSIONS: Record<string, string> = {
   python: 'py', javascript: 'js', typescript: 'ts',
   bash: 'sh', ruby: 'rb', go: 'go', rust: 'rs',
@@ -17,6 +21,13 @@ const INTERPRETERS: Record<string, string[]> = {
   typescript: ['ts-node', '/work/code.ts'],
   bash: ['bash', '/work/code.sh'],
   ruby: ['ruby', '/work/code.rb'],
+}
+
+function truncateOutput(output: string, maxBytes: number): string {
+  const encoded = Buffer.from(output, 'utf-8')
+  if (encoded.length <= maxBytes) return output
+  const truncated = encoded.slice(0, maxBytes).toString('utf-8', 0, maxBytes)
+  return truncated + '\n[output truncated]'
 }
 
 export class DockerExecutor implements Executor {
@@ -58,8 +69,16 @@ export class DockerExecutor implements Executor {
           timedOut = true
           proc.kill('SIGKILL')
         }, timeout)
-        proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+        proc.stdout.on('data', (d: Buffer) => {
+          if (Buffer.from(stdout, 'utf-8').length < MAX_STDOUT_BYTES) {
+            stdout += d.toString()
+          }
+        })
+        proc.stderr.on('data', (d: Buffer) => {
+          if (Buffer.from(stderr, 'utf-8').length < MAX_STDERR_BYTES) {
+            stderr += d.toString()
+          }
+        })
         proc.on('close', (code) => {
           clearTimeout(timer)
           resolve(timedOut ? 124 : (code ?? 1))
@@ -74,10 +93,14 @@ export class DockerExecutor implements Executor {
       const files: Record<string, string> = {}
       for (const entry of readdirSync(outDir)) {
         const content = readFileSync(join(outDir, entry))
-        files[entry] = Buffer.from(content).toString('base64')
+        const fileKey = content.length > MAX_FILE_BYTES ? entry + '__TRUNCATED' : entry
+        const truncated = content.length > MAX_FILE_BYTES ? content.slice(0, MAX_FILE_BYTES) : content
+        files[fileKey] = Buffer.from(truncated).toString('base64')
       }
 
-      return { id: req.id, stdout, stderr, exit_code: exitCode, files, duration_ms: Date.now() - start }
+      const finalStdout = truncateOutput(stdout, MAX_STDOUT_BYTES)
+      const finalStderr = truncateOutput(stderr, MAX_STDERR_BYTES)
+      return { id: req.id, stdout: finalStdout, stderr: finalStderr, exit_code: exitCode, files, duration_ms: Date.now() - start }
     } catch (err) {
       // Handle spawn errors and other execution failures
       return { id: req.id, stdout, stderr, exit_code: 1, files: {}, duration_ms: Date.now() - start }
