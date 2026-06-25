@@ -1,4 +1,4 @@
-/* app.js — Agent Harness architecture site (Sprint 1)
+/* app.js — Agent Harness architecture site.
  * Classic script (no modules). Depends on window.ARCH from data.js.
  * Responsibilities:
  *   - render the 8 layer sections from ARCH.layers
@@ -227,7 +227,7 @@
 })();
 
 /* ============================================================
-   Sprint 2 — Interactive Component Map
+   Interactive Component Map
    Depends on window.ARCH (from data.js).
    ============================================================ */
 (function () {
@@ -479,7 +479,7 @@
     panelEl.classList.add("is-open");
     panelEl.setAttribute("aria-hidden", "false");
     backdropEl.classList.add("is-open");
-    backdropEl.setAttribute("aria-hidden", "false");
+    // backdrop is decorative — keep aria-hidden true at all times
     panelOpen = true;
 
     // focus close button
@@ -491,7 +491,6 @@
     panelEl.classList.remove("is-open");
     panelEl.setAttribute("aria-hidden", "true");
     backdropEl.classList.remove("is-open");
-    backdropEl.setAttribute("aria-hidden", "true");
     panelOpen = false;
 
     // return focus to trigger
@@ -641,7 +640,7 @@
     initMap();
   }
 
-  // ── expose mapAPI for Sprint 3 scroll sync ────────────────────
+  // ── expose mapAPI for scroll sync ────────────────────────────
 
   function highlightLayer(layerId) {
     // Highlight all nodes belonging to the given layer
@@ -703,8 +702,8 @@
 })();
 
 /* ============================================================
-   Sprint 4 — Lifecycle animation
-   Depends on window.ARCH (from data.js) and window.mapAPI (Sprint 2).
+   Lifecycle animation
+   Depends on window.ARCH (from data.js) and window.mapAPI.
    ============================================================ */
 (function () {
   "use strict";
@@ -926,6 +925,18 @@
 
   // ── narration + line state ─────────────────────────────────
 
+  function updateActiveDotAria(flow, idx) {
+    // Remove aria-current from all dots, set on active toId dot
+    Object.keys(nodeDotById).forEach(function (id) {
+      var dot = nodeDotById[id];
+      if (dot) dot.removeAttribute("aria-current");
+    });
+    var step = flow[idx];
+    if (step && nodeDotById[step.toId]) {
+      nodeDotById[step.toId].setAttribute("aria-current", "step");
+    }
+  }
+
   function updateNarration(flow, idx) {
     var step = flow[idx];
     var numEl  = document.getElementById("narration-step-num");
@@ -934,6 +945,7 @@
     if (numEl)  numEl.textContent  = String(idx + 1);
     if (textEl) textEl.textContent = step ? step.narrative : "";
     if (lblEl)  lblEl.textContent  = step ? step.label     : "";
+    updateActiveDotAria(flow, idx);
   }
 
   function updatePathLines(flow, idx) {
@@ -992,9 +1004,9 @@
       playBtn.textContent = playing ? "⏸" : "▶";
       playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
     }
-    if (!playing && playTimer) {
-      clearTimeout(playTimer);
-      playTimer = null;
+    if (!playing) {
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      if (animRaf)   { cancelAnimationFrame(animRaf); animRaf = null; }
     }
   }
 
@@ -1070,6 +1082,7 @@
     if (!ol) return;
     flow.forEach(function (step) {
       var li = document.createElement("li");
+      li.setAttribute("aria-label", "Step " + step.step + ": " + step.label);
       li.innerHTML = "<strong>Step " + step.step + " — " + step.label + ":</strong> " + step.narrative;
       ol.appendChild(li);
     });
@@ -1142,7 +1155,7 @@
 })();
 
 /* ============================================================
-   Sprint 3 — Scroll-driven storytelling
+   Scroll-driven storytelling
    - Scroll progress bar
    - Layer mini-nav (dot navigation)
    - Storytelling two-column layout (desktop ≥ 900px)

@@ -1,5 +1,5 @@
 /* styles.css — Agent Harness architecture site
- * Sprint 1: design system + hero + layer section cards.
+ * Design system + hero + layer cards + map + lifecycle + scroll storytelling.
  * Aesthetic: playful & bold — bright accents, springy easing, big display type.
  */
 
@@ -524,7 +524,7 @@ code {
 }
 
 /* ============================================================
-   Component Map (#map) — Sprint 2
+   Component Map (#map)
    ============================================================ */
 
 /* Section wrapper */
@@ -871,11 +871,47 @@ code {
   /* On mobile: hide SVG edges, simplify band label */
   .map-edges-svg { display: none; }
   .map-band-label { min-width: 5.5rem; font-size: 0.62rem; }
-  .map-panel { width: 100vw; border-left: none; border-top: 1px solid var(--line-strong); top: auto; height: 80vh; }
+
+  /* Bottom sheet panel on mobile */
+  .map-panel {
+    width: 100vw;
+    border-left: none;
+    border-top: 1px solid var(--line-strong);
+    top: auto;
+    right: 0;
+    bottom: 0;
+    height: 80vh;
+    transform: translateY(100%);
+    transition: transform 260ms var(--ease-out);
+  }
+  .map-panel.is-open {
+    transform: translateY(0);
+  }
+
+  /* Lifecycle stage node labels: wrap instead of overflow */
+  .lc-node-label {
+    white-space: normal;
+    word-break: break-word;
+    max-width: 56px;
+  }
+
+  /* Lifecycle controls: ensure adequate touch targets */
+  .lc-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Reduce hero display font to prevent overflow */
+  :root {
+    --fs-display: clamp(2rem, 9vw, 3.2rem);
+    --fs-h1: clamp(1.6rem, 5vw, 2.4rem);
+  }
 }
 
 /* ============================================================
-   Sprint 3 — Scroll-driven storytelling
+   Scroll-driven storytelling
    ============================================================ */
 
 /* Scroll progress bar */
@@ -993,7 +1029,7 @@ code {
 }
 
 /* ============================================================
-   Sprint 4 — Lifecycle animation section
+   Lifecycle animation section
    ============================================================ */
 
 .lifecycle-section {

@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agent Harness — How it works</title>
   <meta name="description" content="An animated, interactive walkthrough of the Agent Harness architecture: a WebSocket-based generic agent runtime wiring an LLM to tools, skills, memory, MCP, and hooks." />
+  <meta name="theme-color" content="#0b0d17" />
+  <meta property="og:title" content="Agent Harness — How it works" />
+  <meta property="og:description" content="An animated, interactive walkthrough of the Agent Harness architecture: a WebSocket-based generic agent runtime wiring an LLM to tools, skills, memory, MCP, and hooks." />
 
   <!-- Google Fonts (display face) with system fallback declared in CSS so it works offline -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -24,7 +27,7 @@
 
   <!-- ============================ Header ============================ -->
   <header class="site-header">
-    <div id="scroll-progress" aria-hidden="true"></div>
+    <div id="scroll-progress" role="presentation" aria-hidden="true"></div>
     <div class="shell">
       <a class="brand" href="#top" aria-label="Agent Harness — home">
         <span class="glyph" aria-hidden="true">⚙</span>
@@ -79,7 +82,7 @@
       <!-- Layer sections injected here by app.js from window.ARCH.layers -->
     </section>
 
-    <!-- Component Map (Sprint 2) -->
+    <!-- Component Map -->
     <section class="map-section shell" id="map" aria-labelledby="map-heading">
       <div class="section-head">
         <span class="kicker">Interactive · click any node</span>
@@ -127,7 +130,7 @@
       </div>
     </aside>
 
-    <!-- Lifecycle section (Sprint 4) -->
+    <!-- Lifecycle section -->
     <section class="lifecycle-section shell" id="lifecycle" aria-labelledby="lifecycle-heading">
       <div class="section-head">
         <span class="kicker">Request path · animated</span>
@@ -143,7 +146,7 @@
       <!-- Step narration -->
       <div class="lifecycle-narration" id="lifecycle-narration">
         <span class="narration-step">Step <span id="narration-step-num">1</span> / 10</span>
-        <p class="narration-text" id="narration-text">Click Play to begin.</p>
+        <p class="narration-text" id="narration-text" aria-live="polite">Click Play to begin.</p>
         <p class="narration-label" id="narration-label"></p>
       </div>
 
@@ -170,7 +173,7 @@
       <span class="credit">
         <strong>Agent Harness</strong> architecture explainer — built as a static, framework-free site.
       </span>
-      <span>Vanilla HTML · CSS · JS · no build step</span>
+      <span>Vanilla HTML · CSS · JS · no build step · all sprints complete</span>
     </div>
   </footer>
 
