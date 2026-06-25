@@ -594,8 +594,10 @@ code {
 
 /* ============================================================
    Entrance animation (JS adds .reveal to staged items)
+   Hidden state is scoped to .js-reveal so content is visible
+   without JS and before the first paint.
    ============================================================ */
-[data-stagger] {
+.js-reveal [data-stagger] {
   opacity: 0;
   transform: translateY(22px);
 }
@@ -605,7 +607,7 @@ code {
   transition: opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-spring);
 }
 
-.layer[data-rise] {
+.js-reveal .layer[data-rise] {
   opacity: 0;
   transform: translateY(28px) scale(0.985);
 }

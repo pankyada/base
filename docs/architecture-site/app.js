@@ -183,6 +183,10 @@
   // Boot
   // ---------------------------------------------------------------
   function init() {
+    // Gate hidden-start animations behind this class so content is
+    // visible by default and only hides once JS is active.
+    document.documentElement.classList.add("js-reveal");
+
     var arch = window.ARCH;
     if (!arch || !Array.isArray(arch.layers)) {
       // Graceful degradation: leave the static skeleton + show a note in the layers area.
@@ -201,6 +205,18 @@
     wireScroll();
     animateHero();
     animateLayersOnScroll();
+
+    // Fallback: force-reveal any sections still hidden after 1.2s
+    // (e.g. IntersectionObserver never fired for off-screen elements that
+    //  end up above the fold after a fast scroll or programmatic jump)
+    if (!REDUCED) {
+      window.setTimeout(function () {
+        var hidden = document.querySelectorAll(".layer[data-rise]:not(.reveal)");
+        Array.prototype.forEach.call(hidden, function (n) {
+          n.classList.add("reveal");
+        });
+      }, 1200);
+    }
   }
 
   if (document.readyState === "loading") {
