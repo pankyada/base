@@ -227,411 +227,584 @@
 })();
 
 /* ============================================================
-   Interactive Component Map
-   Depends on window.ARCH (from data.js).
+   Interactive Component Map — Konva canvas
+   Depends on window.ARCH (from data.js) and Konva (assets/konva.min.js).
    ============================================================ */
 (function () {
   "use strict";
 
-  // ── helpers ─────────────────────────────────────────────────
+  var arch = window.ARCH;
+  if (typeof Konva === "undefined" || !arch || !Array.isArray(arch.layers)) return;
 
-  function el(tag, className) {
-    var node = document.createElement(tag);
-    if (className) node.className = className;
-    return node;
-  }
+  // ── Layout constants ──────────────────────────────────────────
+  var VIRT_W       = 2400;
+  var BAND_H       = 200;
+  var VPAD_TOP     = 90;
+  var VPAD_BOT     = 80;
+  var HPAD         = 150;
+  var NODE_W       = 162;
+  var NODE_H       = 56;
+  var NODE_R       = 9;
+  var NODE_Y_BAND  = 112;  // node-center y from band top
+  var VIRT_H       = VPAD_TOP + arch.layers.length * BAND_H + VPAD_BOT;
+  var MIN_SCALE    = 0.12;
+  var MAX_SCALE    = 4;
 
-  function svgEl(tag) {
-    return document.createElementNS("http://www.w3.org/2000/svg", tag);
-  }
-
-  // ── build lookup tables from ARCH ────────────────────────────
-
-  var nodeById   = {};   // nodeId -> node data
-  var layerById  = {};   // nodeId -> layer data
-  var btnById    = {};   // nodeId -> DOM <button>
-  var lineById   = {};   // edgeIndex (string) -> SVG line el
-
-  // adjacency: nodeId -> Set of neighbour nodeIds
-  var neighbours = {};
-
-  function buildLookups(arch) {
-    arch.layers.forEach(function (layer) {
-      layer.nodes.forEach(function (n) {
-        nodeById[n.id]  = n;
-        layerById[n.id] = layer;
-        // neighbours already pre-seeded by initMap
-      });
-    });
-
-    arch.edges.forEach(function (edge) {
-      if (!neighbours[edge.from]) neighbours[edge.from] = makeSet();
-      if (!neighbours[edge.to])   neighbours[edge.to]   = makeSet();
-      neighbourAdd(edge.from, edge.to);
-      neighbourAdd(edge.to, edge.from);
-    });
-  }
-
-  // Simple Set polyfill shim (use native Set when available)
-  function makeSet() { return typeof Set !== "undefined" ? new Set() : { _a: [], has: function(v){ return this._a.indexOf(v) !== -1; }, add: function(v){ if(!this.has(v)) this._a.push(v); } }; }
-
-  function neighbourAdd(a, b) {
-    if (!neighbours[a]) neighbours[a] = makeSet();
-    neighbours[a].add(b);
-  }
-
-  function isNeighbour(a, b) {
-    return neighbours[a] && neighbours[a].has(b);
-  }
-
-  // ── render bands ─────────────────────────────────────────────
-
-  function renderBands(arch, canvas) {
-    arch.layers.forEach(function (layer) {
-      var band = el("div", "map-band");
-      band.setAttribute("data-layer", layer.id);
-
-      var label = el("div", "map-band-label");
-      label.textContent = layer.title;
-      label.style.color = layer.accent || "";
-      band.appendChild(label);
-
-      var row = el("div", "map-nodes-row");
-
-      layer.nodes.forEach(function (n) {
-        var btn = document.createElement("button");
-        btn.className = "map-node-btn";
-        btn.setAttribute("role", "button");
-        btn.setAttribute("tabindex", "0");
-        btn.setAttribute("data-node-id", n.id);
-        btn.style.setProperty("--node-accent", layer.accent || "#4cc9f0");
-
-        var dot = el("span", "dot");
-        dot.style.background = layer.accent || "#4cc9f0";
-        dot.style.color = layer.accent || "#4cc9f0";
-        btn.appendChild(dot);
-        btn.appendChild(document.createTextNode(n.name));
-
-        row.appendChild(btn);
-        btnById[n.id] = btn;
-      });
-
-      band.appendChild(row);
-      canvas.appendChild(band);
-    });
-  }
-
-  // ── SVG edge overlay ─────────────────────────────────────────
-
-  var EDGE_STYLES = {
-    primary:    { stroke: "#ffd166", width: "2",   dasharray: "none",  diamond: false },
-    data:       { stroke: "#06d6a0", width: "2",   dasharray: "5 4",   diamond: false },
-    optional:   { stroke: "#4cc9f0", width: "1.5", dasharray: "2.5 3.5", diamond: false },
-    dependency: { stroke: "#ff6b9d", width: "1",   dasharray: "none",  diamond: true }
+  // ── Edge styles ───────────────────────────────────────────────
+  var ESTYLE = {
+    primary:    { stroke: "#d97706", width: 2,   dash: [] },
+    data:       { stroke: "#059669", width: 1.5, dash: [8, 5] },
+    optional:   { stroke: "#0284c7", width: 1.5, dash: [3, 4] },
+    dependency: { stroke: "#db2777", width: 1.5, dash: [] }
   };
 
-  function renderEdges(arch, canvas) {
-    var svg = svgEl("svg");
-    svg.setAttribute("class", "map-edges-svg");
-    svg.setAttribute("aria-hidden", "true");
+  // ── Lookups ───────────────────────────────────────────────────
+  var nodeById  = {};
+  var layerById = {};   // nodeId → layer obj
+  var initPos   = {};   // nodeId → { x, y } center in virtual space
 
-    // defs for diamond marker
-    var defs = svgEl("defs");
-    var marker = svgEl("marker");
-    marker.setAttribute("id", "diamond-end");
-    marker.setAttribute("markerWidth", "8");
-    marker.setAttribute("markerHeight", "8");
-    marker.setAttribute("refX", "4");
-    marker.setAttribute("refY", "4");
-    marker.setAttribute("orient", "auto");
-    var poly = svgEl("polygon");
-    poly.setAttribute("points", "0,2 4,4 0,6 8,4");
-    poly.setAttribute("fill", "#ff6b9d");
-    marker.appendChild(poly);
-    defs.appendChild(marker);
-    svg.appendChild(defs);
-
-    arch.edges.forEach(function (edge, i) {
-      var style = EDGE_STYLES[edge.kind] || EDGE_STYLES.primary;
-      var line = svgEl("line");
-      line.setAttribute("class", "map-edge");
-      line.setAttribute("stroke", style.stroke);
-      line.setAttribute("stroke-width", style.width);
-      if (style.dasharray !== "none") {
-        line.setAttribute("stroke-dasharray", style.dasharray);
-      }
-      if (style.diamond) {
-        line.setAttribute("marker-end", "url(#diamond-end)");
-      }
-      line.setAttribute("data-from", edge.from);
-      line.setAttribute("data-to", edge.to);
-      // positions set by positionEdges()
-      lineById[String(i)] = line;
-      svg.appendChild(line);
-    });
-
-    canvas.appendChild(svg);
-    return svg;
-  }
-
-  // ── position edges ───────────────────────────────────────────
-
-  function getNodeCenter(nodeId, canvasRect) {
-    var btn = btnById[nodeId];
-    if (!btn) return null;
-    var r = btn.getBoundingClientRect();
-    return {
-      x: r.left + r.width / 2  - canvasRect.left,
-      y: r.top  + r.height / 2 - canvasRect.top
-    };
-  }
-
-  function positionEdges(arch, canvas) {
-    var canvasRect = canvas.getBoundingClientRect();
-    arch.edges.forEach(function (edge, i) {
-      var line = lineById[String(i)];
-      if (!line) return;
-      var from = getNodeCenter(edge.from, canvasRect);
-      var to   = getNodeCenter(edge.to,   canvasRect);
-      if (!from || !to) return;
-      line.setAttribute("x1", from.x);
-      line.setAttribute("y1", from.y);
-      line.setAttribute("x2", to.x);
-      line.setAttribute("y2", to.y);
+  function buildLookups() {
+    arch.layers.forEach(function (layer, li) {
+      var bandTop = VPAD_TOP + li * BAND_H;
+      var nodes   = layer.nodes;
+      var n       = nodes.length;
+      nodes.forEach(function (node, ni) {
+        nodeById[node.id]  = node;
+        layerById[node.id] = layer;
+        var avail = VIRT_W - 2 * HPAD;
+        initPos[node.id] = {
+          x: n > 1 ? HPAD + (ni / (n - 1)) * avail : VIRT_W / 2,
+          y: bandTop + NODE_Y_BAND
+        };
+      });
     });
   }
 
-  // ── highlight logic ──────────────────────────────────────────
+  // ── Konva stage state ─────────────────────────────────────────
+  var stage, bgLayer, edgeLayer, nodeLayer;
+  var nodeGroups = {};   // nodeId → Konva.Group
+  var edgeShapes = [];   // [{ line, fromId, toId, kind }]
+  var currentScale = 1;
 
-  var allNodeIds = [];
+  // ── Create stage ──────────────────────────────────────────────
+  function createStage() {
+    var wrap = document.getElementById("map-stage-wrap");
+    if (!wrap) return false;
+    var fsBar = document.getElementById("map-fs-bar");
+    var hint  = document.querySelector(".map-hint");
+    var fsH   = (fsBar && fsBar.offsetHeight > 0) ? fsBar.offsetHeight : 0;
+    var hiH   = hint ? (hint.offsetHeight || 30) : 30;
+    var w = wrap.offsetWidth  || 820;
+    var h = Math.max((wrap.offsetHeight || 560) - fsH - hiH, 280);
+    stage = new Konva.Stage({ container: "map-stage", width: w, height: h });
+    bgLayer   = new Konva.Layer({ listening: false });
+    edgeLayer = new Konva.Layer({ listening: false });
+    nodeLayer = new Konva.Layer();
+    stage.add(bgLayer, edgeLayer, nodeLayer);
+    return true;
+  }
 
-  function highlight(activeId) {
-    var nbrs = neighbours[activeId] || makeSet();
-    allNodeIds.forEach(function (id) {
-      var btn = btnById[id];
-      if (!btn) return;
-      btn.classList.remove("is-active", "is-dim");
+  // ── Band backgrounds + labels ─────────────────────────────────
+  function renderBands() {
+    arch.layers.forEach(function (layer, li) {
+      var bandTop = VPAD_TOP + li * BAND_H;
+      if (li % 2 === 0) {
+        bgLayer.add(new Konva.Rect({
+          x: 0, y: bandTop, width: VIRT_W, height: BAND_H,
+          fill: "rgba(0,0,0,0.016)", listening: false
+        }));
+      }
+      if (li > 0) {
+        bgLayer.add(new Konva.Line({
+          points: [0, bandTop, VIRT_W, bandTop],
+          stroke: "rgba(0,0,0,0.055)", strokeWidth: 1, listening: false
+        }));
+      }
+      bgLayer.add(new Konva.Text({
+        x: 14, y: bandTop + BAND_H / 2 - 8,
+        text: (li + 1) + ". " + layer.title,
+        fontSize: 12,
+        fontFamily: "Space Grotesk, system-ui, sans-serif",
+        fill: layer.accent || "#888",
+        opacity: 0.6,
+        listening: false
+      }));
+    });
+  }
+
+  // ── Edges ─────────────────────────────────────────────────────
+  function renderEdges() {
+    arch.edges.forEach(function (edge) {
+      var s  = ESTYLE[edge.kind] || ESTYLE.primary;
+      var fp = initPos[edge.from], tp = initPos[edge.to];
+      if (!fp || !tp) return;
+      var line = new Konva.Line({
+        points: [fp.x, fp.y, tp.x, tp.y],
+        stroke: s.stroke, strokeWidth: s.width,
+        dash: s.dash, opacity: 0.48,
+        lineCap: "round", listening: false
+      });
+      edgeLayer.add(line);
+      edgeShapes.push({ line: line, fromId: edge.from, toId: edge.to, kind: edge.kind });
+    });
+  }
+
+  // ── Nodes ─────────────────────────────────────────────────────
+  function renderNodes() {
+    arch.layers.forEach(function (layer) {
+      var acc = layer.accent || "#4cc9f0";
+      layer.nodes.forEach(function (node) {
+        var cp  = initPos[node.id];
+        var grp = new Konva.Group({
+          x: cp.x - NODE_W / 2, y: cp.y - NODE_H / 2,
+          draggable: true, id: "ng-" + node.id
+        });
+        grp.add(new Konva.Rect({   // drop shadow
+          x: 2, y: 3, width: NODE_W, height: NODE_H,
+          cornerRadius: NODE_R, fill: "rgba(0,0,0,0.09)", listening: false
+        }));
+        grp.add(new Konva.Rect({   // body
+          name: "main-rect",
+          x: 0, y: 0, width: NODE_W, height: NODE_H,
+          cornerRadius: NODE_R,
+          fill: "#ffffff", stroke: acc, strokeWidth: 1.5
+        }));
+        grp.add(new Konva.Rect({   // accent bar
+          x: 0, y: 0, width: 5, height: NODE_H,
+          cornerRadius: [NODE_R, 0, 0, NODE_R],
+          fill: acc, listening: false
+        }));
+        grp.add(new Konva.Text({   // name label
+          x: 12, y: NODE_H / 2 - 8,
+          width: NODE_W - 18,
+          text: node.name,
+          fontSize: 12,
+          fontFamily: "Space Grotesk, system-ui, sans-serif",
+          fontStyle: "bold",
+          fill: "#0d0f22",
+          ellipsis: true, listening: false
+        }));
+
+        nodeGroups[node.id] = grp;
+        nodeLayer.add(grp);
+
+        grp.on("dragmove", function () { updateEdgesForNode(node.id); });
+        grp.on("dragend",  function () { saveDragPositions(); });
+        grp.on("mouseenter", function () {
+          document.body.style.cursor = "pointer";
+          highlightNode(node.id);
+          stage.batchDraw();
+        });
+        grp.on("mouseleave", function () {
+          document.body.style.cursor = "";
+          if (!panelOpen) { clearHighlight(); stage.batchDraw(); }
+        });
+        grp.on("click tap", function () { openPanel(node.id); });
+      });
+    });
+  }
+
+  // ── Edge position helpers ─────────────────────────────────────
+  function nodeCenter(id) {
+    var g = nodeGroups[id];
+    return g ? { x: g.x() + NODE_W / 2, y: g.y() + NODE_H / 2 } : (initPos[id] || { x: 0, y: 0 });
+  }
+
+  function updateEdgesForNode(id) {
+    edgeShapes.forEach(function (e) {
+      if (e.fromId !== id && e.toId !== id) return;
+      var f = nodeCenter(e.fromId), t = nodeCenter(e.toId);
+      e.line.points([f.x, f.y, t.x, t.y]);
+    });
+    edgeLayer.batchDraw();
+  }
+
+  function updateAllEdges() {
+    edgeShapes.forEach(function (e) {
+      var f = nodeCenter(e.fromId), t = nodeCenter(e.toId);
+      e.line.points([f.x, f.y, t.x, t.y]);
+    });
+  }
+
+  // ── Highlight ─────────────────────────────────────────────────
+  function highlightNode(activeId) {
+    var nbrs = {};
+    arch.edges.forEach(function (e) {
+      if (e.from === activeId) nbrs[e.to]   = true;
+      if (e.to   === activeId) nbrs[e.from] = true;
+    });
+    Object.keys(nodeGroups).forEach(function (id) {
+      var g = nodeGroups[id];
+      var r = g.findOne(".main-rect");
+      var lyr = layerById[id];
       if (id === activeId) {
-        btn.classList.add("is-active");
-      } else if (nbrs.has(id)) {
-        btn.classList.add("is-active");
+        r.shadowBlur(20); r.shadowColor(lyr ? lyr.accent : "#d97706"); r.shadowOpacity(0.55);
+        g.opacity(1);
+      } else if (nbrs[id]) {
+        r.shadowBlur(10); r.shadowColor(lyr ? lyr.accent : "#888"); r.shadowOpacity(0.3);
+        g.opacity(0.92);
       } else {
-        btn.classList.add("is-dim");
+        r.shadowBlur(0); r.shadowOpacity(0);
+        g.opacity(0.2);
       }
     });
+    edgeShapes.forEach(function (e) {
+      var s = ESTYLE[e.kind] || ESTYLE.primary;
+      if (e.fromId === activeId || e.toId === activeId) {
+        e.line.opacity(0.95); e.line.strokeWidth(s.width + 1);
+      } else {
+        e.line.opacity(0.06); e.line.strokeWidth(s.width);
+      }
+    });
+  }
 
-    // edges
-    Object.keys(lineById).forEach(function (i) {
-      var line = lineById[i];
-      var from = line.getAttribute("data-from");
-      var to   = line.getAttribute("data-to");
-      line.classList.remove("is-dim");
-      // dim if neither endpoint is active
-      if (from !== activeId && to !== activeId) {
-        line.classList.add("is-dim");
+  function highlightLayer(layerId) {
+    var lnodes = {};
+    arch.layers.forEach(function (l) {
+      if (l.id === layerId) l.nodes.forEach(function (n) { lnodes[n.id] = true; });
+    });
+    Object.keys(nodeGroups).forEach(function (id) {
+      var g = nodeGroups[id];
+      var r = g.findOne(".main-rect");
+      var lyr = layerById[id];
+      if (lnodes[id]) {
+        r.shadowBlur(14); r.shadowColor(lyr ? lyr.accent : "#d97706"); r.shadowOpacity(0.45);
+        g.opacity(1);
+      } else {
+        r.shadowBlur(0); r.shadowOpacity(0);
+        g.opacity(0.18);
       }
     });
+    edgeShapes.forEach(function (e) {
+      e.line.opacity(lnodes[e.fromId] && lnodes[e.toId] ? 0.85 : 0.05);
+    });
+    nodeLayer.batchDraw();
+    edgeLayer.batchDraw();
   }
 
   function clearHighlight() {
-    allNodeIds.forEach(function (id) {
-      var btn = btnById[id];
-      if (btn) btn.classList.remove("is-active", "is-dim");
+    Object.keys(nodeGroups).forEach(function (id) {
+      var g = nodeGroups[id];
+      var r = g.findOne(".main-rect");
+      r.shadowBlur(0); r.shadowOpacity(0);
+      g.opacity(1);
     });
-    Object.keys(lineById).forEach(function (i) {
-      lineById[i].classList.remove("is-dim");
+    edgeShapes.forEach(function (e) {
+      e.line.opacity(0.48);
+      e.line.strokeWidth((ESTYLE[e.kind] || ESTYLE.primary).width);
+    });
+    nodeLayer.batchDraw();
+    edgeLayer.batchDraw();
+  }
+
+  // ── Zoom & pan ────────────────────────────────────────────────
+  function clampScale(s) { return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s)); }
+
+  function zoomAround(factor, pivot) {
+    var oldS = stage.scaleX();
+    var newS = clampScale(oldS * factor);
+    var pos  = stage.position();
+    stage.scale({ x: newS, y: newS });
+    stage.position({
+      x: pivot.x - (pivot.x - pos.x) * newS / oldS,
+      y: pivot.y - (pivot.y - pos.y) * newS / oldS
+    });
+    currentScale = newS;
+    updateZoomLabel();
+    stage.batchDraw();
+  }
+
+  function fitToView() {
+    if (!stage) return;
+    var w = stage.width(), h = stage.height();
+    var s = clampScale(Math.min(w / VIRT_W, h / VIRT_H) * 0.90);
+    stage.scale({ x: s, y: s });
+    stage.position({ x: (w - VIRT_W * s) / 2, y: (h - VIRT_H * s) / 2 });
+    currentScale = s;
+    updateZoomLabel();
+    stage.batchDraw();
+  }
+
+  function updateZoomLabel() {
+    var el = document.getElementById("map-zoom-label");
+    if (el) el.textContent = Math.round(currentScale * 100) + "%";
+  }
+
+  function wireZoom() {
+    stage.on("wheel", function (e) {
+      var evt = e.evt;
+      if (!evt.ctrlKey && !evt.metaKey) return;
+      evt.preventDefault();
+      zoomAround(evt.deltaY < 0 ? 1.12 : (1 / 1.12), stage.getPointerPosition());
     });
   }
 
-  // ── detail panel ─────────────────────────────────────────────
+  function wirePan() {
+    var panning = false, lastPt = null;
+    stage.on("mousedown touchstart", function (e) {
+      if (e.target !== stage) return;
+      panning = true;
+      var p = stage.getPointerPosition();
+      lastPt = { x: p.x, y: p.y };
+      document.body.style.cursor = "grabbing";
+    });
+    stage.on("mousemove touchmove", function () {
+      if (!panning || !lastPt) return;
+      var p = stage.getPointerPosition();
+      if (!p) return;
+      stage.position({ x: stage.x() + p.x - lastPt.x, y: stage.y() + p.y - lastPt.y });
+      lastPt = p;
+      stage.batchDraw();
+    });
+    stage.on("mouseup touchend mouseleave", function () {
+      if (panning) {
+        panning = false; lastPt = null;
+        if (document.body.style.cursor === "grabbing") document.body.style.cursor = "";
+      }
+    });
+  }
 
+  // ── Toolbar ───────────────────────────────────────────────────
+  function wireToolbar() {
+    function center() { return { x: stage.width() / 2, y: stage.height() / 2 }; }
+    function $id(id)  { return document.getElementById(id); }
+    var zi = $id("map-zoom-in"), zo = $id("map-zoom-out"), fit = $id("map-fit");
+    var rl = $id("map-reset-layout");
+    if (zi)  zi.addEventListener("click",  function () { zoomAround(1.25, center()); });
+    if (zo)  zo.addEventListener("click",  function () { zoomAround(1 / 1.25, center()); });
+    if (fit) fit.addEventListener("click", fitToView);
+    if (rl)  rl.addEventListener("click",  function () {
+      Object.keys(nodeGroups).forEach(function (id) {
+        var g = nodeGroups[id], p = initPos[id];
+        g.x(p.x - NODE_W / 2); g.y(p.y - NODE_H / 2);
+      });
+      updateAllEdges();
+      nodeLayer.batchDraw(); edgeLayer.batchDraw();
+      try { sessionStorage.removeItem("hm-pos"); } catch (ex) {}
+    });
+  }
+
+  // ── Fullscreen ────────────────────────────────────────────────
+  var isFullscreen = false;
+
+  function wireFullscreen() {
+    var wrap    = document.getElementById("map-stage-wrap");
+    var expBtn  = document.getElementById("map-expand");
+    var closeFs = document.getElementById("map-fs-close");
+
+    function toggle(open) {
+      isFullscreen = open;
+      if (wrap) wrap.classList.toggle("is-fullscreen", open);
+      document.body.classList.toggle("map-fs-active", open);
+      if (expBtn) {
+        expBtn.setAttribute("aria-label", open ? "Exit fullscreen" : "Expand to fullscreen");
+        expBtn.textContent = open ? "⊠" : "⤢";
+      }
+      window.setTimeout(function () { resizeStage(); fitToView(); }, 60);
+    }
+
+    if (expBtn)  expBtn.addEventListener("click",  function () { toggle(!isFullscreen); });
+    if (closeFs) closeFs.addEventListener("click", function () { toggle(false); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && isFullscreen) toggle(false);
+    });
+  }
+
+  function resizeStage() {
+    var wrap = document.getElementById("map-stage-wrap");
+    if (!wrap || !stage) return;
+    var fsBar = document.getElementById("map-fs-bar");
+    var hint  = document.querySelector(".map-hint");
+    var fsH   = (fsBar && fsBar.offsetHeight > 0) ? fsBar.offsetHeight : 0;
+    var hiH   = hint ? (hint.offsetHeight || 30) : 30;
+    stage.width(wrap.offsetWidth);
+    stage.height(Math.max(wrap.offsetHeight - fsH - hiH, 280));
+    stage.batchDraw();
+  }
+
+  // ── List-view toggle ──────────────────────────────────────────
+  function wireListToggle() {
+    var btn  = document.getElementById("map-list-toggle");
+    var wrap = document.getElementById("map-stage-wrap");
+    var lv   = document.getElementById("map-list-view");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var showList = btn.getAttribute("aria-pressed") !== "true";
+      btn.setAttribute("aria-pressed", String(showList));
+      if (wrap) wrap.hidden = showList;
+      if (lv)  lv.hidden   = !showList;
+    });
+  }
+
+  function buildListView() {
+    var lv = document.getElementById("map-list-view");
+    if (!lv) return;
+    arch.layers.forEach(function (layer) {
+      var sec = document.createElement("div");
+      sec.className = "mlv-layer";
+      var h = document.createElement("h4");
+      h.className = "mlv-title";
+      h.textContent = layer.title;
+      h.style.color = layer.accent;
+      sec.appendChild(h);
+      var ul = document.createElement("ul");
+      ul.className = "mlv-nodes";
+      layer.nodes.forEach(function (node) {
+        var li = document.createElement("li");
+        li.className = "mlv-node";
+        li.tabIndex = 0;
+        li.innerHTML = "<strong>" + node.name + "</strong> — " + (node.responsibility || "");
+        li.addEventListener("click", function () { openPanel(node.id); });
+        li.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPanel(node.id); }
+        });
+        ul.appendChild(li);
+      });
+      sec.appendChild(ul);
+      lv.appendChild(sec);
+    });
+  }
+
+  // ── Detail panel ─────────────────────────────────────────────
   var panelOpen = false;
-  var panelTriggerNode = null;   // nodeId that opened the panel
-  var panelEl, backdropEl, closeBtn;
-  var PANEL_FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
   function openPanel(nodeId) {
-    var n      = nodeById[nodeId];
-    var layer  = layerById[nodeId];
-    if (!n || !layer || !panelEl) return;
+    var node  = nodeById[nodeId];
+    var layer = layerById[nodeId];
+    if (!node || !layer) return;
 
-    panelTriggerNode = nodeId;
-
-    document.getElementById("panel-layer-name").textContent = layer.title;
-    document.getElementById("panel-node-name").textContent  = n.name;
-    document.getElementById("panel-responsibility").textContent = n.responsibility || "";
-    document.getElementById("panel-detail").textContent     = n.detail || "";
+    document.getElementById("panel-layer-name").textContent      = layer.title;
+    document.getElementById("panel-node-name").textContent       = node.name;
+    document.getElementById("panel-responsibility").textContent  = node.responsibility || "";
+    document.getElementById("panel-detail").textContent          = node.detail || "";
 
     var filesEl = document.getElementById("panel-files");
     filesEl.innerHTML = "";
-    if (n.files && n.files.length) {
-      n.files.forEach(function (f) {
-        var code = document.createElement("code");
-        code.textContent = f;
-        filesEl.appendChild(code);
-      });
-    } else {
+    var files = (node.files && node.files.length) ? node.files : ["external — no source file"];
+    files.forEach(function (f) {
       var code = document.createElement("code");
-      code.textContent = "external — no source file";
+      code.textContent = f;
       filesEl.appendChild(code);
-    }
+    });
 
-    panelEl.classList.add("is-open");
-    panelEl.setAttribute("aria-hidden", "false");
-    backdropEl.classList.add("is-open");
-    // backdrop is decorative — keep aria-hidden true at all times
+    var panelEl = document.getElementById("map-panel");
+    var bdEl    = document.getElementById("map-backdrop");
+    if (panelEl) { panelEl.classList.add("is-open"); panelEl.setAttribute("aria-hidden", "false"); }
+    if (bdEl)    bdEl.classList.add("is-open");
     panelOpen = true;
 
-    // focus close button
-    if (closeBtn) closeBtn.focus();
+    var cb = document.getElementById("panel-close");
+    if (cb) cb.focus();
   }
 
   function closePanel() {
-    if (!panelEl) return;
-    panelEl.classList.remove("is-open");
-    panelEl.setAttribute("aria-hidden", "true");
-    backdropEl.classList.remove("is-open");
+    var panelEl = document.getElementById("map-panel");
+    var bdEl    = document.getElementById("map-backdrop");
+    if (panelEl) { panelEl.classList.remove("is-open"); panelEl.setAttribute("aria-hidden", "true"); }
+    if (bdEl)    bdEl.classList.remove("is-open");
     panelOpen = false;
-
-    // return focus to trigger
-    if (panelTriggerNode && btnById[panelTriggerNode]) {
-      btnById[panelTriggerNode].focus();
-    }
-    panelTriggerNode = null;
+    clearHighlight();
+    if (stage) stage.batchDraw();
   }
 
-  // Focus trap inside panel
-  function trapFocus(e) {
-    if (!panelOpen || !panelEl) return;
-    var focusable = Array.prototype.slice.call(panelEl.querySelectorAll(PANEL_FOCUSABLE));
-    if (!focusable.length) return;
-    var first = focusable[0];
-    var last  = focusable[focusable.length - 1];
+  document.addEventListener("keydown", function (e) {
+    if (!panelOpen) return;
+    var panelEl = document.getElementById("map-panel");
+    if (!panelEl) return;
+    var items = Array.prototype.slice.call(
+      panelEl.querySelectorAll('button,[href],input,[tabindex]:not([tabindex="-1"])')
+    );
+    if (!items.length) return;
+    if (e.key === "Escape") { e.preventDefault(); closePanel(); return; }
     if (e.key === "Tab") {
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
+      var first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
       }
     }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      closePanel();
-    }
+  });
+
+  function wirePanel() {
+    var cb = document.getElementById("panel-close");
+    var bd = document.getElementById("map-backdrop");
+    if (cb) cb.addEventListener("click", closePanel);
+    if (bd) bd.addEventListener("click", closePanel);
   }
 
-  // ── wire events ──────────────────────────────────────────────
+  // ── Session storage drag persistence ─────────────────────────
+  var STORE_KEY = "hm-pos";
 
-  function wireNodeEvents() {
-    allNodeIds.forEach(function (id) {
-      var btn = btnById[id];
-      if (!btn) return;
-
-      btn.addEventListener("mouseenter", function () {
-        highlight(id);
-      });
-      btn.addEventListener("mouseleave", function () {
-        clearHighlight();
-      });
-      btn.addEventListener("focus", function () {
-        highlight(id);
-      });
-      btn.addEventListener("blur", function () {
-        // defer clear so focus-move within panel doesn't flicker
-        requestAnimationFrame(function () {
-          if (!panelEl || !panelEl.contains(document.activeElement)) {
-            clearHighlight();
-          }
-        });
-      });
-      btn.addEventListener("click", function () {
-        openPanel(id);
-      });
-      btn.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openPanel(id);
-        }
-      });
+  function saveDragPositions() {
+    var out = {};
+    Object.keys(nodeGroups).forEach(function (id) {
+      var g = nodeGroups[id];
+      out[id] = { x: g.x(), y: g.y() };
     });
+    try { sessionStorage.setItem(STORE_KEY, JSON.stringify(out)); } catch (ex) {}
   }
 
-  // ── resize reposition ────────────────────────────────────────
+  function loadDragPositions() {
+    try {
+      var raw = sessionStorage.getItem(STORE_KEY);
+      if (!raw) return false;
+      var pos = JSON.parse(raw);
+      Object.keys(pos).forEach(function (id) {
+        var g = nodeGroups[id];
+        if (g) { g.x(pos[id].x); g.y(pos[id].y); }
+      });
+      updateAllEdges();
+      nodeLayer.batchDraw(); edgeLayer.batchDraw();
+      return true;
+    } catch (ex) { return false; }
+  }
 
-  function scheduleReposition(arch, canvas) {
+  // ── Resize ────────────────────────────────────────────────────
+  function scheduleResize() {
+    var wrap = document.getElementById("map-stage-wrap");
+    if (!wrap) return;
     var pending = false;
-    function reposition() {
-      pending = false;
-      positionEdges(arch, canvas);
-    }
     function onResize() {
-      if (!pending) {
-        pending = true;
-        requestAnimationFrame(reposition);
-      }
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(function () { pending = false; resizeStage(); });
     }
-
     if (typeof ResizeObserver !== "undefined") {
-      var ro = new ResizeObserver(onResize);
-      ro.observe(canvas);
+      new ResizeObserver(onResize).observe(wrap);
     } else {
       window.addEventListener("resize", onResize);
     }
   }
 
-  // ── init ─────────────────────────────────────────────────────
+  // ── mapAPI — scroll-sync + lifecycle integration ──────────────
+  window.mapAPI = {
+    highlightLayer: function (layerId) { if (stage) highlightLayer(layerId); },
+    clearHighlight: function () {
+      if (!stage) return;
+      clearHighlight();
+      stage.batchDraw();
+    }
+  };
 
+  // ── Init ──────────────────────────────────────────────────────
   function initMap() {
-    var arch = window.ARCH;
-    if (!arch || !Array.isArray(arch.layers)) return;
-
-    var canvas = document.getElementById("map-canvas");
-    if (!canvas) return;
-
-    panelEl    = document.getElementById("map-panel");
-    backdropEl = document.getElementById("map-backdrop");
-    closeBtn   = document.getElementById("panel-close");
-
-    // Reset Set-like neighbour storage
-    arch.layers.forEach(function (layer) {
-      layer.nodes.forEach(function (n) {
-        allNodeIds.push(n.id);
-        neighbours[n.id] = makeSet();
-      });
-    });
-
-    buildLookups(arch);
-    renderBands(arch, canvas);
-    renderEdges(arch, canvas);
-
-    // Position after first paint
-    requestAnimationFrame(function () {
-      positionEdges(arch, canvas);
-    });
-
-    wireNodeEvents();
-    scheduleReposition(arch, canvas);
-
-    // Panel close button
-    if (closeBtn) {
-      closeBtn.addEventListener("click", closePanel);
-    }
-    // Backdrop click closes
-    if (backdropEl) {
-      backdropEl.addEventListener("click", closePanel);
-    }
-    // Global keyboard handler
-    document.addEventListener("keydown", function (e) {
-      if (panelOpen) {
-        trapFocus(e);
-      }
-    });
+    buildLookups();
+    if (!createStage()) return;
+    renderBands();
+    renderEdges();
+    renderNodes();
+    bgLayer.batchDraw(); edgeLayer.batchDraw(); nodeLayer.batchDraw();
+    loadDragPositions();
+    fitToView();
+    wireZoom();
+    wirePan();
+    wireToolbar();
+    wireFullscreen();
+    wireListToggle();
+    buildListView();
+    wirePanel();
+    scheduleResize();
   }
 
   if (document.readyState === "loading") {
@@ -639,66 +812,6 @@
   } else {
     initMap();
   }
-
-  // ── expose mapAPI for scroll sync ────────────────────────────
-
-  function highlightLayer(layerId) {
-    // Highlight all nodes belonging to the given layer
-    var arch = window.ARCH;
-    if (!arch) return;
-    var layer = null;
-    arch.layers.forEach(function (l) { if (l.id === layerId) layer = l; });
-    if (!layer) return;
-
-    var layerNodeIds = layer.nodes.map(function (n) { return n.id; });
-    var layerSet = makeSet();
-    layerNodeIds.forEach(function (id) { layerSet.add(id); });
-
-    allNodeIds.forEach(function (id) {
-      var btn = btnById[id];
-      if (!btn) return;
-      btn.classList.remove("is-active", "is-dim");
-      if (layerSet.has(id)) {
-        btn.classList.add("is-active");
-      } else {
-        btn.classList.add("is-dim");
-      }
-    });
-
-    // dim edges whose both endpoints are not in this layer
-    Object.keys(lineById).forEach(function (i) {
-      var line = lineById[i];
-      var from = line.getAttribute("data-from");
-      var to   = line.getAttribute("data-to");
-      line.classList.remove("is-dim");
-      if (!layerSet.has(from) && !layerSet.has(to)) {
-        line.classList.add("is-dim");
-      }
-    });
-
-    // highlight the band label
-    var bands = document.querySelectorAll(".map-band");
-    Array.prototype.forEach.call(bands, function (band) {
-      band.classList.remove("is-layer-active");
-      if (band.getAttribute("data-layer") === layerId) {
-        band.classList.add("is-layer-active");
-        band.style.setProperty("--band-accent", layer.accent || "var(--accent-4)");
-      }
-    });
-  }
-
-  function clearHighlightAPI() {
-    clearHighlight();
-    var bands = document.querySelectorAll(".map-band");
-    Array.prototype.forEach.call(bands, function (band) {
-      band.classList.remove("is-layer-active");
-    });
-  }
-
-  window.mapAPI = {
-    highlightLayer: highlightLayer,
-    clearHighlight: clearHighlightAPI
-  };
 })();
 
 /* ============================================================
