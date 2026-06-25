@@ -101,7 +101,10 @@ async function main() {
   const skillIndex = buildSkillIndex(skills)
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
 
-  const apiKey = process.env.HARNESS_API_KEY
+  const apiKey = process.env.HARNESS_API_KEY?.trim() || undefined
+  if (process.env.HARNESS_API_KEY !== undefined && !apiKey) {
+    console.warn('[auth] HARNESS_API_KEY is set but empty — ignoring, server is unauthenticated')
+  }
 
   const scheduler = new CronScheduler(profile, runStore, abortRegistry)
   scheduler.init()
@@ -111,7 +114,21 @@ async function main() {
 
   const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
-  const wss = new WebSocketServer({ server: httpServer })
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: (info, cb) => {
+      if (!apiKey) {
+        cb(true)  // no key set → open dev mode
+        return
+      }
+      const auth = info.req.headers['authorization']
+      if (auth === `Bearer ${apiKey}`) {
+        cb(true)
+      } else {
+        cb(false, 401, 'Unauthorized')
+      }
+    },
+  })
   httpServer.listen(PORT, () => {
     console.log(`Harness server on ws://localhost:${PORT} [profile: ${profile.name}]`)
     console.log(`REST endpoints: http://localhost:${PORT} (/run, /stream, /health)`)
