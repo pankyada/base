@@ -7,22 +7,22 @@
    Design tokens
    ============================================================ */
 :root {
-  /* Base palette */
-  --bg: #0b0d17;
-  --bg-soft: #12152a;
-  --surface: #181b33;
-  --surface-2: #1f2342;
-  --ink: #f4f6ff;
-  --ink-dim: #aeb4d6;
-  --ink-faint: #6b7099;
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.16);
+  /* Base palette — light theme */
+  --bg: #f6f7ff;
+  --bg-soft: #eef0fb;
+  --surface: #ffffff;
+  --surface-2: #eef0fb;
+  --ink: #0d0f22;
+  --ink-dim: #3d4268;
+  --ink-faint: #7e86b0;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.14);
 
-  /* Brand / playful accents */
-  --accent: #ffd166;       /* sunshine */
-  --accent-2: #06d6a0;     /* mint */
-  --accent-3: #ff6b9d;     /* bubblegum */
-  --accent-4: #4cc9f0;     /* sky */
+  /* Brand / playful accents (deepened for light-bg contrast) */
+  --accent: #d97706;       /* amber — replaces sunshine yellow */
+  --accent-2: #059669;     /* emerald */
+  --accent-3: #db2777;     /* rose */
+  --accent-4: #0284c7;     /* sky */
 
   /* Per-layer accents (mirror data.js) */
   --layer-clients: #2563eb;
@@ -66,9 +66,9 @@
   --r-pill: 999px;
 
   /* Shadows */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 0 1px var(--line-strong), 0 18px 60px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --shadow-glow: 0 0 0 1px var(--line-strong), 0 18px 60px rgba(0, 0, 0, 0.14);
 
   /* Motion */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -113,24 +113,24 @@ body::before {
   inset: -20%;
   z-index: -2;
   background:
-    radial-gradient(38% 42% at 18% 22%, rgba(37, 99, 235, 0.30), transparent 70%),
-    radial-gradient(34% 40% at 82% 16%, rgba(124, 58, 237, 0.26), transparent 70%),
-    radial-gradient(42% 46% at 70% 84%, rgba(6, 214, 160, 0.20), transparent 70%),
-    radial-gradient(40% 44% at 24% 88%, rgba(255, 107, 157, 0.18), transparent 72%);
+    radial-gradient(38% 42% at 18% 22%, rgba(37, 99, 235, 0.10), transparent 70%),
+    radial-gradient(34% 40% at 82% 16%, rgba(124, 58, 237, 0.09), transparent 70%),
+    radial-gradient(42% 46% at 70% 84%, rgba(5, 150, 105, 0.08), transparent 70%),
+    radial-gradient(40% 44% at 24% 88%, rgba(219, 39, 119, 0.07), transparent 72%);
   filter: blur(8px);
   animation: drift 24s ease-in-out infinite alternate;
 }
 
-/* Subtle grain/dot texture overlay */
+/* Subtle dot texture overlay */
 body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(0, 0, 0, 0.045) 1px, transparent 1px);
   background-size: 22px 22px;
-  opacity: 0.6;
+  opacity: 0.7;
 }
 
 @keyframes drift {
@@ -187,7 +187,7 @@ code {
   top: 0;
   z-index: 50;
   backdrop-filter: blur(14px);
-  background: rgba(11, 13, 23, 0.62);
+  background: rgba(246, 247, 255, 0.88);
   border-bottom: 1px solid var(--line);
 }
 
@@ -321,10 +321,10 @@ code {
 
 .btn-primary {
   background: var(--accent);
-  color: #1a1402;
-  box-shadow: 0 10px 30px rgba(255, 209, 102, 0.28);
+  color: #ffffff;
+  box-shadow: 0 10px 30px rgba(217, 119, 6, 0.28);
 }
-.btn-primary:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 16px 40px rgba(255, 209, 102, 0.42); }
+.btn-primary:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 16px 40px rgba(217, 119, 6, 0.42); }
 
 .btn-secondary {
   background: var(--surface);
@@ -513,7 +513,7 @@ code {
   font-family: var(--font-mono);
   font-size: 0.68rem;
   color: var(--ink-faint);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.04);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   padding: 2px 6px;
@@ -755,7 +755,7 @@ code {
   font-family: var(--font-mono);
   font-size: 0.7rem;
   color: var(--ink-faint);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.04);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   padding: 2px 7px;
@@ -985,7 +985,7 @@ code {
   flex-direction: column;
   gap: 10px;
   padding: 8px 4px;
-  background: rgba(11, 13, 23, 0.55);
+  background: rgba(246, 247, 255, 0.88);
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   backdrop-filter: blur(8px);
@@ -1216,13 +1216,13 @@ code {
   font-size: 1.35rem;
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a1402;
-  box-shadow: 0 8px 24px rgba(255, 209, 102, 0.30);
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(217, 119, 6, 0.30);
 }
 
 .lc-btn.lc-play:hover {
   transform: translateY(-3px) scale(1.1);
-  box-shadow: 0 14px 36px rgba(255, 209, 102, 0.46);
+  box-shadow: 0 14px 36px rgba(217, 119, 6, 0.46);
   background: var(--accent);
   border-color: var(--accent);
   color: #1a1402;
