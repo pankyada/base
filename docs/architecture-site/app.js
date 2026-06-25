@@ -640,4 +640,245 @@
   } else {
     initMap();
   }
+
+  // ── expose mapAPI for Sprint 3 scroll sync ────────────────────
+
+  function highlightLayer(layerId) {
+    // Highlight all nodes belonging to the given layer
+    var arch = window.ARCH;
+    if (!arch) return;
+    var layer = null;
+    arch.layers.forEach(function (l) { if (l.id === layerId) layer = l; });
+    if (!layer) return;
+
+    var layerNodeIds = layer.nodes.map(function (n) { return n.id; });
+    var layerSet = makeSet();
+    layerNodeIds.forEach(function (id) { layerSet.add(id); });
+
+    allNodeIds.forEach(function (id) {
+      var btn = btnById[id];
+      if (!btn) return;
+      btn.classList.remove("is-active", "is-dim");
+      if (layerSet.has(id)) {
+        btn.classList.add("is-active");
+      } else {
+        btn.classList.add("is-dim");
+      }
+    });
+
+    // dim edges whose both endpoints are not in this layer
+    Object.keys(lineById).forEach(function (i) {
+      var line = lineById[i];
+      var from = line.getAttribute("data-from");
+      var to   = line.getAttribute("data-to");
+      line.classList.remove("is-dim");
+      if (!layerSet.has(from) && !layerSet.has(to)) {
+        line.classList.add("is-dim");
+      }
+    });
+
+    // highlight the band label
+    var bands = document.querySelectorAll(".map-band");
+    Array.prototype.forEach.call(bands, function (band) {
+      band.classList.remove("is-layer-active");
+      if (band.getAttribute("data-layer") === layerId) {
+        band.classList.add("is-layer-active");
+        band.style.setProperty("--band-accent", layer.accent || "var(--accent-4)");
+      }
+    });
+  }
+
+  function clearHighlightAPI() {
+    clearHighlight();
+    var bands = document.querySelectorAll(".map-band");
+    Array.prototype.forEach.call(bands, function (band) {
+      band.classList.remove("is-layer-active");
+    });
+  }
+
+  window.mapAPI = {
+    highlightLayer: highlightLayer,
+    clearHighlight: clearHighlightAPI
+  };
+})();
+
+/* ============================================================
+   Sprint 3 — Scroll-driven storytelling
+   - Scroll progress bar
+   - Layer mini-nav (dot navigation)
+   - Storytelling two-column layout (desktop ≥ 900px)
+   - Scroll-synced map highlighting
+   ============================================================ */
+(function () {
+  "use strict";
+
+  var REDUCED = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ── scroll progress bar ──────────────────────────────────────
+
+  function initProgressBar() {
+    var bar = document.getElementById("scroll-progress");
+    if (!bar) return;
+
+    var rafPending = false;
+
+    function updateBar() {
+      rafPending = false;
+      var docH = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+      if (docH <= 0) { bar.style.transform = "scaleX(1)"; return; }
+      var pct = window.scrollY / docH;
+      bar.style.transform = "scaleX(" + pct + ")";
+    }
+
+    window.addEventListener("scroll", function () {
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(updateBar);
+      }
+    }, { passive: true });
+
+    updateBar(); // set initial state
+  }
+
+  // ── storytelling layout (inject wrapper div) ─────────────────
+
+  function initStorytellingLayout() {
+    var layersSection = document.getElementById("layers");
+    var mapSection    = document.getElementById("map");
+    if (!layersSection || !mapSection) return;
+
+    // Only restructure if they are adjacent siblings
+    if (layersSection.nextElementSibling !== mapSection) return;
+
+    var wrapper = document.createElement("div");
+    wrapper.className = "storytelling-layout";
+
+    var parent = layersSection.parentNode;
+    parent.insertBefore(wrapper, layersSection);
+    wrapper.appendChild(layersSection);
+    wrapper.appendChild(mapSection);
+  }
+
+  // ── mini-nav dots ────────────────────────────────────────────
+
+  function initMiniNav(layers) {
+    var nav = document.createElement("nav");
+    nav.className = "layer-mini-nav";
+    nav.setAttribute("aria-label", "Layer navigation");
+
+    var dots = [];
+
+    layers.forEach(function (layer) {
+      var dot = document.createElement("button");
+      dot.className = "mini-nav-dot";
+      dot.setAttribute("data-layer-id", layer.id);
+      dot.setAttribute("aria-label", "Jump to " + layer.title);
+      dot.title = layer.title;
+      dot.style.setProperty("--dot-accent", layer.accent || "var(--accent-4)");
+
+      dot.addEventListener("click", function () {
+        var target = document.getElementById("layer-" + layer.id);
+        if (!target) return;
+        target.scrollIntoView({
+          behavior: REDUCED ? "auto" : "smooth",
+          block: "start"
+        });
+      });
+
+      dots.push(dot);
+      nav.appendChild(dot);
+    });
+
+    document.body.appendChild(nav);
+    return dots;
+  }
+
+  // ── active layer tracking ────────────────────────────────────
+
+  function initScrollSync(layers, dots) {
+    var layerEls = layers.map(function (layer) {
+      return document.getElementById("layer-" + layer.id);
+    }).filter(Boolean);
+
+    var activeDotIndex = -1;
+
+    function setActiveDot(index) {
+      if (index === activeDotIndex) return;
+      activeDotIndex = index;
+      dots.forEach(function (dot, i) {
+        dot.classList.toggle("is-active", i === index);
+      });
+    }
+
+    function setActiveMapLayer(layerId) {
+      if (!window.mapAPI) return;
+      if (REDUCED) {
+        // instant, no transition
+        if (layerId) {
+          window.mapAPI.highlightLayer(layerId);
+        } else {
+          window.mapAPI.clearHighlight();
+        }
+      } else {
+        if (layerId) {
+          window.mapAPI.highlightLayer(layerId);
+        } else {
+          window.mapAPI.clearHighlight();
+        }
+      }
+    }
+
+    if (!("IntersectionObserver" in window)) {
+      // Fallback: no sync
+      return;
+    }
+
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        var id = entry.target.id; // "layer-clients" etc.
+        var layerId = id.replace("layer-", "");
+        var idx = layers.findIndex
+          ? layers.findIndex(function (l) { return l.id === layerId; })
+          : (function () {
+              var found = -1;
+              layers.forEach(function (l, i) { if (l.id === layerId) found = i; });
+              return found;
+            })();
+
+        if (entry.isIntersecting) {
+          setActiveDot(idx);
+          setActiveMapLayer(layerId);
+        } else {
+          // When the active layer leaves, check if no other is intersecting
+          // We clear only if this was the active one
+          if (activeDotIndex === idx) {
+            setActiveDot(-1);
+            setActiveMapLayer(null);
+          }
+        }
+      });
+    }, { threshold: 0.35 });
+
+    layerEls.forEach(function (el) { io.observe(el); });
+  }
+
+  // ── boot ─────────────────────────────────────────────────────
+
+  function init3() {
+    initProgressBar();
+    initStorytellingLayout();
+
+    var arch = window.ARCH;
+    if (!arch || !Array.isArray(arch.layers)) return;
+
+    var dots = initMiniNav(arch.layers);
+    initScrollSync(arch.layers, dots);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init3);
+  } else {
+    init3();
+  }
 })();
