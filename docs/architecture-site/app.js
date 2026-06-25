@@ -703,6 +703,445 @@
 })();
 
 /* ============================================================
+   Sprint 4 — Lifecycle animation
+   Depends on window.ARCH (from data.js) and window.mapAPI (Sprint 2).
+   ============================================================ */
+(function () {
+  "use strict";
+
+  var REDUCED = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ── layer accent lookup ────────────────────────────────────
+  var ACCENT_VAR = {
+    clients:   "--layer-clients",
+    transport: "--layer-transport",
+    core:      "--layer-core",
+    tools:     "--layer-tools",
+    ext:       "--layer-ext",
+    state:     "--layer-state",
+    ops:       "--layer-ops",
+    external:  "--layer-external"
+  };
+
+  function getLayerAccent(layerId) {
+    var v = ACCENT_VAR[layerId];
+    if (!v) return "var(--accent-4)";
+    return "var(" + v + ", var(--accent-4))";
+  }
+
+  // ── build lookups from ARCH ────────────────────────────────
+  var nodeById  = {};   // nodeId -> node data
+  var layerById = {};   // nodeId -> layer data
+
+  function buildLookups(arch) {
+    arch.layers.forEach(function (layer) {
+      layer.nodes.forEach(function (n) {
+        nodeById[n.id]  = n;
+        layerById[n.id] = layer;
+      });
+    });
+  }
+
+  // ── collect unique ordered nodes from flow ─────────────────
+  function getFlowNodes(flow) {
+    var seen = {};
+    var list = [];
+    flow.forEach(function (step) {
+      if (!seen[step.fromId]) { seen[step.fromId] = true; list.push(step.fromId); }
+      if (!seen[step.toId])   { seen[step.toId]   = true; list.push(step.toId); }
+    });
+    return list;
+  }
+
+  // ── build stage ────────────────────────────────────────────
+
+  var nodeDotById = {};   // nodeId -> DOM element
+  var nodePos     = {};   // nodeId -> { x, y } (percentage-based centre)
+
+  function buildStage(flow, stageEl) {
+    var nodeIds = getFlowNodes(flow);
+    var count   = nodeIds.length;
+    var PAD_X   = 7;  // % from left/right edge
+    var MID_Y   = 50; // % from top for the single horizontal row
+
+    // Compute positions (horizontal spread)
+    nodeIds.forEach(function (id, i) {
+      var x = count > 1
+        ? PAD_X + (i / (count - 1)) * (100 - 2 * PAD_X)
+        : 50;
+      nodePos[id] = { x: x, y: MID_Y };
+    });
+
+    // SVG for path lines
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "lc-path-svg");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("preserveAspectRatio", "none");
+    stageEl.appendChild(svg);
+
+    // Draw connecting lines between consecutive flow steps
+    flow.forEach(function (step, i) {
+      var fromPos = nodePos[step.fromId];
+      var toPos   = nodePos[step.toId];
+      if (!fromPos || !toPos) return;
+      var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("class", "lc-path-line");
+      line.setAttribute("data-step", String(i));
+      // We use % via viewBox. Set viewBox on svg later when we know stage size.
+      // Store percentage values; position() will convert to px.
+      line.setAttribute("data-x1", fromPos.x);
+      line.setAttribute("data-y1", fromPos.y);
+      line.setAttribute("data-x2", toPos.x);
+      line.setAttribute("data-y2", toPos.y);
+      svg.appendChild(line);
+    });
+
+    // Draw node dots
+    nodeIds.forEach(function (id) {
+      var node  = nodeById[id];
+      var layer = layerById[id];
+      var pos   = nodePos[id];
+      var accent = layer ? getLayerAccent(layer.id) : "var(--accent-4)";
+
+      var dot = document.createElement("div");
+      dot.className = "lc-node-dot";
+      dot.id = "lc-dot-" + id;
+      dot.style.setProperty("--lc-node-accent", accent);
+      dot.style.left = pos.x + "%";
+      dot.style.top  = pos.y + "%";
+      dot.setAttribute("aria-hidden", "true");
+
+      // Short label inside dot: up to 3 chars
+      var shortName = (node ? node.name : id).slice(0, 4);
+      dot.textContent = shortName;
+
+      // Label below dot
+      var label = document.createElement("span");
+      label.className = "lc-node-label";
+      label.textContent = node ? node.name : id;
+      dot.appendChild(label);
+
+      stageEl.appendChild(dot);
+      nodeDotById[id] = dot;
+    });
+
+    // Position SVG lines based on stage dimensions
+    positionLines(stageEl, svg);
+
+    // Token
+    var token = document.createElement("div");
+    token.className = "lc-token";
+    token.id = "lc-token";
+    token.setAttribute("aria-hidden", "true");
+    stageEl.appendChild(token);
+
+    return { svg: svg, token: token };
+  }
+
+  function positionLines(stageEl, svg) {
+    var w = stageEl.offsetWidth  || 600;
+    var h = stageEl.offsetHeight || 200;
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    svg.setAttribute("width",  w);
+    svg.setAttribute("height", h);
+
+    var lines = svg.querySelectorAll(".lc-path-line");
+    Array.prototype.forEach.call(lines, function (line) {
+      line.setAttribute("x1", (parseFloat(line.getAttribute("data-x1")) / 100) * w);
+      line.setAttribute("y1", (parseFloat(line.getAttribute("data-y1")) / 100) * h);
+      line.setAttribute("x2", (parseFloat(line.getAttribute("data-x2")) / 100) * w);
+      line.setAttribute("y2", (parseFloat(line.getAttribute("data-y2")) / 100) * h);
+    });
+  }
+
+  // ── token animation ────────────────────────────────────────
+
+  var SPEEDS = [1, 2, 0.5];
+  var speedIdx = 0;
+  var stepIndex = 0;        // 0-based index into flow array
+  var playing   = false;
+  var animRaf   = null;
+  var playTimer = null;
+
+  function getTokenDuration() {
+    return SPEEDS[speedIdx] === 0 ? 600 : Math.round(600 / SPEEDS[speedIdx]);
+  }
+
+  function pxPos(id, stageEl) {
+    var pos = nodePos[id];
+    if (!pos) return { x: 0, y: 0 };
+    return {
+      x: (pos.x / 100) * stageEl.offsetWidth,
+      y: (pos.y / 100) * stageEl.offsetHeight
+    };
+  }
+
+  function moveTokenTo(toId, stageEl, token, onDone) {
+    if (REDUCED) {
+      // Jump instantly
+      var p = pxPos(toId, stageEl);
+      token.style.left = p.x + "px";
+      token.style.top  = p.y + "px";
+      pulseNode(toId);
+      if (onDone) onDone();
+      return;
+    }
+
+    var fromLeft = parseFloat(token.style.left) || 0;
+    var fromTop  = parseFloat(token.style.top)  || 0;
+    var toP = pxPos(toId, stageEl);
+    var dur  = getTokenDuration();
+    var start = null;
+
+    if (animRaf) { cancelAnimationFrame(animRaf); animRaf = null; }
+
+    function step(ts) {
+      if (!start) start = ts;
+      var t = Math.min((ts - start) / dur, 1);
+      // ease-out cubic
+      var e = 1 - Math.pow(1 - t, 3);
+      token.style.left = (fromLeft + (toP.x - fromLeft) * e) + "px";
+      token.style.top  = (fromTop  + (toP.y - fromTop)  * e) + "px";
+      if (t < 1) {
+        animRaf = requestAnimationFrame(step);
+      } else {
+        animRaf = null;
+        pulseNode(toId);
+        if (onDone) onDone();
+      }
+    }
+    animRaf = requestAnimationFrame(step);
+  }
+
+  function pulseNode(nodeId) {
+    var dot = nodeDotById[nodeId];
+    if (!dot || REDUCED) return;
+    dot.classList.remove("is-pulse");
+    // force reflow to restart animation
+    void dot.offsetWidth;
+    dot.classList.add("is-pulse");
+    window.setTimeout(function () { dot.classList.remove("is-pulse"); }, 420);
+  }
+
+  // ── narration + line state ─────────────────────────────────
+
+  function updateNarration(flow, idx) {
+    var step = flow[idx];
+    var numEl  = document.getElementById("narration-step-num");
+    var textEl = document.getElementById("narration-text");
+    var lblEl  = document.getElementById("narration-label");
+    if (numEl)  numEl.textContent  = String(idx + 1);
+    if (textEl) textEl.textContent = step ? step.narrative : "";
+    if (lblEl)  lblEl.textContent  = step ? step.label     : "";
+  }
+
+  function updatePathLines(flow, idx) {
+    var lines = document.querySelectorAll(".lc-path-line");
+    Array.prototype.forEach.call(lines, function (line) {
+      var lineStep = parseInt(line.getAttribute("data-step"), 10);
+      line.classList.toggle("is-active", lineStep < idx);
+    });
+  }
+
+  function updateMapHighlight(flow, idx) {
+    if (!window.mapAPI) return;
+    var step = flow[idx];
+    if (!step) return;
+    var layer = layerById[step.toId];
+    if (layer) {
+      window.mapAPI.highlightLayer(layer.id);
+    }
+  }
+
+  // ── step logic ─────────────────────────────────────────────
+
+  function goToStep(idx, flow, stageEl, token) {
+    stepIndex = Math.max(0, Math.min(idx, flow.length - 1));
+    var step = flow[stepIndex];
+    updateNarration(flow, stepIndex);
+    updatePathLines(flow, stepIndex);
+    updateMapHighlight(flow, stepIndex);
+
+    // Position token at toId of current step
+    moveTokenTo(step.toId, stageEl, token, null);
+  }
+
+  // ── play/pause ─────────────────────────────────────────────
+
+  var playBtn;
+
+  function advancePlay(flow, stageEl, token) {
+    if (stepIndex >= flow.length - 1) {
+      // Reached end
+      setPlaying(false);
+      return;
+    }
+    var nextIdx = stepIndex + 1;
+    goToStep(nextIdx, flow, stageEl, token);
+
+    // Schedule next advance after animation duration + small gap
+    playTimer = window.setTimeout(function () {
+      if (playing) advancePlay(flow, stageEl, token);
+    }, getTokenDuration() + 200);
+  }
+
+  function setPlaying(val) {
+    playing = val;
+    if (playBtn) {
+      playBtn.textContent = playing ? "⏸" : "▶";
+      playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+    }
+    if (!playing && playTimer) {
+      clearTimeout(playTimer);
+      playTimer = null;
+    }
+  }
+
+  // ── controls ──────────────────────────────────────────────
+
+  function wireControls(flow, stageEl, token) {
+    playBtn = document.getElementById("lc-play");
+    var prevBtn    = document.getElementById("lc-prev");
+    var nextBtn    = document.getElementById("lc-next");
+    var restartBtn = document.getElementById("lc-restart");
+    var speedBtn   = document.getElementById("lc-speed");
+
+    if (playBtn) {
+      playBtn.addEventListener("click", function () {
+        if (playing) {
+          setPlaying(false);
+        } else {
+          // If at last step, restart first
+          if (stepIndex >= flow.length - 1) {
+            resetToStart(flow, stageEl, token);
+          }
+          setPlaying(true);
+          advancePlay(flow, stageEl, token);
+        }
+      });
+    }
+
+    if (prevBtn) {
+      prevBtn.addEventListener("click", function () {
+        setPlaying(false);
+        if (stepIndex > 0) goToStep(stepIndex - 1, flow, stageEl, token);
+      });
+    }
+
+    if (nextBtn) {
+      nextBtn.addEventListener("click", function () {
+        setPlaying(false);
+        if (stepIndex < flow.length - 1) goToStep(stepIndex + 1, flow, stageEl, token);
+      });
+    }
+
+    if (restartBtn) {
+      restartBtn.addEventListener("click", function () {
+        setPlaying(false);
+        resetToStart(flow, stageEl, token);
+      });
+    }
+
+    if (speedBtn) {
+      speedBtn.addEventListener("click", function () {
+        speedIdx = (speedIdx + 1) % SPEEDS.length;
+        var labels = ["1×", "2×", "0.5×"];
+        speedBtn.textContent = labels[speedIdx];
+      });
+    }
+  }
+
+  function resetToStart(flow, stageEl, token) {
+    stepIndex = 0;
+    updateNarration(flow, 0);
+    updatePathLines(flow, 0);
+    // Place token at fromId of first step
+    var startPos = pxPos(flow[0].fromId, stageEl);
+    token.style.left = startPos.x + "px";
+    token.style.top  = startPos.y + "px";
+    if (window.mapAPI) window.mapAPI.clearHighlight();
+  }
+
+  // ── populate text list (a11y) ──────────────────────────────
+
+  function buildTextList(flow) {
+    var ol = document.getElementById("lifecycle-steps-ol");
+    if (!ol) return;
+    flow.forEach(function (step) {
+      var li = document.createElement("li");
+      li.innerHTML = "<strong>Step " + step.step + " — " + step.label + ":</strong> " + step.narrative;
+      ol.appendChild(li);
+    });
+  }
+
+  // ── resize handler ─────────────────────────────────────────
+
+  function scheduleResize(stageEl, svg, token, flow) {
+    var pending = false;
+    function onResize() {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(function () {
+        pending = false;
+        positionLines(stageEl, svg);
+        // Reposition token without animation
+        var step = flow[stepIndex];
+        if (step) {
+          var p = pxPos(step.toId, stageEl);
+          token.style.left = p.x + "px";
+          token.style.top  = p.y + "px";
+        }
+      });
+    }
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(onResize).observe(stageEl);
+    } else {
+      window.addEventListener("resize", onResize);
+    }
+  }
+
+  // ── init ──────────────────────────────────────────────────
+
+  function initLifecycle() {
+    var arch = window.ARCH;
+    if (!arch || !Array.isArray(arch.flow) || !arch.flow.length) return;
+
+    var stageEl = document.getElementById("lifecycle-stage");
+    if (!stageEl) return;
+
+    buildLookups(arch);
+
+    var result = buildStage(arch.flow, stageEl);
+    var svg    = result.svg;
+    var token  = result.token;
+
+    // Initial narration (step 0 state, not yet moved)
+    updateNarration(arch.flow, 0);
+    document.getElementById("narration-text").textContent = "Click Play to begin.";
+    document.getElementById("narration-label").textContent = "";
+
+    // Place token at start node
+    requestAnimationFrame(function () {
+      positionLines(stageEl, svg);
+      var startPos = pxPos(arch.flow[0].fromId, stageEl);
+      token.style.left = startPos.x + "px";
+      token.style.top  = startPos.y + "px";
+      wireControls(arch.flow, stageEl, token);
+      scheduleResize(stageEl, svg, token, arch.flow);
+    });
+
+    buildTextList(arch.flow);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initLifecycle);
+  } else {
+    initLifecycle();
+  }
+})();
+
+/* ============================================================
    Sprint 3 — Scroll-driven storytelling
    - Scroll progress bar
    - Layer mini-nav (dot navigation)

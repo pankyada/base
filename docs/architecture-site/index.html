@@ -127,17 +127,40 @@
       </div>
     </aside>
 
-    <!-- Placeholder: request lifecycle (later sprint) -->
-    <section class="placeholder shell" id="lifecycle" aria-labelledby="lifecycle-heading">
-      <div class="frame">
-        <span class="kicker">Coming next</span>
+    <!-- Lifecycle section (Sprint 4) -->
+    <section class="lifecycle-section shell" id="lifecycle" aria-labelledby="lifecycle-heading">
+      <div class="section-head">
+        <span class="kicker">Request path · animated</span>
         <h2 id="lifecycle-heading">Play the request lifecycle</h2>
-        <p>
-          Step through a single request — from a user message over WebSocket, through the loop and
-          the LLM, out to tools and back — as an animated, narrated sequence.
-        </p>
-        <span class="badge">Sprint 3 · placeholder</span>
+        <p>Watch a single request travel from client → WebSocket → session → agent loop → LLM → tools → state writes → response. Step through manually or let it play.</p>
       </div>
+
+      <!-- The mini map where the token animates -->
+      <div class="lifecycle-stage" id="lifecycle-stage">
+        <!-- Injected by JS: mini node map + SVG token path + particle token -->
+      </div>
+
+      <!-- Step narration -->
+      <div class="lifecycle-narration" id="lifecycle-narration">
+        <span class="narration-step">Step <span id="narration-step-num">1</span> / 10</span>
+        <p class="narration-text" id="narration-text">Click Play to begin.</p>
+        <p class="narration-label" id="narration-label"></p>
+      </div>
+
+      <!-- Transport controls -->
+      <div class="lifecycle-controls" id="lifecycle-controls" role="group" aria-label="Lifecycle controls">
+        <button class="lc-btn" id="lc-restart" aria-label="Restart">⟳</button>
+        <button class="lc-btn" id="lc-prev" aria-label="Previous step">‹</button>
+        <button class="lc-btn lc-play" id="lc-play" aria-label="Play">▶</button>
+        <button class="lc-btn" id="lc-next" aria-label="Next step">›</button>
+        <button class="lc-btn lc-speed" id="lc-speed" aria-label="Speed">1×</button>
+      </div>
+
+      <!-- Text-equivalent step list (a11y) -->
+      <details class="lifecycle-steps-list" id="lifecycle-steps-list">
+        <summary>All steps as text</summary>
+        <ol id="lifecycle-steps-ol"></ol>
+      </details>
     </section>
   </main>
 

@@ -993,6 +993,260 @@ code {
 }
 
 /* ============================================================
+   Sprint 4 — Lifecycle animation section
+   ============================================================ */
+
+.lifecycle-section {
+  padding-block: var(--sp-7) var(--sp-8);
+}
+
+/* Stage: the mini map canvas */
+.lifecycle-stage {
+  position: relative;
+  min-height: 200px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: var(--sp-5);
+}
+
+/* Individual node dot in the mini map */
+.lc-node-dot {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--lc-node-accent, var(--accent-4));
+  border: 2px solid color-mix(in srgb, var(--lc-node-accent, var(--accent-4)) 60%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--lc-node-accent, var(--accent-4)) 50%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: var(--bg);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  transition: box-shadow 200ms ease;
+  cursor: default;
+  z-index: 3;
+}
+
+.lc-node-label {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  color: var(--ink-faint);
+  pointer-events: none;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+/* Pulse keyframe when token arrives */
+@keyframes lc-pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50%       { transform: translate(-50%, -50%) scale(1.45); box-shadow: 0 0 28px var(--lc-node-accent, var(--accent-4)); }
+}
+
+.lc-node-dot.is-pulse {
+  animation: lc-pulse 400ms var(--ease-spring) forwards;
+}
+
+/* SVG path layer */
+.lc-path-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+.lc-path-line {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: 0.5;
+}
+
+.lc-path-line.is-active {
+  stroke: var(--accent);
+  opacity: 0.85;
+  stroke-dasharray: none;
+}
+
+/* The animated token / particle */
+.lc-token {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.9), 0 0 28px rgba(255, 209, 102, 0.5);
+  z-index: 5;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Narration area */
+.lifecycle-narration {
+  text-align: center;
+  margin-bottom: var(--sp-5);
+  min-height: 6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.narration-step {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  color: var(--accent-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  padding: var(--sp-1) var(--sp-3);
+}
+
+.narration-text {
+  color: var(--ink);
+  font-size: var(--fs-lead);
+  font-family: var(--font-display);
+  font-weight: 500;
+  max-width: 72ch;
+  line-height: 1.45;
+}
+
+.narration-label {
+  color: var(--accent-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+/* Controls row */
+.lifecycle-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
+}
+
+.lc-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  color: var(--ink-dim);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  transition:
+    transform 160ms var(--ease-spring),
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.lc-btn:hover {
+  transform: translateY(-2px) scale(1.08);
+  background: var(--surface-2);
+  border-color: var(--accent-4);
+  color: var(--ink);
+}
+
+.lc-btn.lc-play {
+  width: 56px;
+  height: 56px;
+  font-size: 1.35rem;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1402;
+  box-shadow: 0 8px 24px rgba(255, 209, 102, 0.30);
+}
+
+.lc-btn.lc-play:hover {
+  transform: translateY(-3px) scale(1.1);
+  box-shadow: 0 14px 36px rgba(255, 209, 102, 0.46);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1402;
+}
+
+.lc-btn.lc-speed {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  width: auto;
+  padding: 0 var(--sp-3);
+}
+
+/* Text steps list (a11y) */
+.lifecycle-steps-list {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+}
+
+.lifecycle-steps-list summary {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.lifecycle-steps-list summary::-webkit-details-marker { display: none; }
+.lifecycle-steps-list summary::before {
+  content: "▶";
+  font-size: 0.65rem;
+  transition: transform 200ms ease;
+}
+.lifecycle-steps-list[open] summary::before { transform: rotate(90deg); }
+
+#lifecycle-steps-ol {
+  margin: var(--sp-4) 0 0 var(--sp-5);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+#lifecycle-steps-ol li {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+
+#lifecycle-steps-ol li strong {
+  color: var(--accent-4);
+}
+
+/* ============================================================
    Reduced motion
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {
