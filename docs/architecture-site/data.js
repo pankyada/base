@@ -110,7 +110,7 @@
           {
             id: "retry",
             name: "Retry (backoff)",
-            files: ["src/provider/client.ts"],
+            files: ["src/loop/retry.ts"],
             responsibility: "Exponential backoff on transient LLM API errors.",
             detail:
               "Wraps the model call so transient failures — 429s, 5xx, dropped connections, timeouts — are retried with exponential backoff that respects Retry-After. Retries surface to the user so a slow upstream never silently stalls."
