@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Harness — How it works</title>
+  <meta name="description" content="An animated, interactive walkthrough of the Agent Harness architecture: a WebSocket-based generic agent runtime wiring an LLM to tools, skills, memory, MCP, and hooks." />
+
+  <!-- Google Fonts (display face) with system fallback declared in CSS so it works offline -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <noscript>
+    <p class="noscript-note">
+      This page renders its architecture content with JavaScript. Enable JS to explore the
+      interactive Agent Harness walkthrough, or read the source in <code>docs/architecture-site/data.js</code>.
+    </p>
+  </noscript>
+
+  <!-- ============================ Header ============================ -->
+  <header class="site-header">
+    <div class="shell">
+      <a class="brand" href="#top" aria-label="Agent Harness — home">
+        <span class="glyph" aria-hidden="true">⚙</span>
+        <span>Agent Harness</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#layers">Layers</a>
+        <a href="#map">Map</a>
+        <a href="#lifecycle">Lifecycle</a>
+        <a href="#layer-external">External</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ============================ Hero ============================ -->
+  <section class="hero" id="top">
+    <div class="shell">
+      <span class="eyebrow" data-stagger>System architecture · interactive</span>
+      <h1 data-stagger>Agent Harness — <span class="accent">How it works</span></h1>
+      <p class="subhead" data-stagger>
+        A WebSocket-based generic agent runtime that wires an LLM to tools, skills, memory, MCP,
+        and hooks — all profile-driven.
+      </p>
+      <div class="cta-row" data-stagger>
+        <a class="btn btn-primary" href="#lifecycle" data-scroll>
+          Play the request lifecycle <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="btn btn-secondary" href="#map" data-scroll>
+          Explore the map <span class="arrow" aria-hidden="true">→</span>
+        </a>
+      </div>
+
+      <div class="hero-stats" data-stagger>
+        <div class="stat"><span class="num" id="stat-layers">8</span><span class="lbl">layers</span></div>
+        <div class="stat"><span class="num" id="stat-nodes">—</span><span class="lbl">components</span></div>
+        <div class="stat"><span class="num" id="stat-flow">10</span><span class="lbl">lifecycle steps</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ Main / layers ============================ -->
+  <main>
+    <section class="layers shell" id="layers" aria-labelledby="layers-heading">
+      <div class="section-head">
+        <span class="kicker">The stack, top to bottom</span>
+        <h2 id="layers-heading">Eight layers, one loop</h2>
+        <p>
+          From the clients a human touches down to the external model and MCP servers — every layer
+          is wired by the same profile-driven agent loop. Hover a component to see what it owns.
+        </p>
+      </div>
+      <!-- Layer sections injected here by app.js from window.ARCH.layers -->
+    </section>
+
+    <!-- Placeholder: interactive map (later sprint) -->
+    <section class="placeholder shell" id="map" aria-labelledby="map-heading">
+      <div class="frame">
+        <span class="kicker">Coming next</span>
+        <h2 id="map-heading">The interactive architecture map</h2>
+        <p>
+          A pannable, zoomable node graph of every component and edge — primary paths, data flows,
+          optional links, and dependencies — rendered from the same model that powers this page.
+        </p>
+        <span class="badge">Sprint 2 · placeholder</span>
+      </div>
+    </section>
+
+    <!-- Placeholder: request lifecycle (later sprint) -->
+    <section class="placeholder shell" id="lifecycle" aria-labelledby="lifecycle-heading">
+      <div class="frame">
+        <span class="kicker">Coming next</span>
+        <h2 id="lifecycle-heading">Play the request lifecycle</h2>
+        <p>
+          Step through a single request — from a user message over WebSocket, through the loop and
+          the LLM, out to tools and back — as an animated, narrated sequence.
+        </p>
+        <span class="badge">Sprint 3 · placeholder</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================ Footer ============================ -->
+  <footer class="site-footer">
+    <div class="shell">
+      <span class="credit">
+        <strong>Agent Harness</strong> architecture explainer — built as a static, framework-free site.
+      </span>
+      <span>Vanilla HTML · CSS · JS · no build step</span>
+    </div>
+  </footer>
+
+  <!-- Classic scripts only: data first, then app. No ES module loading. -->
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
