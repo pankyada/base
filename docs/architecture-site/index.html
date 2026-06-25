@@ -85,36 +85,55 @@
     <!-- Component Map -->
     <section class="map-section shell" id="map" aria-labelledby="map-heading">
       <div class="section-head">
-        <span class="kicker">Interactive · click any node</span>
+        <span class="kicker">Interactive · zoom &amp; drag</span>
         <h2 id="map-heading">Component Map</h2>
-        <p>Every component, every connection — rendered from the same data model that powers this page.</p>
+        <p>Every component, every connection — zoomable canvas. Ctrl+wheel to zoom, drag to pan, click any node for details.</p>
       </div>
 
-      <!-- Legend -->
+      <!-- Toolbar -->
+      <div class="map-toolbar" role="toolbar" aria-label="Map controls">
+        <button class="map-tb-btn" id="map-zoom-in"  aria-label="Zoom in"  title="Zoom in">+</button>
+        <button class="map-tb-btn" id="map-zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+        <button class="map-tb-btn" id="map-fit"      aria-label="Fit to view" title="Fit all nodes into view">⊡</button>
+        <span class="map-zoom-label" id="map-zoom-label" aria-live="polite" aria-label="Zoom level">100%</span>
+        <span class="map-tb-sep" aria-hidden="true"></span>
+        <button class="map-tb-btn" id="map-reset-layout" aria-label="Reset node positions" title="Reset dragged nodes">↺</button>
+        <button class="map-tb-btn" id="map-list-toggle"  aria-label="Show as list" aria-pressed="false" title="Toggle list view">☰</button>
+        <button class="map-tb-btn map-tb-expand" id="map-expand" aria-label="Expand to fullscreen" title="Expand to fullscreen">⤢</button>
+      </div>
+
+      <!-- Legend (colors updated to match light theme) -->
       <div class="map-legend" role="list" aria-label="Edge legend">
         <span class="map-legend-item" role="listitem" data-kind="primary">
-          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#ffd166" stroke-width="2"/></svg>
+          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#d97706" stroke-width="2"/></svg>
           Primary
         </span>
         <span class="map-legend-item" role="listitem" data-kind="data">
-          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#06d6a0" stroke-width="2" stroke-dasharray="4 3"/></svg>
+          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#059669" stroke-width="2" stroke-dasharray="4 3"/></svg>
           Data
         </span>
         <span class="map-legend-item" role="listitem" data-kind="optional">
-          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#4cc9f0" stroke-width="1.5" stroke-dasharray="2 3"/></svg>
+          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#0284c7" stroke-width="1.5" stroke-dasharray="2 3"/></svg>
           Optional
         </span>
         <span class="map-legend-item" role="listitem" data-kind="dependency">
-          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#ff6b9d" stroke-width="1" stroke-dasharray="1 0"/><polygon points="24,2 28,5 24,8" fill="#ff6b9d"/></svg>
+          <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#db2777" stroke-width="1.5"/><polygon points="24,2 28,5 24,8" fill="#db2777"/></svg>
           Dependency
         </span>
       </div>
 
-      <!-- Bands + SVG overlay container -->
-      <div class="map-canvas" id="map-canvas">
-        <!-- Layer bands + node buttons injected by app.js -->
-        <!-- SVG overlay injected by app.js -->
+      <!-- Canvas stage -->
+      <div class="map-stage-wrap" id="map-stage-wrap">
+        <div class="map-fs-bar" id="map-fs-bar">
+          <span>Component Map — fullscreen</span>
+          <button class="map-tb-btn" id="map-fs-close" aria-label="Exit fullscreen">×</button>
+        </div>
+        <div id="map-stage"></div>
+        <p class="map-hint" aria-hidden="true">Ctrl+wheel to zoom · drag background to pan · click node for details</p>
       </div>
+
+      <!-- Accessible list-view fallback -->
+      <div class="map-list-view" id="map-list-view" aria-label="Component list" hidden></div>
     </section>
 
     <!-- Detail panel (dialog) -->
@@ -178,6 +197,7 @@
   </footer>
 
   <!-- Classic scripts only: data first, then app. No ES module loading. -->
+  <script src="assets/konva.min.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
 </body>

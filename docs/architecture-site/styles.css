@@ -768,6 +768,188 @@ code {
 }
 
 /* ============================================================
+   Canvas component map (Konva) — new UI chrome
+   ============================================================ */
+
+/* Toolbar */
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.map-tb-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--ink-dim);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--sp-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
+}
+.map-tb-btn:hover { background: var(--surface-2); border-color: var(--accent-4); color: var(--ink); transform: translateY(-1px); }
+.map-tb-btn:active { transform: scale(0.95); }
+.map-tb-btn[aria-pressed="true"] { background: var(--accent-4); border-color: var(--accent-4); color: #fff; }
+
+.map-tb-sep {
+  width: 1px; height: 20px;
+  background: var(--line-strong);
+  margin: 0 var(--sp-1);
+}
+
+.map-zoom-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  min-width: 3.5ch;
+  text-align: center;
+  user-select: none;
+}
+
+.map-tb-expand {
+  margin-left: auto;
+}
+
+/* Stage wrapper */
+.map-stage-wrap {
+  position: relative;
+  height: clamp(300px, 56vh, 560px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--sp-4);
+}
+
+/* Fullscreen bar (hidden by default) */
+.map-fs-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  height: 44px;
+  padding: 0 var(--sp-4);
+  background: rgba(246, 247, 255, 0.95);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+}
+
+/* Stage canvas area fills remaining space */
+#map-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Konva injects canvases as position: absolute inside #map-stage */
+#map-stage canvas {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+
+/* Hint bar at bottom */
+.map-hint {
+  flex: none;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.67rem;
+  color: var(--ink-faint);
+  background: rgba(246, 247, 255, 0.88);
+  border-top: 1px solid var(--line);
+  user-select: none;
+}
+
+/* Fullscreen mode */
+.map-stage-wrap.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  height: 100vh !important;
+  width: 100vw !important;
+  z-index: 200;
+  border-radius: 0;
+  border: none;
+}
+.map-stage-wrap.is-fullscreen .map-fs-bar {
+  display: flex;
+}
+
+body.map-fs-active {
+  overflow: hidden;
+}
+
+/* Accessible list view */
+.map-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.mlv-layer { }
+
+.mlv-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  margin: 0 0 var(--sp-2);
+  letter-spacing: 0.01em;
+}
+
+.mlv-nodes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-2);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+}
+
+.mlv-node {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast) var(--ease-spring);
+}
+.mlv-node:hover, .mlv-node:focus-visible {
+  background: var(--surface-2);
+  border-color: var(--accent-4);
+  transform: translateY(-2px);
+}
+.mlv-node strong { color: var(--ink); }
+
+/* ============================================================
    Placeholder sections (#lifecycle) — filled later
    ============================================================ */
 .placeholder {
