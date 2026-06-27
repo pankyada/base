@@ -2,6 +2,12 @@ import WebSocket from 'ws'
 import * as readline from 'readline'
 import { userInfo } from 'os'
 import { ClientMessage, ServerMessage } from '../types.js'
+import pkg from '../../package.json' with { type: 'json' }
+
+if (process.argv.includes('--version') || process.argv.includes('-v')) {
+  console.log(`harness ${pkg.version}`)
+  process.exit(0)
+}
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
 const ws = new WebSocket(`ws://localhost:${PORT}`)
