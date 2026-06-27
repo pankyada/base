@@ -13,8 +13,8 @@ if (!['patch', 'minor', 'major'].includes(bump)) {
   process.exit(1)
 }
 
-// Fail fast if working tree is dirty
-const status = execSync('git status --porcelain').toString().trim()
+// Fail fast if working tree has staged or unstaged changes to tracked files
+const status = execSync('git status --porcelain').toString().trim().split('\n').filter(l => l && !l.startsWith('??')).join('\n')
 if (status) {
   console.error('Working tree is dirty. Commit or stash changes first.')
   console.error(status)
