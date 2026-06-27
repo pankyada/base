@@ -401,9 +401,94 @@
     stage.on("click tap", function (e) { if (e.target === stage && activeLayerId) deselectLayer(chips); });
   }
 
-  // ===== LIFECYCLE stub (Task 3.1 replaces) =====
+  // ===== LIFECYCLE =====
   var lcPlaying = false;
-  function initLifecycle() {}
+  var lcStep = 0;
+  var lcSpeedIdx = 0;
+  var LC_SPEEDS = [1, 2, 0.5];
+  var lcTimer = null, lcTween = null, lcToken = null;
+
+  function lcDuration() { return Math.round(700 / LC_SPEEDS[lcSpeedIdx]); }
+
+  function buildToken() {
+    lcToken = new Konva.Circle({ radius: 11, fill: "#d97706", shadowColor: "#d97706", shadowBlur: 18, shadowOpacity: 0.9, listening: false, visible: false });
+    tokenLayer.add(lcToken);
+  }
+
+  function pulseNode(id) {
+    var g = nodeGroups[id]; if (!g || REDUCED) return;
+    var r = g.findOne(".main-rect");
+    r.shadowBlur(28); r.shadowOpacity(0.8); nodeLayer.batchDraw();
+    r.to({ shadowBlur: 14, duration: 0.4 });
+  }
+
+  function lcNarrate() {
+    var step = arch.flow[lcStep];
+    var numEl = document.getElementById("lc-step-num"), txtEl = document.getElementById("lc-text"), prog = document.getElementById("lc-progress");
+    if (numEl) numEl.textContent = "Step " + (lcStep + 1) + " / " + arch.flow.length;
+    if (txtEl) txtEl.textContent = step ? step.narrative : "";
+    if (prog && prog.firstElementChild) prog.firstElementChild.style.width = ((lcStep + 1) / arch.flow.length * 100) + "%";
+  }
+
+  function lcGoTo(idx, animate) {
+    lcStep = Math.max(0, Math.min(idx, arch.flow.length - 1));
+    var step = arch.flow[lcStep];
+    lcNarrate();
+    highlightLayer(layerById[step.toId] ? layerById[step.toId].id : null);
+    stage.batchDraw();
+    var fromC = nodeCenter(step.fromId), toC = nodeCenter(step.toId);
+    frameNodes([step.fromId, step.toId], 200);
+    if (lcTween) { lcTween.destroy(); lcTween = null; }
+    lcToken.visible(true);
+    if (REDUCED || !animate) {
+      lcToken.position({ x: toC.x, y: toC.y }); tokenLayer.batchDraw(); pulseNode(step.toId);
+      return;
+    }
+    lcToken.position({ x: fromC.x, y: fromC.y });
+    lcTween = new Konva.Tween({
+      node: lcToken, x: toC.x, y: toC.y, duration: lcDuration() / 1000, easing: Konva.Easings.EaseInOut,
+      onFinish: function () { pulseNode(step.toId); }
+    });
+    lcTween.play();
+  }
+
+  function lcSetPlaying(on) {
+    lcPlaying = on;
+    var pm = document.getElementById("lc-play-main"), p = document.getElementById("lc-play"), tr = document.getElementById("lc-transport");
+    if (p) { p.textContent = on ? "⏸" : "▶"; p.setAttribute("aria-label", on ? "Pause" : "Play"); }
+    if (pm) { var ico = pm.querySelector(".play-ico"); if (ico) ico.textContent = on ? "⏸" : "▶"; }
+    if (tr) tr.setAttribute("data-active", "true");
+    if (!on) { if (lcTimer) { clearTimeout(lcTimer); lcTimer = null; } }
+  }
+
+  function lcAdvance() {
+    if (lcStep >= arch.flow.length - 1) { lcSetPlaying(false); return; }
+    lcGoTo(lcStep + 1, true);
+    lcTimer = window.setTimeout(function () { if (lcPlaying) lcAdvance(); }, lcDuration() + 350);
+  }
+
+  function lcPlayPause() {
+    if (lcPlaying) { lcSetPlaying(false); return; }
+    if (lcStep >= arch.flow.length - 1) lcStep = -1;
+    lcSetPlaying(true); lcAdvance();
+  }
+
+  function initLifecycle() {
+    buildToken();
+    var pm = document.getElementById("lc-play-main"), p = document.getElementById("lc-play");
+    var prev = document.getElementById("lc-prev"), next = document.getElementById("lc-next");
+    var restart = document.getElementById("lc-restart"), speed = document.getElementById("lc-speed");
+    if (pm) pm.addEventListener("click", function () {
+      document.getElementById("lc-transport").setAttribute("data-active", "true");
+      lcPlayPause();
+    });
+    if (p) p.addEventListener("click", lcPlayPause);
+    if (prev) prev.addEventListener("click", function () { lcSetPlaying(false); lcGoTo(lcStep - 1, false); });
+    if (next) next.addEventListener("click", function () { lcSetPlaying(false); lcGoTo(lcStep + 1, false); });
+    if (restart) restart.addEventListener("click", function () { lcSetPlaying(false); lcStep = 0; lcGoTo(0, false); });
+    if (speed) speed.addEventListener("click", function () { lcSpeedIdx = (lcSpeedIdx + 1) % LC_SPEEDS.length; speed.textContent = ["1×", "2×", "0.5×"][lcSpeedIdx]; });
+    lcNarrate();
+  }
 
   // ── sessionStorage drag persistence ───────────────────────────
   var STORE_KEY = "hm-pos";

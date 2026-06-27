@@ -581,3 +581,26 @@ body.map-fs-active { overflow: hidden; }
 }
 .layer-pop strong { font-family: var(--font-display); font-size: var(--fs-sm); color: var(--ink); }
 .layer-pop span { font-size: var(--fs-sm); color: var(--ink-dim); line-height: 1.5; }
+
+/* Lifecycle transport (bottom-center overlay) */
+.lc-transport {
+  position: absolute; left: 50%; bottom: var(--sp-4); transform: translateX(-50%); z-index: 25;
+  width: min(680px, calc(100% - 2 * var(--sp-5)));
+  background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-md);
+  padding: var(--sp-3) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-mid), transform var(--dur-mid) var(--ease-out);
+}
+.lc-transport[data-active="true"] { opacity: 1; pointer-events: auto; }
+.lc-progress { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.lc-progress span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width var(--dur-mid) var(--ease-out); }
+.lc-narration { text-align: center; min-height: 2.6rem; }
+.lc-step { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--accent-4); letter-spacing: 0.08em; }
+.lc-text { font-family: var(--font-display); font-size: 0.98rem; color: var(--ink); line-height: 1.4; margin-top: 2px; }
+.lc-buttons { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
+.lc-btn { appearance: none; -webkit-appearance: none; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-pill);
+  color: var(--ink-dim); cursor: pointer; font-family: var(--font-display); font-weight: 600; width: 40px; height: 40px; display: grid; place-items: center;
+  transition: transform var(--dur-fast) var(--ease-spring), background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast); }
+.lc-btn:hover { transform: translateY(-2px); background: var(--surface-2); border-color: var(--accent-4); color: var(--ink); }
+.lc-btn.lc-play { width: 48px; height: 48px; font-size: 1.2rem; background: var(--accent); border-color: var(--accent); color: #fff; }
+.lc-btn.lc-speed { font-family: var(--font-mono); font-size: var(--fs-sm); width: auto; padding: 0 var(--sp-3); }
