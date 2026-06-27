@@ -32,7 +32,7 @@
       <span class="brand-text">Agent Harness</span>
       <span class="brand-sub">How it works</span>
     </a>
-    <div class="top-stats" aria-label="At a glance">
+    <div class="top-stats" role="region" aria-label="At a glance">
       <span class="tstat"><b id="stat-layers">8</b> layers</span>
       <span class="tstat"><b id="stat-nodes">29</b> components</span>
       <span class="tstat"><b id="stat-flow">10</b> steps</span>
@@ -95,12 +95,12 @@
     </div>
 
     <!-- Accessible list-view fallback -->
-    <div class="map-list-view" id="map-list-view" aria-label="Component list" hidden></div>
+    <div class="map-list-view" id="map-list-view" role="region" aria-label="Component list" hidden></div>
   </main>
 
   <!-- Detail panel (dialog) -->
   <div class="map-backdrop" id="map-backdrop" aria-hidden="true"></div>
-  <aside id="map-panel" class="map-panel" role="dialog" aria-modal="true" aria-labelledby="panel-node-name" aria-hidden="true">
+  <div id="map-panel" class="map-panel" role="dialog" aria-modal="true" aria-labelledby="panel-node-name" aria-hidden="true">
     <button class="panel-close" id="panel-close" aria-label="Close panel">×</button>
     <div class="panel-body">
       <p class="panel-layer-name" id="panel-layer-name"></p>
@@ -109,10 +109,10 @@
       <div class="panel-files" id="panel-files"></div>
       <p class="panel-detail" id="panel-detail"></p>
     </div>
-  </aside>
+  </div>
 
   <!-- Layer blurb popover (positioned by JS near a layer-key chip) -->
-  <div class="layer-pop" id="layer-pop" role="status" aria-live="polite" hidden></div>
+  <div class="layer-pop" id="layer-pop" role="status" hidden></div>
 
   <!-- Scripts: konva, data, app -->
   <script src="assets/konva.min.js"></script>
