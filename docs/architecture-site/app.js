@@ -71,11 +71,149 @@
     Object.keys(map).forEach(function (id) { var e = document.getElementById(id); if (e) e.textContent = String(map[id]); });
   }
 
-  // ===== CANVAS (Task 1.3) =====
-  // createStage, renderBands, renderEdges, renderNodes, nodeCenter, updateEdgesForNode, updateAllEdges
+  // ===== CANVAS =====
+  function createStage() {
+    var wrap = document.getElementById("map-stage-wrap");
+    if (!wrap) return false;
+    var fsBar = document.getElementById("map-fs-bar");
+    var fsH = (fsBar && fsBar.offsetHeight > 0) ? fsBar.offsetHeight : 0;
+    var w = wrap.offsetWidth || 900;
+    var h = Math.max((wrap.offsetHeight || 600) - fsH, 320);
+    stage = new Konva.Stage({ container: "map-stage", width: w, height: h });
+    bgLayer = new Konva.Layer({ listening: false });
+    edgeLayer = new Konva.Layer({ listening: false });
+    nodeLayer = new Konva.Layer();
+    tokenLayer = new Konva.Layer({ listening: false });
+    stage.add(bgLayer, edgeLayer, nodeLayer, tokenLayer);
+    return true;
+  }
 
-  // ===== CAMERA (Task 1.3) =====
-  // clampScale, zoomAround, fitToView, frameNodes, updateZoomLabel, wireZoom, wirePan, resizeStage, scheduleResize
+  function renderBands() {
+    arch.layers.forEach(function (layer, li) {
+      var bandTop = VPAD_TOP + li * BAND_H;
+      if (li % 2 === 0) bgLayer.add(new Konva.Rect({ x: 0, y: bandTop, width: VIRT_W, height: BAND_H, fill: "rgba(0,0,0,0.016)", listening: false }));
+      if (li > 0) bgLayer.add(new Konva.Line({ points: [0, bandTop, VIRT_W, bandTop], stroke: "rgba(0,0,0,0.055)", strokeWidth: 1, listening: false }));
+      bgLayer.add(new Konva.Text({ x: 14, y: bandTop + BAND_H / 2 - 8, text: (li + 1) + ". " + layer.title, fontSize: 12, fontFamily: "Space Grotesk, system-ui, sans-serif", fill: layer.accent || "#888", opacity: 0.6, listening: false }));
+    });
+  }
+
+  function renderEdges() {
+    arch.edges.forEach(function (edge) {
+      var s = ESTYLE[edge.kind] || ESTYLE.primary;
+      var fp = initPos[edge.from], tp = initPos[edge.to];
+      if (!fp || !tp) return;
+      var line = new Konva.Line({ points: [fp.x, fp.y, tp.x, tp.y], stroke: s.stroke, strokeWidth: s.width, dash: s.dash, opacity: 0.48, lineCap: "round", listening: false });
+      edgeLayer.add(line);
+      edgeShapes.push({ line: line, fromId: edge.from, toId: edge.to, kind: edge.kind });
+    });
+  }
+
+  function renderNodes() {
+    arch.layers.forEach(function (layer) {
+      var acc = layer.accent || "#4cc9f0";
+      layer.nodes.forEach(function (node) {
+        var cp = initPos[node.id];
+        var grp = new Konva.Group({ x: cp.x - NODE_W / 2, y: cp.y - NODE_H / 2, draggable: true, id: "ng-" + node.id });
+        grp.add(new Konva.Rect({ x: 2, y: 3, width: NODE_W, height: NODE_H, cornerRadius: NODE_R, fill: "rgba(0,0,0,0.09)", listening: false }));
+        grp.add(new Konva.Rect({ name: "main-rect", x: 0, y: 0, width: NODE_W, height: NODE_H, cornerRadius: NODE_R, fill: "#ffffff", stroke: acc, strokeWidth: 1.5 }));
+        grp.add(new Konva.Rect({ x: 0, y: 0, width: 5, height: NODE_H, cornerRadius: [NODE_R, 0, 0, NODE_R], fill: acc, listening: false }));
+        grp.add(new Konva.Text({ x: 12, y: NODE_H / 2 - 8, width: NODE_W - 18, text: node.name, fontSize: 12, fontFamily: "Space Grotesk, system-ui, sans-serif", fontStyle: "bold", fill: "#0d0f22", ellipsis: true, listening: false }));
+        nodeGroups[node.id] = grp;
+        nodeLayer.add(grp);
+        grp.on("dragmove", function () { updateEdgesForNode(node.id); });
+        grp.on("dragend", function () { saveDragPositions(); });
+        grp.on("mouseenter", function () { document.body.style.cursor = "pointer"; highlightNode(node.id); stage.batchDraw(); });
+        grp.on("mouseleave", function () { document.body.style.cursor = ""; if (!panelOpen && !lcPlaying) { clearHighlight(); stage.batchDraw(); } });
+        grp.on("click tap", function () { openPanel(node.id); });
+      });
+    });
+  }
+
+  function nodeCenter(id) {
+    var g = nodeGroups[id];
+    return g ? { x: g.x() + NODE_W / 2, y: g.y() + NODE_H / 2 } : (initPos[id] || { x: 0, y: 0 });
+  }
+  function updateEdgesForNode(id) {
+    edgeShapes.forEach(function (e) {
+      if (e.fromId !== id && e.toId !== id) return;
+      var f = nodeCenter(e.fromId), t = nodeCenter(e.toId);
+      e.line.points([f.x, f.y, t.x, t.y]);
+    });
+    edgeLayer.batchDraw();
+  }
+  function updateAllEdges() {
+    edgeShapes.forEach(function (e) { var f = nodeCenter(e.fromId), t = nodeCenter(e.toId); e.line.points([f.x, f.y, t.x, t.y]); });
+  }
+
+  // ===== CAMERA =====
+  function clampScale(s) { return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s)); }
+
+  function zoomAround(factor, pivot) {
+    var oldS = stage.scaleX(), newS = clampScale(oldS * factor), pos = stage.position();
+    stage.scale({ x: newS, y: newS });
+    stage.position({ x: pivot.x - (pivot.x - pos.x) * newS / oldS, y: pivot.y - (pivot.y - pos.y) * newS / oldS });
+    currentScale = newS; updateZoomLabel(); stage.batchDraw();
+  }
+
+  function fitToView() {
+    if (!stage) return;
+    var w = stage.width(), h = stage.height();
+    var s = clampScale(Math.min(w / VIRT_W, h / VIRT_H) * 0.92);
+    stage.scale({ x: s, y: s });
+    stage.position({ x: (w - VIRT_W * s) / 2, y: (h - VIRT_H * s) / 2 });
+    currentScale = s; updateZoomLabel(); stage.batchDraw();
+  }
+
+  function frameNodes(ids, pad) {
+    if (!stage || !ids.length) return;
+    pad = pad == null ? 120 : pad;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    ids.forEach(function (id) {
+      var c = nodeCenter(id);
+      minX = Math.min(minX, c.x - NODE_W / 2); maxX = Math.max(maxX, c.x + NODE_W / 2);
+      minY = Math.min(minY, c.y - NODE_H / 2); maxY = Math.max(maxY, c.y + NODE_H / 2);
+    });
+    var bw = (maxX - minX) + pad * 2, bh = (maxY - minY) + pad * 2;
+    var w = stage.width(), h = stage.height();
+    var s = clampScale(Math.min(w / bw, h / bh, MAX_SCALE));
+    var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    var tx = w / 2 - cx * s, ty = h / 2 - cy * s;
+    currentScale = s; updateZoomLabel();
+    if (REDUCED) { stage.scale({ x: s, y: s }); stage.position({ x: tx, y: ty }); stage.batchDraw(); return; }
+    stage.to({ scaleX: s, scaleY: s, x: tx, y: ty, duration: 0.45, easing: Konva.Easings.EaseInOut });
+  }
+
+  function updateZoomLabel() { var e = document.getElementById("map-zoom-label"); if (e) e.textContent = Math.round(currentScale * 100) + "%"; }
+
+  function wireZoom() {
+    stage.on("wheel", function (e) {
+      var ev = e.evt;
+      if (!ev.ctrlKey && !ev.metaKey) return;
+      ev.preventDefault();
+      zoomAround(ev.deltaY < 0 ? 1.12 : (1 / 1.12), stage.getPointerPosition());
+    });
+  }
+
+  function wirePan() {
+    var panning = false, last = null;
+    stage.on("mousedown touchstart", function (e) { if (e.target !== stage) return; panning = true; var p = stage.getPointerPosition(); last = { x: p.x, y: p.y }; document.body.style.cursor = "grabbing"; });
+    stage.on("mousemove touchmove", function () { if (!panning || !last) return; var p = stage.getPointerPosition(); if (!p) return; stage.position({ x: stage.x() + p.x - last.x, y: stage.y() + p.y - last.y }); last = p; stage.batchDraw(); });
+    stage.on("mouseup touchend mouseleave", function () { if (panning) { panning = false; last = null; if (document.body.style.cursor === "grabbing") document.body.style.cursor = ""; } });
+  }
+
+  function resizeStage() {
+    var wrap = document.getElementById("map-stage-wrap"); if (!wrap || !stage) return;
+    var fsBar = document.getElementById("map-fs-bar");
+    var fsH = (fsBar && fsBar.offsetHeight > 0) ? fsBar.offsetHeight : 0;
+    stage.width(wrap.offsetWidth); stage.height(Math.max(wrap.offsetHeight - fsH, 320)); stage.batchDraw();
+  }
+  function scheduleResize() {
+    var wrap = document.getElementById("map-stage-wrap"); if (!wrap) return;
+    var pending = false;
+    function onResize() { if (pending) return; pending = true; requestAnimationFrame(function () { pending = false; resizeStage(); }); }
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(onResize).observe(wrap);
+    else window.addEventListener("resize", onResize);
+  }
 
   // ===== HIGHLIGHT (Task 1.4) =====
   // highlightNode, highlightLayer, clearHighlight
