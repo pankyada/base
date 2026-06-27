@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@inkjs/ui':
         specifier: ^2.0.0
-        version: 2.0.0(ink@7.0.3(@types/react@19.2.15)(react@19.2.6))
+        version: 2.0.0(ink@7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6))
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -25,10 +25,10 @@ importers:
         version: 4.0.3
       ink:
         specifier: ^7.0.3
-        version: 7.0.3(@types/react@19.2.15)(react@19.2.6)
+        version: 7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6)
       ink-text-input:
         specifier: ^6.0.0
-        version: 6.0.0(ink@7.0.3(@types/react@19.2.15)(react@19.2.6))(react@19.2.6)
+        version: 6.0.0(ink@7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6))(react@19.2.6)
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
@@ -69,6 +69,9 @@ importers:
       ink-testing-library:
         specifier: ^4.0.0
         version: 4.0.0(@types/react@19.2.15)
+      react-devtools-core:
+        specifier: ^7.0.1
+        version: 7.0.1
       tsx:
         specifier: ^4.22.3
         version: 4.22.3
@@ -2363,6 +2366,9 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
+  react-devtools-core@7.0.1:
+    resolution: {integrity: sha512-C3yNvRHaizlpiASzy7b9vbnBGLrhvdhl1CbdU6EnZgxPNbai60szdLtl+VL76UNOt5bOoVTOz5rNWZxgGt+Gsw==}
+
   react-dom@18.3.1:
     resolution: {integrity: sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==}
     peerDependencies:
@@ -2477,6 +2483,10 @@ packages:
   shebang-regex@3.0.0:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
+
+  shell-quote@1.9.0:
+    resolution: {integrity: sha512-Iov+JwFv/2HcTpcwNMKd8+IWNb8tboQJNQTkAY/LLVK7gGH9jy+LGkVqPxfekHl+yMmiqXszdGWXgkfml7hjqA==}
+    engines: {node: '>= 0.4'}
 
   shiki@2.5.0:
     resolution: {integrity: sha512-mI//trrsaiCIPsja5CNfsyNOqgAZUb6VpJA+340toL42UpzQlXpwRV9nch69X6gaUxrr9kaOOa6e3y3uAkGFxQ==}
@@ -2889,6 +2899,18 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  ws@7.5.11:
+    resolution: {integrity: sha512-zS54Oen9bITtp7kp2XM3AydrCIq1D+HwJOuH+c+e4LfpL/lotP5osijd+UoMnxwAam1GN8R4KtLAyIrIcBNpiA==}
+    engines: {node: '>=8.3.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: ^5.0.2
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
 
   ws@8.21.0:
     resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
@@ -3451,13 +3473,13 @@ snapshots:
   '@img/sharp-win32-x64@0.34.5':
     optional: true
 
-  '@inkjs/ui@2.0.0(ink@7.0.3(@types/react@19.2.15)(react@19.2.6))':
+  '@inkjs/ui@2.0.0(ink@7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6))':
     dependencies:
       chalk: 5.6.2
       cli-spinners: 3.4.0
       deepmerge: 4.3.1
       figures: 6.1.0
-      ink: 7.0.3(@types/react@19.2.15)(react@19.2.6)
+      ink: 7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6)
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -4597,14 +4619,14 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.15
 
-  ink-text-input@6.0.0(ink@7.0.3(@types/react@19.2.15)(react@19.2.6))(react@19.2.6):
+  ink-text-input@6.0.0(ink@7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6))(react@19.2.6):
     dependencies:
       chalk: 5.6.2
-      ink: 7.0.3(@types/react@19.2.15)(react@19.2.6)
+      ink: 7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6)
       react: 19.2.6
       type-fest: 4.41.0
 
-  ink@7.0.3(@types/react@19.2.15)(react@19.2.6):
+  ink@7.0.3(@types/react@19.2.15)(react-devtools-core@7.0.1)(react@19.2.6):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.3.0
       ansi-escapes: 7.3.0
@@ -4634,6 +4656,7 @@ snapshots:
       yoga-layout: 3.2.1
     optionalDependencies:
       '@types/react': 19.2.15
+      react-devtools-core: 7.0.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -4948,6 +4971,14 @@ snapshots:
       iconv-lite: 0.7.2
       unpipe: 1.0.0
 
+  react-devtools-core@7.0.1:
+    dependencies:
+      shell-quote: 1.9.0
+      ws: 7.5.11
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   react-dom@18.3.1(react@18.3.1):
     dependencies:
       loose-envify: 1.4.0
@@ -5140,6 +5171,8 @@ snapshots:
       shebang-regex: 3.0.0
 
   shebang-regex@3.0.0: {}
+
+  shell-quote@1.9.0: {}
 
   shiki@2.5.0:
     dependencies:
@@ -5539,6 +5572,8 @@ snapshots:
       strip-ansi: 7.2.0
 
   wrappy@1.0.2: {}
+
+  ws@7.5.11: {}
 
   ws@8.21.0: {}
 
