@@ -27,6 +27,12 @@ import { runAgentLoop } from '../loop/agent-loop.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
+import pkg from '../../package.json' with { type: 'json' }
+
+if (process.argv.includes('--version') || process.argv.includes('-v')) {
+  console.log(`harness-server ${pkg.version}`)
+  process.exit(0)
+}
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
 
