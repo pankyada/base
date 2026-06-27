@@ -352,9 +352,54 @@
     });
   }
 
-  // ===== LAYER KEY stub (Task 2.1 replaces) =====
+  // ===== LAYER KEY =====
   var activeLayerId = null;
-  function buildLayerKey() {}
+
+  function positionLayerPop(chip) {
+    var pop = document.getElementById("layer-pop"); if (!pop) return;
+    var r = chip.getBoundingClientRect();
+    pop.style.top = (r.top) + "px";
+    pop.style.left = (r.right + 10) + "px";
+  }
+
+  function showLayerPop(layer, chip) {
+    var pop = document.getElementById("layer-pop"); if (!pop) return;
+    pop.innerHTML = "<strong>" + layer.title + "</strong><span>" + (layer.blurb || "") + "</span>";
+    pop.style.setProperty("--pop-accent", layer.accent || "var(--accent-4)");
+    pop.hidden = false;
+    positionLayerPop(chip);
+  }
+  function hideLayerPop() { var pop = document.getElementById("layer-pop"); if (pop) pop.hidden = true; }
+
+  function selectLayer(layer, chip, chips) {
+    if (activeLayerId === layer.id) { deselectLayer(chips); return; }
+    activeLayerId = layer.id;
+    chips.forEach(function (c) { c.classList.toggle("is-active", c.getAttribute("data-layer") === layer.id); c.setAttribute("aria-pressed", String(c.getAttribute("data-layer") === layer.id)); });
+    highlightLayer(layer.id); stage.batchDraw();
+    frameNodes(layer.nodes.map(function (n) { return n.id; }), 160);
+    showLayerPop(layer, chip);
+  }
+  function deselectLayer(chips) {
+    activeLayerId = null;
+    chips.forEach(function (c) { c.classList.remove("is-active"); c.setAttribute("aria-pressed", "false"); });
+    clearHighlight(); stage.batchDraw();
+    hideLayerPop();
+  }
+
+  function buildLayerKey() {
+    var rail = document.getElementById("layer-key"); if (!rail) return;
+    var chips = [];
+    arch.layers.forEach(function (layer) {
+      var chip = document.createElement("button");
+      chip.className = "lk-chip"; chip.setAttribute("data-layer", layer.id);
+      chip.setAttribute("aria-pressed", "false"); chip.title = layer.title;
+      chip.style.setProperty("--chip-accent", layer.accent || "var(--accent-4)");
+      chip.innerHTML = '<span class="lk-dot" aria-hidden="true"></span><span class="lk-label">' + layer.title + '</span>';
+      chip.addEventListener("click", function () { selectLayer(layer, chip, chips); });
+      rail.appendChild(chip); chips.push(chip);
+    });
+    stage.on("click tap", function (e) { if (e.target === stage && activeLayerId) deselectLayer(chips); });
+  }
 
   // ===== LIFECYCLE stub (Task 3.1 replaces) =====
   var lcPlaying = false;
