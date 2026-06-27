@@ -38,9 +38,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            bin/harness \
-            bin/harness-server \
+            bin/harness-macos-arm64 \
+            bin/harness-macos-x64 \
+            bin/harness-linux-x64 \
+            bin/harness-server-macos-arm64 \
+            bin/harness-server-macos-x64 \
             bin/harness-server-linux-x64 \
-            bin/harness-tui \
+            bin/harness-tui-macos-arm64 \
+            bin/harness-tui-macos-x64 \
+            bin/harness-tui-linux-x64 \
             --title "${{ github.ref_name }}" \
             --generate-notes
