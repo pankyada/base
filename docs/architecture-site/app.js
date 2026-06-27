@@ -215,23 +215,150 @@
     else window.addEventListener("resize", onResize);
   }
 
-  // ===== HIGHLIGHT (Task 1.4) =====
-  // highlightNode, highlightLayer, clearHighlight
+  // ===== HIGHLIGHT =====
+  function highlightNode(activeId) {
+    var nbrs = {};
+    arch.edges.forEach(function (e) { if (e.from === activeId) nbrs[e.to] = true; if (e.to === activeId) nbrs[e.from] = true; });
+    Object.keys(nodeGroups).forEach(function (id) {
+      var g = nodeGroups[id], r = g.findOne(".main-rect"), lyr = layerById[id];
+      if (id === activeId) { r.shadowBlur(20); r.shadowColor(lyr ? lyr.accent : "#d97706"); r.shadowOpacity(0.55); g.opacity(1); }
+      else if (nbrs[id]) { r.shadowBlur(10); r.shadowColor(lyr ? lyr.accent : "#888"); r.shadowOpacity(0.3); g.opacity(0.92); }
+      else { r.shadowBlur(0); r.shadowOpacity(0); g.opacity(0.2); }
+    });
+    edgeShapes.forEach(function (e) {
+      var s = ESTYLE[e.kind] || ESTYLE.primary;
+      if (e.fromId === activeId || e.toId === activeId) { e.line.opacity(0.95); e.line.strokeWidth(s.width + 1); }
+      else { e.line.opacity(0.06); e.line.strokeWidth(s.width); }
+    });
+  }
 
-  // ===== INTERACTION (Task 1.4) =====
-  // node events wired in renderNodes; wireToolbar, wireFullscreen, drag persistence
+  function highlightLayer(layerId) {
+    var lnodes = {};
+    arch.layers.forEach(function (l) { if (l.id === layerId) l.nodes.forEach(function (n) { lnodes[n.id] = true; }); });
+    Object.keys(nodeGroups).forEach(function (id) {
+      var g = nodeGroups[id], r = g.findOne(".main-rect"), lyr = layerById[id];
+      if (lnodes[id]) { r.shadowBlur(14); r.shadowColor(lyr ? lyr.accent : "#d97706"); r.shadowOpacity(0.45); g.opacity(1); }
+      else { r.shadowBlur(0); r.shadowOpacity(0); g.opacity(0.18); }
+    });
+    edgeShapes.forEach(function (e) { e.line.opacity(lnodes[e.fromId] && lnodes[e.toId] ? 0.85 : 0.05); });
+    nodeLayer.batchDraw(); edgeLayer.batchDraw();
+  }
 
-  // ===== PANEL (Task 1.4) =====
-  // openPanel, closePanel, focus trap
+  function clearHighlight() {
+    Object.keys(nodeGroups).forEach(function (id) { var g = nodeGroups[id], r = g.findOne(".main-rect"); r.shadowBlur(0); r.shadowOpacity(0); g.opacity(1); });
+    edgeShapes.forEach(function (e) { e.line.opacity(0.48); e.line.strokeWidth((ESTYLE[e.kind] || ESTYLE.primary).width); });
+    nodeLayer.batchDraw(); edgeLayer.batchDraw();
+  }
 
-  // ===== LIST VIEW (Task 1.4) =====
-  // buildListView, wireListToggle
+  // ===== INTERACTION =====
+  function wireToolbar() {
+    function center() { return { x: stage.width() / 2, y: stage.height() / 2 }; }
+    function $(id) { return document.getElementById(id); }
+    var zi = $("map-zoom-in"), zo = $("map-zoom-out"), fit = $("map-fit"), rl = $("map-reset-layout");
+    if (zi) zi.addEventListener("click", function () { zoomAround(1.25, center()); });
+    if (zo) zo.addEventListener("click", function () { zoomAround(1 / 1.25, center()); });
+    if (fit) fit.addEventListener("click", fitToView);
+    if (rl) rl.addEventListener("click", function () {
+      Object.keys(nodeGroups).forEach(function (id) { var g = nodeGroups[id], p = initPos[id]; g.x(p.x - NODE_W / 2); g.y(p.y - NODE_H / 2); });
+      updateAllEdges(); nodeLayer.batchDraw(); edgeLayer.batchDraw();
+      try { sessionStorage.removeItem(STORE_KEY); } catch (ex) {}
+    });
+  }
 
-  // ===== LAYER KEY (Task 2.1) =====
-  // buildLayerKey
+  var isFullscreen = false;
+  function wireFullscreen() {
+    var wrap = document.getElementById("map-stage-wrap"), expBtn = document.getElementById("map-expand"), closeFs = document.getElementById("map-fs-close");
+    function toggle(open) {
+      isFullscreen = open;
+      if (wrap) wrap.classList.toggle("is-fullscreen", open);
+      document.body.classList.toggle("map-fs-active", open);
+      if (expBtn) { expBtn.setAttribute("aria-label", open ? "Exit fullscreen" : "Expand to fullscreen"); expBtn.textContent = open ? "⊠" : "⤢"; }
+      window.setTimeout(function () { resizeStage(); fitToView(); }, 60);
+    }
+    if (expBtn) expBtn.addEventListener("click", function () { toggle(!isFullscreen); });
+    if (closeFs) closeFs.addEventListener("click", function () { toggle(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && isFullscreen) toggle(false); });
+  }
 
-  // ===== LIFECYCLE (Task 3.x) =====
-  // buildToken, lifecycle player
+  // ===== PANEL =====
+  var panelOpen = false;
+  function openPanel(nodeId) {
+    var node = nodeById[nodeId], layer = layerById[nodeId];
+    if (!node || !layer) return;
+    document.getElementById("panel-layer-name").textContent = layer.title;
+    document.getElementById("panel-node-name").textContent = node.name;
+    document.getElementById("panel-responsibility").textContent = node.responsibility || "";
+    document.getElementById("panel-detail").textContent = node.detail || "";
+    var filesEl = document.getElementById("panel-files"); filesEl.innerHTML = "";
+    var files = (node.files && node.files.length) ? node.files : ["external — no source file"];
+    files.forEach(function (f) { var c = document.createElement("code"); c.textContent = f; filesEl.appendChild(c); });
+    var p = document.getElementById("map-panel"), bd = document.getElementById("map-backdrop");
+    if (p) { p.classList.add("is-open"); p.setAttribute("aria-hidden", "false"); }
+    if (bd) bd.classList.add("is-open");
+    panelOpen = true;
+    var cb = document.getElementById("panel-close"); if (cb) cb.focus();
+  }
+  function closePanel() {
+    var p = document.getElementById("map-panel"), bd = document.getElementById("map-backdrop");
+    if (p) { p.classList.remove("is-open"); p.setAttribute("aria-hidden", "true"); }
+    if (bd) bd.classList.remove("is-open");
+    panelOpen = false;
+    if (stage && !lcPlaying) { clearHighlight(); stage.batchDraw(); }
+  }
+  function wirePanel() {
+    var cb = document.getElementById("panel-close"), bd = document.getElementById("map-backdrop");
+    if (cb) cb.addEventListener("click", closePanel);
+    if (bd) bd.addEventListener("click", closePanel);
+    document.addEventListener("keydown", function (e) {
+      if (!panelOpen) return;
+      var p = document.getElementById("map-panel"); if (!p) return;
+      var items = Array.prototype.slice.call(p.querySelectorAll('button,[href],input,[tabindex]:not([tabindex="-1"])'));
+      if (!items.length) return;
+      if (e.key === "Escape") { e.preventDefault(); closePanel(); return; }
+      if (e.key === "Tab") {
+        var first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    });
+  }
+
+  // ===== LIST VIEW =====
+  function buildListView() {
+    var lv = document.getElementById("map-list-view"); if (!lv) return;
+    arch.layers.forEach(function (layer) {
+      var sec = el("div", "mlv-layer");
+      var h = el("h4", "mlv-title", layer.title); h.style.color = layer.accent || "";
+      sec.appendChild(h);
+      var ul = el("ul", "mlv-nodes");
+      layer.nodes.forEach(function (node) {
+        var li = el("li", "mlv-node"); li.tabIndex = 0;
+        li.innerHTML = "<strong>" + node.name + "</strong> — " + (node.responsibility || "");
+        li.addEventListener("click", function () { openPanel(node.id); });
+        li.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPanel(node.id); } });
+        ul.appendChild(li);
+      });
+      sec.appendChild(ul); lv.appendChild(sec);
+    });
+  }
+  function wireListToggle() {
+    var btn = document.getElementById("map-list-toggle"), wrap = document.getElementById("map-stage-wrap"), lv = document.getElementById("map-list-view");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var showList = btn.getAttribute("aria-pressed") !== "true";
+      btn.setAttribute("aria-pressed", String(showList));
+      if (wrap) wrap.style.visibility = showList ? "hidden" : "";
+      if (lv) lv.hidden = !showList;
+    });
+  }
+
+  // ===== LAYER KEY stub (Task 2.1 replaces) =====
+  var activeLayerId = null;
+  function buildLayerKey() {}
+
+  // ===== LIFECYCLE stub (Task 3.1 replaces) =====
+  var lcPlaying = false;
+  function initLifecycle() {}
 
   // ── sessionStorage drag persistence ───────────────────────────
   var STORE_KEY = "hm-pos";
