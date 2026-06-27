@@ -40,7 +40,9 @@ execSync(`git commit -m "chore: release v${next}"`)
 execSync(`git tag v${next}`)
 console.log(`Tagged: v${next}`)
 
-// Build binaries
-console.log('Building binaries...')
-execSync('pnpm build:bin', { stdio: 'inherit' })
-console.log('Done. Binaries in bin/')
+// Push to GitHub — triggers CI release workflow
+console.log('Pushing to GitHub...')
+execSync('git push origin main', { stdio: 'inherit' })
+execSync(`git push origin v${next}`, { stdio: 'inherit' })
+console.log(`Release v${next} triggered. CI will build and publish binaries.`)
+console.log(`Track at: https://github.com/pankyada/base/releases/tag/v${next}`)
