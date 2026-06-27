@@ -604,3 +604,35 @@ body.map-fs-active { overflow: hidden; }
 .lc-btn:hover { transform: translateY(-2px); background: var(--surface-2); border-color: var(--accent-4); color: var(--ink); }
 .lc-btn.lc-play { width: 48px; height: 48px; font-size: 1.2rem; background: var(--accent); border-color: var(--accent); color: #fff; }
 .lc-btn.lc-speed { font-family: var(--font-mono); font-size: var(--fs-sm); width: auto; padding: 0 var(--sp-3); }
+
+/* ============================================================
+   Responsive — mobile (≤720px)
+   ============================================================ */
+@media (max-width: 720px) {
+  .top-bar { gap: var(--sp-3); padding: 0 var(--sp-3); }
+  .top-stats { display: none; }
+  .brand-sub { display: none; }
+
+  /* Layer key → horizontal scrolling chip row */
+  .layer-key {
+    left: var(--sp-2); right: var(--sp-2); top: var(--sp-2);
+    flex-direction: row; max-height: none; overflow-x: auto; overflow-y: hidden;
+  }
+  .lk-chip .lk-label { white-space: nowrap; }
+
+  /* Toolbar below chip row */
+  .map-toolbar { top: 56px; right: var(--sp-2); }
+
+  /* Legend sits above the transport */
+  .map-legend { left: var(--sp-2); bottom: 96px; font-size: var(--fs-xs); }
+
+  /* Transport → full-width bottom sheet */
+  .lc-transport {
+    left: 0; right: 0; bottom: 0; width: 100%;
+    transform: none; border-radius: var(--r-lg) var(--r-lg) 0 0;
+  }
+  .lc-btn { min-width: 44px; min-height: 44px; }
+
+  /* Popover stays within viewport */
+  .layer-pop { max-width: calc(100vw - 2 * var(--sp-3)); }
+}
