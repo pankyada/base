@@ -23,7 +23,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "dev:web": "pnpm --filter harness-web dev",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "install:global": "mkdir -p ~/.local/bin && cp bin/harness bin/harness-server bin/harness-tui ~/.local/bin/ && echo 'Installed to ~/.local/bin — ensure ~/.local/bin is in your PATH'"
   },
   "keywords": [],
   "author": "",
