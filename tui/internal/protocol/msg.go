@@ -87,14 +87,28 @@ func DecodeServer(raw []byte) (ServerMessage, error) {
 	return m, err
 }
 
-// ClientMessage is any client->server frame. Concrete types below implement it
-// implicitly via Go's structural typing (each has a `Type` field marshaled first).
-type ClientMessage interface{}
+// ClientMessage is any client->server frame. Only the constructors in this
+// file may produce one — see isClientMessage.
+type ClientMessage interface {
+	isClientMessage()
+}
 
 type helloMsg struct {
 	Type   string `json:"type"`
 	UserID string `json:"user_id"`
 }
+
+func (helloMsg) isClientMessage()         {}
+func (messageMsg) isClientMessage()       {}
+func (cancelMsg) isClientMessage()        {}
+func (resumeMsg) isClientMessage()        {}
+func (toolApproveMsg) isClientMessage()   {}
+func (toolDenyMsg) isClientMessage()      {}
+func (inputResponseMsg) isClientMessage() {}
+func (projectCreateMsg) isClientMessage() {}
+func (projectListMsg) isClientMessage()   {}
+func (projectAssignMsg) isClientMessage() {}
+func (sessionListMsg) isClientMessage()   {}
 
 func Hello(userID string) ClientMessage {
 	return helloMsg{Type: "hello", UserID: userID}
