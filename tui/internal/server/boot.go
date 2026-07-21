@@ -28,11 +28,12 @@ func probeHealth(port string) bool {
 }
 
 // findRepoRoot walks up from dir looking for pnpm-workspace.yaml, else package.json.
-func findRepoRoot(dir string) string {
+// ok is false if neither was found before reaching the filesystem root.
+func findRepoRoot(dir string) (root string, ok bool) {
 	d := dir
 	for {
 		if _, err := os.Stat(filepath.Join(d, "pnpm-workspace.yaml")); err == nil {
-			return d
+			return d, true
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
@@ -43,7 +44,7 @@ func findRepoRoot(dir string) string {
 	d = dir
 	for {
 		if _, err := os.Stat(filepath.Join(d, "package.json")); err == nil {
-			return d
+			return d, true
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
@@ -51,16 +52,18 @@ func findRepoRoot(dir string) string {
 		}
 		d = parent
 	}
-	return dir
+	return dir, false
 }
 
 // serverCommand returns dev (tsx) vs prod (harness-server binary) invocation.
 func serverCommand() (string, []string, string) {
 	exe, _ := os.Executable()
-	root := findRepoRoot(filepath.Dir(exe))
-	wd, _ := os.Getwd()
-	if root == filepath.Dir(exe) {
-		root = findRepoRoot(wd)
+	root, ok := findRepoRoot(filepath.Dir(exe))
+	if !ok {
+		wd, _ := os.Getwd()
+		if r, ok2 := findRepoRoot(wd); ok2 {
+			root = r
+		}
 	}
 	devEntry := filepath.Join(root, "src", "server", "index.ts")
 	if _, err := os.Stat(devEntry); err == nil {
@@ -104,6 +107,7 @@ func EnsureServer(port string) (Result, error) {
 	}
 
 	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
 	return Result{}, fmt.Errorf(
 		"harness server failed to become healthy within 10s on port %s — "+
 			"check that %q is on your PATH and the profile is valid", port, cmdName)
