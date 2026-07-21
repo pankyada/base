@@ -49,9 +49,9 @@ func (c *Client) loop() {
 		}
 		c.mu.Lock()
 		c.conn = conn
+		_ = conn.WriteJSON(protocol.Hello(c.userID))
 		c.mu.Unlock()
 
-		_ = conn.WriteJSON(protocol.Hello(c.userID))
 		c.send(ConnectedMsg{})
 
 		for {
@@ -69,6 +69,7 @@ func (c *Client) loop() {
 		c.mu.Lock()
 		c.conn = nil
 		c.mu.Unlock()
+		conn.Close()
 		c.send(DisconnectedMsg{})
 		time.Sleep(time.Second) // backoff before reconnect
 	}
@@ -77,9 +78,8 @@ func (c *Client) loop() {
 // Send writes a client frame if connected; drops it otherwise.
 func (c *Client) Send(m protocol.ClientMessage) {
 	c.mu.Lock()
-	conn := c.conn
-	c.mu.Unlock()
-	if conn != nil {
-		_ = conn.WriteJSON(m)
+	defer c.mu.Unlock()
+	if c.conn != nil {
+		_ = c.conn.WriteJSON(m)
 	}
 }
