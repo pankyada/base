@@ -6,3 +6,4 @@ bin/
 harness-server
 .harness-data/
 docs-site/.vitepress/cache/
+tui/harness-tui
