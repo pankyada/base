@@ -54,6 +54,11 @@ func (s Section) color() lipgloss.Style {
 	}
 }
 
+const (
+	sectionFixedOverhead = 16 // glyph(3) + name(9) + metric gap(2) + chevron gap+char(2)
+	sectionMetricMax     = 12
+)
+
 // Render draws the section at the given content width and spinner frame.
 // allExpanded forces the body open (the ^O toggle).
 func (s Section) Render(width, frame int, allExpanded bool) string {
@@ -62,12 +67,14 @@ func (s Section) Render(width, frame int, allExpanded bool) string {
 	if open {
 		chev = "▾"
 	}
+	metric := truncate(s.Metric, sectionMetricMax)
+	argBudget := maxInt(0, width-sectionFixedOverhead-len([]rune(metric)))
 	head := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		s.color().Render(" "+s.glyph(frame)+" "),
 		StText.Render(pad(s.Name, 8)+" "),
-		StDim.Render(truncate(s.Arg, maxInt(0, width-24))),
-		"  "+StDim.Render(s.Metric),
+		StDim.Render(truncate(s.Arg, argBudget)),
+		"  "+StDim.Render(metric),
 		" "+StDim.Render(chev),
 	)
 	if !open {
@@ -87,20 +94,22 @@ func (s Section) Render(width, frame int, allExpanded bool) string {
 // --- small helpers (shared across ui package) ---
 
 func pad(s string, n int) string {
-	if len(s) >= n {
+	l := len([]rune(s))
+	if l >= n {
 		return s
 	}
-	return s + strings.Repeat(" ", n-len(s))
+	return s + strings.Repeat(" ", n-l)
 }
 
 func truncate(s string, n int) string {
-	if n <= 0 || len(s) <= n {
+	r := []rune(s)
+	if n <= 0 || len(r) <= n {
 		return s
 	}
 	if n <= 1 {
-		return s[:n]
+		return string(r[:n])
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 func maxInt(a, b int) int {

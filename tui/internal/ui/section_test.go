@@ -1,6 +1,11 @@
 package ui
 
-import "testing"
+import (
+	"testing"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 func TestSectionGlyphStates(t *testing.T) {
 	s := Section{Name: "read", State: SectionRunning}
@@ -29,5 +34,30 @@ func TestSectionToggle(t *testing.T) {
 	s.Toggle()
 	if s.Expanded {
 		t.Fatal("toggle should collapse")
+	}
+}
+
+func TestSectionRenderWidthBudget(t *testing.T) {
+	s := Section{
+		Name:   "read",
+		Arg:    "/very/long/path/to/some/file/that/is/quite/long.go",
+		Metric: "(142 lines)",
+		State:  SectionDone,
+	}
+	out := s.Render(40, 0, false)
+	if w := lipgloss.Width(out); w > 40 {
+		t.Fatalf("rendered width %d exceeds requested width 40", w)
+	}
+}
+
+func TestSectionRenderUnicodeArg(t *testing.T) {
+	s := Section{
+		Name:  "read",
+		Arg:   "café-report-with-a-very-long-name.pdf",
+		State: SectionDone,
+	}
+	out := s.Render(30, 0, false)
+	if !utf8.ValidString(out) {
+		t.Fatal("rendered output contains invalid UTF-8 (likely a mid-rune truncation)")
 	}
 }
