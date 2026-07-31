@@ -1,0 +1,268 @@
+meta:
+  profile: engineering-review
+  theme: tech-blue
+  source: generated
+  layout: horizontal
+  routing: orthogonal
+  canvas: 1100x1380
+  title: "Agent Harness — System Architecture"
+  description: "WebSocket-based generic agent runtime wiring an LLM to tools, skills, memory, MCP, and hooks. Everything profile-driven (YAML)."
+  legend: "Solid = main flow · Dashed = data/async · Dotted = optional · Diamond = dependency"
+
+nodes:
+  # --- Clients (y=80) ---
+  - id: tui
+    label: "Ink TUI\n(harness-tui)"
+    type: user
+    position: { x: 120, y: 80 }
+  - id: cli
+    label: "Readline CLI\n(harness)"
+    type: user
+    position: { x: 320, y: 80 }
+  - id: web
+    label: "Web App\n(Next.js)"
+    type: user
+    position: { x: 520, y: 80 }
+
+  # --- Transport (y=240) ---
+  - id: wss
+    label: "WS Server\n+ Bearer Auth"
+    type: service
+    position: { x: 120, y: 240 }
+  - id: rest
+    label: "REST API\n/run /stream /health"
+    type: service
+    position: { x: 320, y: 240 }
+  - id: session
+    label: "Session\n(per connection)"
+    type: process
+    position: { x: 520, y: 240 }
+  - id: profile
+    label: "Profile Loader\n(Zod schema)"
+    type: document
+    position: { x: 720, y: 240 }
+
+  # --- Core Loop (y=400) ---
+  - id: loop
+    label: "Agent Loop\n(streaming)"
+    type: process
+    position: { x: 120, y: 400 }
+  - id: ctx
+    label: "Context Manager\n(condense)"
+    type: process
+    position: { x: 320, y: 400 }
+  - id: retry
+    label: "Retry\n(backoff)"
+    type: process
+    position: { x: 520, y: 400 }
+  - id: provider
+    label: "Provider Client\n(OpenAI-compat)"
+    type: service
+    position: { x: 720, y: 400 }
+
+  # --- Tools & Execution (y=560) ---
+  - id: registry
+    label: "Tool Registry"
+    type: service
+    position: { x: 120, y: 560 }
+  - id: acl
+    label: "ACL\nallow/prompt/deny"
+    type: decision
+    position: { x: 320, y: 560 }
+  - id: builtins
+    label: "Built-in Tools\n(Bash, Edit, Read,\nGrep, Memory, Todo)"
+    type: service
+    position: { x: 520, y: 560 }
+  - id: hooks
+    label: "Hooks Runner\npre/post/on_stop"
+    type: process
+    position: { x: 720, y: 560 }
+  - id: executor
+    label: "Executor Factory\nDocker / WASM"
+    type: service
+    position: { x: 520, y: 680 }
+
+  # --- Extensibility (y=820) ---
+  - id: skills
+    label: "Skills\nLoader + Indexer"
+    type: document
+    position: { x: 120, y: 840 }
+  - id: mcp
+    label: "MCP Client\n(stdio/http/sse/ws)"
+    type: service
+    position: { x: 320, y: 840 }
+  - id: agents
+    label: "Sub-Agents\nDelegate + Fanout"
+    type: service
+    position: { x: 520, y: 840 }
+
+  # --- State & Persistence (y=980 + 1100) ---
+  - id: memory
+    label: "Memory Provider\nFS / Graph"
+    type: database
+    position: { x: 120, y: 1000 }
+  - id: sessions
+    label: "Session Store"
+    type: database
+    position: { x: 320, y: 1000 }
+  - id: runs
+    label: "Run Store"
+    type: database
+    position: { x: 520, y: 1000 }
+  - id: projects
+    label: "Project Store"
+    type: database
+    position: { x: 720, y: 1000 }
+  - id: usage
+    label: "Usage Ledger\n+ Cost Table"
+    type: database
+    position: { x: 120, y: 1120 }
+  - id: telemetry
+    label: "Telemetry\n(JSONL)"
+    type: document
+    position: { x: 320, y: 1120 }
+
+  # --- Scheduling & Improver (y=1260) ---
+  - id: cron
+    label: "Cron Scheduler\n(triggers)"
+    type: process
+    position: { x: 120, y: 1280 }
+  - id: improver
+    label: "Improver\nreflect + skill mining"
+    type: process
+    position: { x: 320, y: 1280 }
+
+  # --- External (right column) ---
+  - id: llm
+    label: "LLM API\n(Anthropic / OpenAI)"
+    type: cloud
+    position: { x: 940, y: 400 }
+  - id: mcpservers
+    label: "MCP Servers\n(remote/local)"
+    type: cloud
+    position: { x: 940, y: 560 }
+
+edges:
+  # Clients -> server
+  - from: tui
+    to: wss
+    type: primary
+    label: "WebSocket"
+  - from: cli
+    to: wss
+    type: primary
+  - from: web
+    to: rest
+    type: primary
+    label: "HTTP"
+
+  # Server internals
+  - from: wss
+    to: session
+    type: primary
+  - from: rest
+    to: session
+    type: primary
+  - from: profile
+    to: session
+    type: dependency
+    label: "configures"
+  - from: session
+    to: loop
+    type: primary
+    label: "user message"
+
+  # Core loop
+  - from: loop
+    to: ctx
+    type: primary
+  - from: loop
+    to: provider
+    type: primary
+    label: "stream"
+  - from: provider
+    to: retry
+    type: dependency
+  - from: retry
+    to: llm
+    type: data
+    label: "completions"
+  - from: loop
+    to: registry
+    type: primary
+    label: "tool calls"
+
+  # Tools
+  - from: registry
+    to: acl
+    type: primary
+  - from: acl
+    to: builtins
+    type: primary
+    label: "approved"
+  - from: acl
+    to: hooks
+    type: dependency
+  - from: builtins
+    to: executor
+    type: data
+    label: "execute_code"
+  - from: registry
+    to: mcp
+    type: optional
+    label: "mcp tools"
+  - from: registry
+    to: agents
+    type: optional
+    label: "delegate"
+
+  # Extensibility
+  - from: mcp
+    to: mcpservers
+    type: data
+  - from: skills
+    to: loop
+    type: dependency
+    label: "system prompt"
+  - from: agents
+    to: loop
+    type: optional
+    label: "spawn loop"
+
+  # State
+  - from: session
+    to: memory
+    type: data
+  - from: session
+    to: sessions
+    type: data
+  - from: loop
+    to: telemetry
+    type: data
+  - from: loop
+    to: usage
+    type: data
+  - from: builtins
+    to: memory
+    type: data
+    label: "read/write"
+  - from: rest
+    to: runs
+    type: data
+  - from: rest
+    to: projects
+    type: data
+
+  # Ops
+  - from: cron
+    to: rest
+    type: optional
+    label: "scheduled run"
+  - from: session
+    to: improver
+    type: optional
+    label: "on session end"
+  - from: improver
+    to: memory
+    type: data
+    label: "write + mine"

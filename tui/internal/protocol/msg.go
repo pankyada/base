@@ -47,6 +47,27 @@ type Artifact struct {
 	Data  json.RawMessage `json:"data,omitempty"`
 }
 
+type ModelInfo struct {
+	ID            string   `json:"id"`
+	Label         string   `json:"label"`
+	Provider      string   `json:"provider"`
+	BaseURL       string   `json:"base_url"`
+	ContextWindow int      `json:"context_window"`
+	InputPrice    float64  `json:"input_price"`
+	OutputPrice   float64  `json:"output_price"`
+	Tags          []string `json:"tags"`
+	Available     bool     `json:"available"`
+	Reason        string   `json:"reason,omitempty"`
+}
+
+type SkillSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+	Source      string `json:"source"`
+	MTime       string `json:"mtime"`
+}
+
 // ServerMessage is a flat envelope over every server->client message.
 // Only the fields relevant to msg.Type are populated.
 type ServerMessage struct {
@@ -54,6 +75,10 @@ type ServerMessage struct {
 
 	Content string                 `json:"content,omitempty"` // token
 	Name    string                 `json:"name,omitempty"`    // tool_start/end/prompt
+	Risk    string                 `json:"risk,omitempty"`    // tool_prompt
+	Reason  string                 `json:"reason,omitempty"`  // tool_prompt/notice
+	Level   string                 `json:"level,omitempty"`   // notice
+	Detail  string                 `json:"detail,omitempty"`  // notice
 	Input   map[string]interface{} `json:"input,omitempty"`   // tool_start/prompt
 	Result  string                 `json:"result,omitempty"`  // tool_end
 
@@ -62,14 +87,18 @@ type ServerMessage struct {
 	Kind    string   `json:"kind,omitempty"`    // input_request: text|select|multi_select
 	Options []string `json:"options,omitempty"` // input_request
 
-	SessionID string `json:"sessionId,omitempty"` // session_ready/end/resumed, artifacts
-	Profile   string `json:"profile,omitempty"`   // session_ready
-	Yolo      bool   `json:"yolo,omitempty"`      // session_ready
+	SessionID  string `json:"sessionId,omitempty"`   // session_ready/end/resumed, artifacts
+	Profile    string `json:"profile,omitempty"`     // session_ready
+	Model      string `json:"model,omitempty"`       // session_ready
+	WorkingDir string `json:"working_dir,omitempty"` // session_ready
+	Yolo       bool   `json:"yolo,omitempty"`        // session_ready
 
 	TokensIn      int     `json:"tokens_in,omitempty"`      // stats
 	TokensOut     int     `json:"tokens_out,omitempty"`     // stats
 	CostUSD       float64 `json:"cost_usd,omitempty"`       // stats
 	ContextWindow int     `json:"context_window,omitempty"` // stats
+	ContextTokens int     `json:"context_tokens,omitempty"` // stats
+	Mode          string  `json:"mode,omitempty"`           // approval_mode_changed
 
 	Message string `json:"message,omitempty"` // error
 
@@ -78,6 +107,13 @@ type ServerMessage struct {
 	Projects  []Project        `json:"projects,omitempty"`  // projects
 	Sessions  []SessionSummary `json:"sessions,omitempty"`  // sessions
 	Project   *Project         `json:"project,omitempty"`   // project_created
+	Models    []ModelInfo      `json:"models,omitempty"`    // models
+	Current   string           `json:"current,omitempty"`   // models
+	Proposed  []SkillSummary   `json:"proposed,omitempty"`
+	Installed []SkillSummary   `json:"installed,omitempty"`
+	Source    string           `json:"source,omitempty"`
+	Path      string           `json:"path,omitempty"`
+	Action    string           `json:"action,omitempty"`
 }
 
 // DecodeServer parses one server->client frame.
@@ -98,17 +134,27 @@ type helloMsg struct {
 	UserID string `json:"user_id"`
 }
 
-func (helloMsg) isClientMessage()         {}
-func (messageMsg) isClientMessage()       {}
-func (cancelMsg) isClientMessage()        {}
-func (resumeMsg) isClientMessage()        {}
-func (toolApproveMsg) isClientMessage()   {}
-func (toolDenyMsg) isClientMessage()      {}
-func (inputResponseMsg) isClientMessage() {}
-func (projectCreateMsg) isClientMessage() {}
-func (projectListMsg) isClientMessage()   {}
-func (projectAssignMsg) isClientMessage() {}
-func (sessionListMsg) isClientMessage()   {}
+func (helloMsg) isClientMessage()           {}
+func (messageMsg) isClientMessage()         {}
+func (cancelMsg) isClientMessage()          {}
+func (resumeMsg) isClientMessage()          {}
+func (toolApproveMsg) isClientMessage()     {}
+func (toolDenyMsg) isClientMessage()        {}
+func (inputResponseMsg) isClientMessage()   {}
+func (projectCreateMsg) isClientMessage()   {}
+func (projectListMsg) isClientMessage()     {}
+func (projectAssignMsg) isClientMessage()   {}
+func (sessionListMsg) isClientMessage()     {}
+func (setApprovalModeMsg) isClientMessage() {}
+func (modelsListMsg) isClientMessage()      {}
+func (setModelMsg) isClientMessage()        {}
+func (skillsListMsg) isClientMessage()      {}
+func (skillGetMsg) isClientMessage()        {}
+func (skillSaveMsg) isClientMessage()       {}
+func (skillPromoteMsg) isClientMessage()    {}
+func (skillDiscardMsg) isClientMessage()    {}
+func (skillsMineMsg) isClientMessage()      {}
+func (compactMsg) isClientMessage()         {}
 
 func Hello(userID string) ClientMessage {
 	return helloMsg{Type: "hello", UserID: userID}
@@ -122,6 +168,84 @@ type messageMsg struct {
 func Message(content string) ClientMessage {
 	return messageMsg{Type: "message", Content: content}
 }
+
+type setApprovalModeMsg struct {
+	Type string `json:"type"`
+	Mode string `json:"mode"`
+}
+
+func SetApprovalMode(mode string) ClientMessage {
+	return setApprovalModeMsg{Type: "set_approval_mode", Mode: mode}
+}
+
+type modelsListMsg struct {
+	Type string `json:"type"`
+}
+
+func ModelsList() ClientMessage { return modelsListMsg{Type: "models_list"} }
+
+type setModelMsg struct {
+	Type  string `json:"type"`
+	Model string `json:"model"`
+}
+
+func SetModel(model string) ClientMessage { return setModelMsg{Type: "set_model", Model: model} }
+
+type compactMsg struct {
+	Type string `json:"type"`
+}
+
+func Compact() ClientMessage { return compactMsg{Type: "compact"} }
+
+type skillsListMsg struct {
+	Type string `json:"type"`
+}
+
+func SkillsList() ClientMessage { return skillsListMsg{Type: "skills_list"} }
+
+type skillGetMsg struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+func SkillGet(name, source string) ClientMessage {
+	return skillGetMsg{Type: "skill_get", Name: name, Source: source}
+}
+
+type skillSaveMsg struct {
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+func SkillSave(name, content string) ClientMessage {
+	return skillSaveMsg{Type: "skill_save", Name: name, Content: content}
+}
+
+type skillPromoteMsg struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+func SkillPromote(name string) ClientMessage {
+	return skillPromoteMsg{Type: "skill_promote", Name: name}
+}
+
+type skillDiscardMsg struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+func SkillDiscard(name string) ClientMessage {
+	return skillDiscardMsg{Type: "skill_discard", Name: name}
+}
+
+type skillsMineMsg struct {
+	Type string `json:"type"`
+}
+
+func SkillsMine() ClientMessage { return skillsMineMsg{Type: "skills_mine"} }
 
 type cancelMsg struct {
 	Type string `json:"type"`

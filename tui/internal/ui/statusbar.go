@@ -1,0 +1,46 @@
+package ui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// statusBadge is the one unambiguous answer to "what is the agent doing right
+// now" — a solid-fill pill so it reads at a glance, not just a colored word
+// among a dozen other segments. Running pulses between two accent shades and
+// cycles the spinner glyph; ready stays a steady, calm green.
+func statusBadge(running bool, frame int) string {
+	if !running {
+		bg := breathe(currentTheme.OK, blendHex(currentTheme.OK, currentTheme.Bg, 0.4), frame, 40)
+		return lipgloss.NewStyle().Background(bg).Foreground(ColBg).Bold(true).Padding(0, 1).Render("● READY")
+	}
+	bg := breathe(currentTheme.Accent, blendHex(currentTheme.Accent, currentTheme.Bg, 0.4), frame, 16)
+	return lipgloss.NewStyle().Background(bg).Foreground(ColBg).Bold(true).Padding(0, 1).
+		Render(thinkingSpinChar(frame) + " RUNNING")
+}
+
+func statusBar(running bool, model, approval string, tokensIn, tokensOut int, cost float64, contextTokens, contextWindow, queued, width, frame int) string {
+	mode := statusBadge(running, frame)
+	approvalStyle := StDim
+	if approval == "danger" {
+		approvalStyle = StAccent
+	}
+	segments := []string{
+		mode,
+		StInfo.Render(model),
+		approvalStyle.Render("approval:" + approval),
+		StFaint.Render(fmt.Sprintf("in %d · out %d", tokensIn, tokensOut)),
+		StFaint.Render(fmt.Sprintf("$%.4f", cost)),
+		StFaint.Render(contextGaugeCompact(contextTokens, contextWindow)),
+		StDim.Render("tab panels · ^b rail · ? keys"),
+	}
+	if queued > 0 {
+		segments = append(segments, StAccent.Render(fmt.Sprintf("queued:%d", queued)))
+	}
+	for len(segments) > 1 && lipgloss.Width(strings.Join(segments, "  ")) > width {
+		segments = segments[:len(segments)-1]
+	}
+	return lipgloss.NewStyle().MaxWidth(maxInt(0, width)).Inline(true).Render(strings.Join(segments, "  "))
+}

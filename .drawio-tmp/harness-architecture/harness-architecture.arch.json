@@ -1,0 +1,407 @@
+{
+  "version": 1,
+  "title": "Agent Harness — System Architecture",
+  "type": "engineering-diagram",
+  "source": "generated",
+  "profile": "engineering-review",
+  "theme": "tech-blue",
+  "layout": "horizontal",
+  "counts": {
+    "nodes": 37,
+    "edges": 31,
+    "modules": 0
+  },
+  "nodes": [
+    {
+      "id": "band_clients",
+      "label": "CLIENTS",
+      "type": "process"
+    },
+    {
+      "id": "band_transport",
+      "label": "SERVER / TRANSPORT  (ws:7337)",
+      "type": "process"
+    },
+    {
+      "id": "band_core",
+      "label": "CORE AGENT LOOP",
+      "type": "process"
+    },
+    {
+      "id": "band_tools",
+      "label": "TOOLS & EXECUTION",
+      "type": "process"
+    },
+    {
+      "id": "band_ext",
+      "label": "EXTENSIBILITY",
+      "type": "process"
+    },
+    {
+      "id": "band_state",
+      "label": "STATE & PERSISTENCE",
+      "type": "process"
+    },
+    {
+      "id": "band_ops",
+      "label": "SCHEDULING & SELF-IMPROVEMENT",
+      "type": "process"
+    },
+    {
+      "id": "band_external",
+      "label": "EXTERNAL",
+      "type": "process"
+    },
+    {
+      "id": "tui",
+      "label": "Ink TUI\n(harness-tui)",
+      "type": "user"
+    },
+    {
+      "id": "cli",
+      "label": "Readline CLI\n(harness)",
+      "type": "user"
+    },
+    {
+      "id": "web",
+      "label": "Web App\n(Next.js)",
+      "type": "user"
+    },
+    {
+      "id": "wss",
+      "label": "WS Server\n+ Bearer Auth",
+      "type": "service"
+    },
+    {
+      "id": "rest",
+      "label": "REST API\n/run /stream /health",
+      "type": "service"
+    },
+    {
+      "id": "session",
+      "label": "Session\n(per connection)",
+      "type": "process"
+    },
+    {
+      "id": "profile",
+      "label": "Profile Loader\n(Zod schema)",
+      "type": "document"
+    },
+    {
+      "id": "loop",
+      "label": "Agent Loop\n(streaming)",
+      "type": "process"
+    },
+    {
+      "id": "ctx",
+      "label": "Context Mgr\n(condense)",
+      "type": "process"
+    },
+    {
+      "id": "retry",
+      "label": "Retry\n(backoff)",
+      "type": "process"
+    },
+    {
+      "id": "provider",
+      "label": "Provider Client\n(OpenAI-compat)",
+      "type": "service"
+    },
+    {
+      "id": "registry",
+      "label": "Tool Registry",
+      "type": "service"
+    },
+    {
+      "id": "acl",
+      "label": "ACL\nallow/prompt/deny",
+      "type": "decision"
+    },
+    {
+      "id": "builtins",
+      "label": "Built-in Tools\n(Bash, Edit, Read,\nGrep, Memory, Todo)",
+      "type": "service"
+    },
+    {
+      "id": "hooks",
+      "label": "Hooks Runner\npre/post/on_stop",
+      "type": "process"
+    },
+    {
+      "id": "executor",
+      "label": "Executor Factory\nDocker / WASM",
+      "type": "service"
+    },
+    {
+      "id": "skills",
+      "label": "Skills\nLoader + Indexer",
+      "type": "document"
+    },
+    {
+      "id": "mcp",
+      "label": "MCP Client\n(stdio/http/sse/ws)",
+      "type": "service"
+    },
+    {
+      "id": "agents",
+      "label": "Sub-Agents\nDelegate + Fanout",
+      "type": "service"
+    },
+    {
+      "id": "memory",
+      "label": "Memory\nFS / Graph",
+      "type": "database"
+    },
+    {
+      "id": "sessions",
+      "label": "Session Store",
+      "type": "database"
+    },
+    {
+      "id": "runs",
+      "label": "Run Store",
+      "type": "database"
+    },
+    {
+      "id": "projects",
+      "label": "Project Store",
+      "type": "database"
+    },
+    {
+      "id": "usage",
+      "label": "Usage Ledger\n+ Cost Table",
+      "type": "database"
+    },
+    {
+      "id": "telemetry",
+      "label": "Telemetry\n(JSONL)",
+      "type": "document"
+    },
+    {
+      "id": "cron",
+      "label": "Cron Scheduler\n(triggers)",
+      "type": "process"
+    },
+    {
+      "id": "improver",
+      "label": "Improver\nreflect + mine",
+      "type": "process"
+    },
+    {
+      "id": "llm",
+      "label": "LLM API\n(Anthropic /\nOpenAI)",
+      "type": "cloud"
+    },
+    {
+      "id": "mcpservers",
+      "label": "MCP Servers\n(remote/local)",
+      "type": "cloud"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-1",
+      "from": "tui",
+      "to": "wss",
+      "type": "primary",
+      "label": "WebSocket"
+    },
+    {
+      "id": "edge-2",
+      "from": "cli",
+      "to": "wss",
+      "type": "primary"
+    },
+    {
+      "id": "edge-3",
+      "from": "web",
+      "to": "rest",
+      "type": "primary",
+      "label": "HTTP"
+    },
+    {
+      "id": "edge-4",
+      "from": "wss",
+      "to": "session",
+      "type": "primary"
+    },
+    {
+      "id": "edge-5",
+      "from": "rest",
+      "to": "session",
+      "type": "primary"
+    },
+    {
+      "id": "edge-6",
+      "from": "profile",
+      "to": "session",
+      "type": "dependency",
+      "label": "configures"
+    },
+    {
+      "id": "edge-7",
+      "from": "session",
+      "to": "loop",
+      "type": "primary",
+      "label": "user message"
+    },
+    {
+      "id": "edge-8",
+      "from": "loop",
+      "to": "ctx",
+      "type": "primary"
+    },
+    {
+      "id": "edge-9",
+      "from": "loop",
+      "to": "provider",
+      "type": "primary",
+      "label": "stream"
+    },
+    {
+      "id": "edge-10",
+      "from": "provider",
+      "to": "retry",
+      "type": "dependency"
+    },
+    {
+      "id": "edge-11",
+      "from": "retry",
+      "to": "llm",
+      "type": "data",
+      "label": "completions"
+    },
+    {
+      "id": "edge-12",
+      "from": "loop",
+      "to": "registry",
+      "type": "primary",
+      "label": "tool calls"
+    },
+    {
+      "id": "edge-13",
+      "from": "registry",
+      "to": "acl",
+      "type": "primary"
+    },
+    {
+      "id": "edge-14",
+      "from": "acl",
+      "to": "builtins",
+      "type": "primary",
+      "label": "approved"
+    },
+    {
+      "id": "edge-15",
+      "from": "acl",
+      "to": "hooks",
+      "type": "dependency"
+    },
+    {
+      "id": "edge-16",
+      "from": "builtins",
+      "to": "executor",
+      "type": "data",
+      "label": "execute_code"
+    },
+    {
+      "id": "edge-17",
+      "from": "registry",
+      "to": "mcp",
+      "type": "optional",
+      "label": "mcp tools"
+    },
+    {
+      "id": "edge-18",
+      "from": "registry",
+      "to": "agents",
+      "type": "optional",
+      "label": "delegate"
+    },
+    {
+      "id": "edge-19",
+      "from": "mcp",
+      "to": "mcpservers",
+      "type": "data"
+    },
+    {
+      "id": "edge-20",
+      "from": "skills",
+      "to": "loop",
+      "type": "dependency",
+      "label": "system prompt"
+    },
+    {
+      "id": "edge-21",
+      "from": "agents",
+      "to": "loop",
+      "type": "optional",
+      "label": "spawn loop"
+    },
+    {
+      "id": "edge-22",
+      "from": "session",
+      "to": "memory",
+      "type": "data"
+    },
+    {
+      "id": "edge-23",
+      "from": "session",
+      "to": "sessions",
+      "type": "data"
+    },
+    {
+      "id": "edge-24",
+      "from": "loop",
+      "to": "telemetry",
+      "type": "data"
+    },
+    {
+      "id": "edge-25",
+      "from": "loop",
+      "to": "usage",
+      "type": "data"
+    },
+    {
+      "id": "edge-26",
+      "from": "builtins",
+      "to": "memory",
+      "type": "data",
+      "label": "read/write"
+    },
+    {
+      "id": "edge-27",
+      "from": "rest",
+      "to": "runs",
+      "type": "data"
+    },
+    {
+      "id": "edge-28",
+      "from": "rest",
+      "to": "projects",
+      "type": "data"
+    },
+    {
+      "id": "edge-29",
+      "from": "cron",
+      "to": "rest",
+      "type": "optional",
+      "label": "scheduled run"
+    },
+    {
+      "id": "edge-30",
+      "from": "session",
+      "to": "improver",
+      "type": "optional",
+      "label": "on session end"
+    },
+    {
+      "id": "edge-31",
+      "from": "improver",
+      "to": "memory",
+      "type": "data",
+      "label": "write + mine"
+    }
+  ],
+  "modules": []
+}

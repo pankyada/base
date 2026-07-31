@@ -17,6 +17,15 @@
 
 ## Features
 
+### ✅ 14. Go/Bubble Tea TUI revamp
+
+The Go control surface is replacing the deleted legacy client. Current shipped
+surface: streaming transcript, tool sections, approval modes and modals,
+model switching with filtering/custom IDs, skills review/edit/promote/discard/
+mine, context rail, cost/context gauges, queueing, autocomplete, local shell
+and memory shortcuts, themes, motion, focus-aware notifications, reconnect
+handling, cross-platform binaries, and scripted app-flow coverage.
+
 ### ✅ 1. Per-user isolation
 Sessions, memory, and usage all scoped per user. A single server instance serves multiple users without cross-contamination.
 
@@ -112,7 +121,7 @@ Make the harness interoperable with the broader agent ecosystem. Both protocols 
 
 ### ✅ 7. TUI uplift — richer power and animation
 
-Evolve the Ink TUI from functional to genuinely impressive: more visual density, smoother animation, and new power-user capabilities that make the terminal experience feel native and fast.
+Evolve the Go/Bubble Tea TUI from functional to genuinely impressive: more visual density, smoother animation, and new power-user capabilities that make the terminal experience feel native and fast.
 
 **To build:**
 - **Live diff view** — when the agent writes/edits a file, render a side-by-side or inline diff panel in the TUI (syntax-highlighted, scrollable)
@@ -121,7 +130,7 @@ Evolve the Ink TUI from functional to genuinely impressive: more visual density,
 - **Memory panel** — live tab showing active memory keys (session + profile scope) updated in real time as agent writes
 - **Session breadcrumb** — persistent header bar: profile name, user, session ID, elapsed time, live cost ticker
 - **Keyboard power-ups** — `/` to open command palette (switch profile, clear session, export transcript); `Ctrl+T` to toggle tool timeline; `Ctrl+M` to toggle memory panel
-- **Spinners and transitions** — replace static "thinking…" with per-tool spinners (braille unicode); smooth panel slide-in/out using Ink's `useTransition`-equivalent
+- **Spinners and transitions** — replace static "thinking…" with per-tool spinners (braille unicode); smooth panel slide-in/out using Bubble Tea frame ticks
 
 **What shipped:** Breathing orb, animated token stream, tool timeline with status icons, memory panel, session breadcrumb with live cost ticker, keyboard palette (`Ctrl+K`), per-tool spinners, tabbed workspace panel, multiline composer.
 
@@ -196,7 +205,7 @@ Sandboxed code execution routed by profile config. WASM runs in the user's brows
 
 **Architecture:**
 
-New `ExecuteCode` builtin tool + new WebSocket message pair + optional `<HarnessPython />` React component for WASM clients.
+New `ExecuteCode` builtin tool + new WebSocket message pair + optional browser `<HarnessPython />` component for WASM clients.
 
 ```
 executor: wasm    → code_execute WS message → Pyodide in browser → code_result back
@@ -222,7 +231,7 @@ executor:
 - New WS message types: `code_execute { id, code, data }` (server → client) and `code_result { id, output, error }` (client → server)
 - `ExecuteCode` builtin tool — routes to executor backend, awaits result (mirrors `tool_prompt` approval pattern)
 - Executor backends: WASM relay, Docker subprocess, E2B API client, Daytona API client
-- `<HarnessPython />` React component — boots Pyodide, listens for `code_execute`, returns `code_result`
+- `<HarnessPython />` browser component — boots Pyodide, listens for `code_execute`, returns `code_result`
 - Client capability handshake: client signals `wasm_supported: true` in `hello` message so server knows which executor to use
 - `executor:` block in `ProfileSchema`
 
@@ -285,7 +294,7 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 
 ## Completed but not on original list
 
-- Rich Ink TUI: breathing orb, activity narrator, token-rate wave, tabbed right panel, multiline input
+- Rich Go TUI: activity timeline, token-rate sparkline, tabbed right panel, multiline input
 - MCP per-connection isolation
 - Async hooks with timeout
 - Context window tracking

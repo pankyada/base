@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { maybeCondenseMessages } from '../src/loop/context-manager.js'
+import { contextWindowForProfile, estimateTokens, maybeCondenseMessages } from '../src/loop/context-manager.js'
 import { createSession } from '../src/session/store.js'
 
 function makeProfile(maxTokens = 100_000, modelId?: string): any {
@@ -231,5 +231,25 @@ describe('maybeCondenseMessages', () => {
     }
     await maybeCondenseMessages(session, makeProfile(10), openai as any)
     expect(session.messages).toHaveLength(original.length)
+  })
+})
+
+describe('active model context reporting', () => {
+  it('uses registry context when profile does not override it', () => {
+    const profile: any = makeProfile()
+    delete profile.context_window
+    profile.model.id = 'gpt-5.4-mini'
+    profile.model.base_url = 'https://api.openai.com/v1'
+    expect(contextWindowForProfile(profile)).toBe(400_000)
+  })
+
+  it('keeps explicit profile context override', () => {
+    const profile: any = makeProfile(777)
+    profile.model.id = 'gpt-5.4-mini'
+    expect(contextWindowForProfile(profile)).toBe(777)
+  })
+
+  it('estimates occupancy consistently for compaction stats', () => {
+    expect(estimateTokens([{ role: 'user', content: '1234' }])).toBe(9)
   })
 })

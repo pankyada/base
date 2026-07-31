@@ -121,6 +121,15 @@ const ExecutorSchema = z.object({
 
 export type ExecutorConfig = z.infer<typeof ExecutorSchema>
 
+const SafetySchema = z.object({
+  classifier_model_id: z.string().optional(),
+  timeout_ms: z.number().default(3000),
+  cache_ttl_hours: z.number().default(168),
+  enabled: z.boolean().default(true),
+})
+
+export type SafetyConfig = z.infer<typeof SafetySchema>
+
 export const ProfileSchema = z.object({
   name: z.string(),
   model: z.object({
@@ -157,6 +166,10 @@ export const ProfileSchema = z.object({
       mine_skills_every_n_sessions: z.number().default(10),
     })
   ),
+  safety: z.preprocess(
+    (val) => val ?? {},
+    SafetySchema.default(() => ({ enabled: true, timeout_ms: 3000, cache_ttl_hours: 168 }))
+  ),
   context_window: z.object({
     max_tokens: z.number().default(100000),
     model_id: z.string().optional(),
@@ -187,4 +200,7 @@ export const ProfileSchema = z.object({
   mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
 })
 
-export type Profile = z.infer<typeof ProfileSchema>
+type ParsedProfile = z.infer<typeof ProfileSchema>
+// Keep hand-built test/embedding profiles source-compatible while parsed YAML
+// always receives the safe classifier defaults above.
+export type Profile = Omit<ParsedProfile, 'safety'> & { safety?: SafetyConfig }

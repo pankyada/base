@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "architecture-site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "-l", "8765", "/Users/pankajkumaryadav/Desktop/development/base/.claude/worktrees/architecture-site/docs/architecture-site"],
+      "port": 8765
+    }
+  ]
+}

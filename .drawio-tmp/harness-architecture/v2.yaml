@@ -1,0 +1,294 @@
+meta:
+  profile: engineering-review
+  theme: tech-blue
+  source: generated
+  layout: vertical
+  routing: orthogonal
+  canvas: auto
+  title: "Agent Harness — System Architecture"
+  description: "WebSocket-based generic agent runtime wiring an LLM to tools, skills, memory, MCP, and hooks. Everything profile-driven (YAML)."
+  legend: "Solid = main flow · Dashed = data/async · Dotted = optional · Diamond = dependency"
+
+modules:
+  - id: clients
+    label: "Clients"
+    color: $primary
+  - id: transport
+    label: "Server / Transport (ws:7337)"
+    color: $primary
+  - id: core
+    label: "Core Agent Loop"
+    color: $secondary
+  - id: tools
+    label: "Tools & Execution"
+    color: $secondary
+  - id: ext
+    label: "Extensibility"
+    color: $accent
+  - id: state
+    label: "State & Persistence"
+    color: $accent
+  - id: ops
+    label: "Scheduling & Self-Improvement"
+    color: $primary
+  - id: external
+    label: "External"
+    color: $accent
+
+nodes:
+  # --- Clients ---
+  - id: tui
+    label: "Ink TUI\n(harness-tui)"
+    type: user
+    module: clients
+  - id: cli
+    label: "Readline CLI\n(harness)"
+    type: user
+    module: clients
+  - id: web
+    label: "Web App\n(Next.js)"
+    type: user
+    module: clients
+
+  # --- Transport / Server ---
+  - id: wss
+    label: "WS Server\n+ Bearer Auth"
+    type: service
+    module: transport
+  - id: rest
+    label: "REST API\n/run /stream /health"
+    type: service
+    module: transport
+  - id: session
+    label: "Session\n(per connection)"
+    type: process
+    module: transport
+  - id: profile
+    label: "Profile Loader\n(Zod schema)"
+    type: document
+    module: transport
+
+  # --- Core Loop ---
+  - id: loop
+    label: "Agent Loop\n(streaming)"
+    type: process
+    module: core
+  - id: ctx
+    label: "Context Manager\n(condense)"
+    type: process
+    module: core
+  - id: retry
+    label: "Retry\n(backoff)"
+    type: process
+    module: core
+  - id: provider
+    label: "Provider Client\n(OpenAI-compat)"
+    type: service
+    module: core
+
+  # --- Tools & Execution ---
+  - id: registry
+    label: "Tool Registry"
+    type: service
+    module: tools
+  - id: acl
+    label: "ACL\nallow / prompt / deny"
+    type: decision
+    module: tools
+  - id: builtins
+    label: "Built-in Tools\n(Bash, Edit, Read,\nGrep, Memory, Todo)"
+    type: service
+    module: tools
+  - id: hooks
+    label: "Hooks Runner\npre / post / on_stop"
+    type: process
+    module: tools
+  - id: executor
+    label: "Executor Factory\nDocker / WASM"
+    type: service
+    module: tools
+
+  # --- Extensibility ---
+  - id: skills
+    label: "Skills\nLoader + Indexer"
+    type: document
+    module: ext
+  - id: mcp
+    label: "MCP Client\n(stdio/http/sse/ws)"
+    type: service
+    module: ext
+  - id: agents
+    label: "Sub-Agents\nDelegate + Fanout"
+    type: service
+    module: ext
+
+  # --- State & Persistence ---
+  - id: memory
+    label: "Memory Provider\nFS / Graph"
+    type: database
+    module: state
+  - id: sessions
+    label: "Session Store"
+    type: database
+    module: state
+  - id: runs
+    label: "Run Store"
+    type: database
+    module: state
+  - id: projects
+    label: "Project Store"
+    type: database
+    module: state
+  - id: usage
+    label: "Usage Ledger\n+ Cost Table"
+    type: database
+    module: state
+  - id: telemetry
+    label: "Telemetry\n(JSONL)"
+    type: document
+    module: state
+
+  # --- Scheduling & Improver ---
+  - id: cron
+    label: "Cron Scheduler\n(triggers)"
+    type: process
+    module: ops
+  - id: improver
+    label: "Improver\nreflect + skill mining"
+    type: process
+    module: ops
+
+  # --- External ---
+  - id: llm
+    label: "LLM API\n(Anthropic / OpenAI)"
+    type: cloud
+    module: external
+  - id: mcpservers
+    label: "MCP Servers\n(remote/local)"
+    type: cloud
+    module: external
+
+edges:
+  # Clients -> server
+  - from: tui
+    to: wss
+    type: primary
+    label: "WebSocket"
+  - from: cli
+    to: wss
+    type: primary
+  - from: web
+    to: rest
+    type: primary
+    label: "HTTP"
+
+  # Server internals
+  - from: wss
+    to: session
+    type: primary
+  - from: rest
+    to: session
+    type: primary
+  - from: profile
+    to: session
+    type: dependency
+    label: "configures"
+  - from: session
+    to: loop
+    type: primary
+    label: "user message"
+
+  # Core loop
+  - from: loop
+    to: ctx
+    type: primary
+  - from: loop
+    to: provider
+    type: primary
+    label: "stream"
+  - from: provider
+    to: retry
+    type: dependency
+  - from: retry
+    to: llm
+    type: data
+    label: "chat completions"
+  - from: loop
+    to: registry
+    type: primary
+    label: "tool calls"
+
+  # Tools
+  - from: registry
+    to: acl
+    type: primary
+  - from: acl
+    to: builtins
+    type: primary
+    label: "approved"
+  - from: acl
+    to: hooks
+    type: dependency
+  - from: builtins
+    to: executor
+    type: data
+    label: "execute_code"
+  - from: registry
+    to: mcp
+    type: optional
+    label: "mcp tools"
+  - from: registry
+    to: agents
+    type: optional
+    label: "delegate"
+
+  # Extensibility
+  - from: mcp
+    to: mcpservers
+    type: data
+  - from: skills
+    to: loop
+    type: dependency
+    label: "system prompt"
+  - from: agents
+    to: loop
+    type: optional
+    label: "spawn loop"
+
+  # State
+  - from: session
+    to: memory
+    type: data
+  - from: session
+    to: sessions
+    type: data
+  - from: loop
+    to: telemetry
+    type: data
+  - from: loop
+    to: usage
+    type: data
+  - from: builtins
+    to: memory
+    type: data
+    label: "read/write"
+  - from: rest
+    to: runs
+    type: data
+  - from: rest
+    to: projects
+    type: data
+
+  # Ops
+  - from: cron
+    to: rest
+    type: optional
+    label: "scheduled run"
+  - from: session
+    to: improver
+    type: optional
+    label: "on session end"
+  - from: improver
+    to: memory
+    type: data
+    label: "write + mine skills"

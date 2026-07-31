@@ -1,0 +1,495 @@
+meta:
+  profile: engineering-review
+  theme: tech-blue
+  source: generated
+  layout: horizontal
+  routing: orthogonal
+  canvas: 1120x1420
+  title: Agent Harness — System Architecture
+  description: >-
+    WebSocket-based generic agent runtime wiring an LLM to tools, skills, memory, MCP, and hooks. Everything
+    profile-driven (YAML).
+  legend: Solid = main flow · Dashed = data/async · Dotted = optional · Diamond = dependency
+nodes:
+  - id: band_clients
+    label: CLIENTS
+    type: process
+    bounds:
+      x: 40
+      'y': 50
+      width: 780
+      height: 110
+    style:
+      fillColor: '#EFF6FF'
+      strokeColor: '#BFDBFE'
+      fontColor: '#1D4ED8'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_transport
+    label: SERVER / TRANSPORT  (ws:7337)
+    type: process
+    bounds:
+      x: 40
+      'y': 210
+      width: 780
+      height: 110
+    style:
+      fillColor: '#EFF6FF'
+      strokeColor: '#BFDBFE'
+      fontColor: '#1D4ED8'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_core
+    label: CORE AGENT LOOP
+    type: process
+    bounds:
+      x: 40
+      'y': 370
+      width: 780
+      height: 110
+    style:
+      fillColor: '#ECFDF5'
+      strokeColor: '#A7F3D0'
+      fontColor: '#047857'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_tools
+    label: TOOLS & EXECUTION
+    type: process
+    bounds:
+      x: 40
+      'y': 530
+      width: 780
+      height: 230
+    style:
+      fillColor: '#ECFDF5'
+      strokeColor: '#A7F3D0'
+      fontColor: '#047857'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_ext
+    label: EXTENSIBILITY
+    type: process
+    bounds:
+      x: 40
+      'y': 810
+      width: 780
+      height: 110
+    style:
+      fillColor: '#F5F3FF'
+      strokeColor: '#DDD6FE'
+      fontColor: '#6D28D9'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_state
+    label: STATE & PERSISTENCE
+    type: process
+    bounds:
+      x: 40
+      'y': 970
+      width: 780
+      height: 230
+    style:
+      fillColor: '#FFFBEB'
+      strokeColor: '#FDE68A'
+      fontColor: '#B45309'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_ops
+    label: SCHEDULING & SELF-IMPROVEMENT
+    type: process
+    bounds:
+      x: 40
+      'y': 1250
+      width: 560
+      height: 110
+    style:
+      fillColor: '#EFF6FF'
+      strokeColor: '#BFDBFE'
+      fontColor: '#1D4ED8'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: band_external
+    label: EXTERNAL
+    type: process
+    bounds:
+      x: 880
+      'y': 370
+      width: 200
+      height: 390
+    style:
+      fillColor: '#F5F3FF'
+      strokeColor: '#DDD6FE'
+      fontColor: '#6D28D9'
+      fontSize: 13
+      fontWeight: 700
+      align: left
+      verticalAlign: top
+      spacingLeft: 10
+      spacingTop: 6
+  - id: tui
+    label: |-
+      Ink TUI
+      (harness-tui)
+    type: user
+    position:
+      x: 150
+      'y': 115
+  - id: cli
+    label: |-
+      Readline CLI
+      (harness)
+    type: user
+    position:
+      x: 350
+      'y': 115
+  - id: web
+    label: |-
+      Web App
+      (Next.js)
+    type: user
+    position:
+      x: 550
+      'y': 115
+  - id: wss
+    label: |-
+      WS Server
+      + Bearer Auth
+    type: service
+    position:
+      x: 150
+      'y': 275
+  - id: rest
+    label: |-
+      REST API
+      /run /stream /health
+    type: service
+    position:
+      x: 350
+      'y': 275
+  - id: session
+    label: |-
+      Session
+      (per connection)
+    type: process
+    position:
+      x: 550
+      'y': 275
+  - id: profile
+    label: |-
+      Profile Loader
+      (Zod schema)
+    type: document
+    position:
+      x: 740
+      'y': 275
+  - id: loop
+    label: |-
+      Agent Loop
+      (streaming)
+    type: process
+    position:
+      x: 150
+      'y': 435
+  - id: ctx
+    label: |-
+      Context Mgr
+      (condense)
+    type: process
+    position:
+      x: 350
+      'y': 435
+  - id: retry
+    label: |-
+      Retry
+      (backoff)
+    type: process
+    position:
+      x: 550
+      'y': 435
+  - id: provider
+    label: |-
+      Provider Client
+      (OpenAI-compat)
+    type: service
+    position:
+      x: 740
+      'y': 435
+  - id: registry
+    label: Tool Registry
+    type: service
+    position:
+      x: 150
+      'y': 600
+  - id: acl
+    label: |-
+      ACL
+      allow/prompt/deny
+    type: decision
+    position:
+      x: 350
+      'y': 600
+  - id: builtins
+    label: |-
+      Built-in Tools
+      (Bash, Edit, Read,
+      Grep, Memory, Todo)
+    type: service
+    position:
+      x: 550
+      'y': 600
+  - id: hooks
+    label: |-
+      Hooks Runner
+      pre/post/on_stop
+    type: process
+    position:
+      x: 740
+      'y': 600
+  - id: executor
+    label: |-
+      Executor Factory
+      Docker / WASM
+    type: service
+    position:
+      x: 550
+      'y': 705
+  - id: skills
+    label: |-
+      Skills
+      Loader + Indexer
+    type: document
+    position:
+      x: 150
+      'y': 875
+  - id: mcp
+    label: |-
+      MCP Client
+      (stdio/http/sse/ws)
+    type: service
+    position:
+      x: 350
+      'y': 875
+  - id: agents
+    label: |-
+      Sub-Agents
+      Delegate + Fanout
+    type: service
+    position:
+      x: 550
+      'y': 875
+  - id: memory
+    label: |-
+      Memory
+      FS / Graph
+    type: database
+    position:
+      x: 150
+      'y': 1035
+  - id: sessions
+    label: Session Store
+    type: database
+    position:
+      x: 350
+      'y': 1035
+  - id: runs
+    label: Run Store
+    type: database
+    position:
+      x: 550
+      'y': 1035
+  - id: projects
+    label: Project Store
+    type: database
+    position:
+      x: 740
+      'y': 1035
+  - id: usage
+    label: |-
+      Usage Ledger
+      + Cost Table
+    type: database
+    position:
+      x: 250
+      'y': 1135
+  - id: telemetry
+    label: |-
+      Telemetry
+      (JSONL)
+    type: document
+    position:
+      x: 450
+      'y': 1135
+  - id: cron
+    label: |-
+      Cron Scheduler
+      (triggers)
+    type: process
+    position:
+      x: 150
+      'y': 1315
+  - id: improver
+    label: |-
+      Improver
+      reflect + mine
+    type: process
+    position:
+      x: 350
+      'y': 1315
+  - id: llm
+    label: |-
+      LLM API
+      (Anthropic /
+      OpenAI)
+    type: cloud
+    position:
+      x: 980
+      'y': 460
+  - id: mcpservers
+    label: |-
+      MCP Servers
+      (remote/local)
+    type: cloud
+    position:
+      x: 980
+      'y': 620
+edges:
+  - from: tui
+    to: wss
+    type: primary
+    label: WebSocket
+  - from: cli
+    to: wss
+    type: primary
+  - from: web
+    to: rest
+    type: primary
+    label: HTTP
+  - from: wss
+    to: session
+    type: primary
+  - from: rest
+    to: session
+    type: primary
+  - from: profile
+    to: session
+    type: dependency
+    label: configures
+  - from: session
+    to: loop
+    type: primary
+    label: user message
+  - from: loop
+    to: ctx
+    type: primary
+  - from: loop
+    to: provider
+    type: primary
+    label: stream
+  - from: provider
+    to: retry
+    type: dependency
+  - from: retry
+    to: llm
+    type: data
+    label: completions
+  - from: loop
+    to: registry
+    type: primary
+    label: tool calls
+  - from: registry
+    to: acl
+    type: primary
+  - from: acl
+    to: builtins
+    type: primary
+    label: approved
+  - from: acl
+    to: hooks
+    type: dependency
+  - from: builtins
+    to: executor
+    type: data
+    label: execute_code
+  - from: registry
+    to: mcp
+    type: optional
+    label: mcp tools
+  - from: registry
+    to: agents
+    type: optional
+    label: delegate
+  - from: mcp
+    to: mcpservers
+    type: data
+  - from: skills
+    to: loop
+    type: dependency
+    label: system prompt
+  - from: agents
+    to: loop
+    type: optional
+    label: spawn loop
+  - from: session
+    to: memory
+    type: data
+  - from: session
+    to: sessions
+    type: data
+  - from: loop
+    to: telemetry
+    type: data
+  - from: loop
+    to: usage
+    type: data
+  - from: builtins
+    to: memory
+    type: data
+    label: read/write
+  - from: rest
+    to: runs
+    type: data
+  - from: rest
+    to: projects
+    type: data
+  - from: cron
+    to: rest
+    type: optional
+    label: scheduled run
+  - from: session
+    to: improver
+    type: optional
+    label: on session end
+  - from: improver
+    to: memory
+    type: data
+    label: write + mine
+modules: []

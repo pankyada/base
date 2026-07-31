@@ -23,7 +23,10 @@ import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { registerAll, clearRegistry, registerTool } from '../tools/builtin/index.js'
 import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
+import { listProposed, listInstalled, readSkill, writeSkill, promoteSkill, discardSkill } from '../skills/manage.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
+import { listModels } from '../models/registry.js'
+import { contextWindowForProfile, estimateTokens, maybeCondenseMessages } from '../loop/context-manager.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
@@ -160,6 +163,14 @@ async function main() {
     let mcpEntries: McpEntry[] = []
     let wasmSupported = false
     let connectionProfile = profile  // may be overridden to developer mode via yolo
+    let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
+    let connectionModel = profile.model.id
+    let miningSkills = false
+    let safetyDisclosed = false
+
+    const rebuildConnectionProfile = () => {
+      connectionProfile = { ...profile, model: { ...profile.model, id: connectionModel } }
+    }
 
     // Init MCP clients async — handlers below work with [] until ready
     createMcpClients(profile)
@@ -169,6 +180,8 @@ async function main() {
     const send = (msg: ServerMessage) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
     }
+
+    const sendSkills = () => send({ type: 'skills', proposed: listProposed(connectionProfile), installed: listInstalled() })
 
     ws.on('message', async (raw) => {
       let msg: ClientMessage
@@ -188,19 +201,139 @@ async function main() {
           connectionProfile = msg.yolo
             ? applyModeDefaults({ ...profile, mode: 'developer' })
             : profile
+          approvalMode = msg.yolo ? 'yolo' : 'danger'
+          connectionModel = connectionProfile.model.id
           session = createSession(connectionProfile.name, userId)
           memory = connectionProfile.memory?.provider === 'graph'
             ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
             : new FsMemoryProvider(connectionProfile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
         }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, yolo: msg.yolo ?? false })
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false })
+        send({ type: 'approval_mode_changed', mode: approvalMode })
+        return
+      }
+
+      if (msg.type === 'set_approval_mode') {
+        if (msg.mode !== 'strict' && msg.mode !== 'bash' && msg.mode !== 'danger' && msg.mode !== 'yolo') {
+          send({ type: 'notice', level: 'error', message: 'unknown approval mode', detail: 'use strict, bash, danger, or yolo' })
+          return
+        }
+        approvalMode = msg.mode
+        send({ type: 'approval_mode_changed', mode: approvalMode })
+        return
+      }
+
+      if (msg.type === 'models_list') {
+        const activeProfile = { ...profile, model: { ...profile.model, id: connectionModel } }
+        send({ type: 'models', models: listModels(activeProfile), current: connectionModel })
+        return
+      }
+
+      if (msg.type === 'set_model') {
+        const candidate = listModels(profile).find(model => model.id === msg.model)
+        if (candidate && !candidate.available) {
+          send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason })
+          return
+        }
+        if (!candidate) {
+          send({ type: 'notice', level: 'warn', message: `unknown model ${msg.model}`, detail: 'fallback pricing applies' })
+        }
+        connectionModel = msg.model
+        rebuildConnectionProfile()
+        send({ type: 'model_changed', model: connectionModel })
+        return
+      }
+
+      if (msg.type === 'skills_list') {
+        sendSkills()
+        return
+      }
+
+      if (msg.type === 'skill_get') {
+        try {
+          const skill = readSkill(msg.name, msg.source, connectionProfile)
+          send({ type: 'skill_content', ...skill })
+        } catch (error: any) {
+          send({ type: 'notice', level: 'error', message: 'skill read failed', detail: error.message })
+        }
+        return
+      }
+
+      if (msg.type === 'skill_save') {
+        try {
+          const result = writeSkill(msg.name, msg.content, connectionProfile)
+          send({ type: 'skill_result', action: 'saved', name: msg.name, path: result.path })
+        } catch (error: any) {
+          send({ type: 'notice', level: 'error', message: 'skill save failed', detail: error.message })
+        }
+        return
+      }
+
+      if (msg.type === 'skill_promote') {
+        try {
+          const result = promoteSkill(msg.name, connectionProfile)
+          send({ type: 'skill_result', action: 'promoted', name: msg.name, path: result.path })
+        } catch (error: any) {
+          send({ type: 'notice', level: 'error', message: 'skill promote failed', detail: error.message })
+        }
+        return
+      }
+
+      if (msg.type === 'skill_discard') {
+        try {
+          const result = discardSkill(msg.name, connectionProfile)
+          send({ type: 'skill_result', action: 'discarded', name: msg.name, path: result.path })
+        } catch (error: any) {
+          send({ type: 'notice', level: 'error', message: 'skill discard failed', detail: error.message })
+        }
+        return
+      }
+
+      if (msg.type === 'skills_mine') {
+        if (miningSkills) {
+          send({ type: 'notice', level: 'info', message: 'skills mining already running' })
+          return
+        }
+        const userTurns = (session.messages as any[]).filter(item => item.role === 'user').length
+        if (!connectionProfile.improvement?.enabled) {
+          send({ type: 'notice', level: 'warn', message: 'skills mining disabled', detail: 'set improvement.enabled: true' })
+          return
+        }
+        if (userTurns < 2) {
+          send({ type: 'notice', level: 'warn', message: 'need two user turns before mining' })
+          return
+        }
+        miningSkills = true
+        send({ type: 'notice', level: 'info', message: 'mining skills…' })
+        try {
+          await improver.mineSkills([session])
+          sendSkills()
+        } catch (error: any) {
+          send({ type: 'notice', level: 'error', message: 'skills mining failed', detail: error.message })
+        } finally {
+          miningSkills = false
+        }
+        return
+      }
+
+      if (msg.type === 'compact') {
+        const before = estimateTokens(session.messages)
+        const saved = await maybeCondenseMessages(session, connectionProfile, openai, true)
+        const after = estimateTokens(session.messages)
+        saveSession(session)
+        send({ type: 'stats', tokens_in: session.usage.input, tokens_out: session.usage.output, cost_usd: session.usage.cost_usd, context_window: contextWindowForProfile(connectionProfile), context_tokens: after })
+        send({ type: 'notice', level: 'info', message: saved > 0 ? `compacted context · ${before - after} tokens saved` : 'context already compact', detail: saved > 0 ? `${before} → ${after} tokens` : 'no condensation needed' })
         return
       }
 
       if (msg.type === 'cancel') {
         abortController.abort()
         abortController = new AbortController()
+		for (const resolve of pendingApprovals.values()) resolve(false)
+		pendingApprovals.clear()
+		for (const resolve of pendingInputRequests.values()) resolve('')
+		pendingInputRequests.clear()
         return
       }
 
@@ -257,16 +390,21 @@ async function main() {
           onToken: t => send({ type: 'token', content: t }),
           onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
           onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
-          onToolPrompt: (id, n, i) => new Promise<boolean>(res => {
+          onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(res => {
             pendingApprovals.set(id, res)
-            send({ type: 'tool_prompt', id, name: n, input: i })
+            send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
           }),
           onSessionEnd: (id) => {
             saveSession(session)
             send({ type: 'session_end', sessionId: id })
           },
-          onStats: (tokens_in, tokens_out, cost_usd) => {
-            send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: profile.context_window?.max_tokens ?? 0 })
+          onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => {
+            send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowForProfile(connectionProfile), context_tokens })
+          },
+          onSafetyNotice: (classifierModel) => {
+            if (safetyDisclosed) return
+            safetyDisclosed = true
+            send({ type: 'notice', level: 'info', message: `ambiguous tools classified by ${classifierModel}`, detail: 'verdicts are cached · set safety.enabled: false or use /approval bash to opt out' })
           },
           onArtifacts: (sessionId, artifacts) => {
             send({ type: 'artifacts', sessionId, artifacts })
@@ -290,14 +428,24 @@ async function main() {
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
+          approvalMode,
         }
 
+        const runSignal = abortController.signal
         try {
-          await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, abortController.signal)
+          await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, runSignal)
+          if (runSignal.aborted) {
+            saveSession(session)
+            send({ type: 'session_end', sessionId: session.id })
+          }
         } catch (e: any) {
           if (e.name !== 'AbortError') {
             send({ type: 'error', message: e.message })
           }
+		  if (runSignal.aborted) {
+		    saveSession(session)
+		    send({ type: 'session_end', sessionId: session.id })
+		  }
         }
       }
     })

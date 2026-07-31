@@ -56,7 +56,7 @@ func findRepoRoot(dir string) (root string, ok bool) {
 }
 
 // serverCommand returns dev (tsx) vs prod (harness-server binary) invocation.
-func serverCommand() (string, []string, string) {
+func serverCommand(profile string) (string, []string, string) {
 	exe, _ := os.Executable()
 	root, ok := findRepoRoot(filepath.Dir(exe))
 	if !ok {
@@ -67,18 +67,30 @@ func serverCommand() (string, []string, string) {
 	}
 	devEntry := filepath.Join(root, "src", "server", "index.ts")
 	if _, err := os.Stat(devEntry); err == nil {
-		return "tsx", []string{devEntry}, root
+		args := []string{devEntry}
+		if profile != "" {
+			args = append(args, profile)
+		}
+		return "tsx", args, root
 	}
-	return filepath.Join(filepath.Dir(exe), "harness-server"), nil, root
+	args := []string{}
+	if profile != "" {
+		args = append(args, profile)
+	}
+	return filepath.Join(filepath.Dir(exe), "harness-server"), args, root
 }
 
 // EnsureServer probes /health and spawns the server if it is not already up.
-func EnsureServer(port string) (Result, error) {
+func EnsureServer(port string, profiles ...string) (Result, error) {
 	if probeHealth(port) {
 		return Result{SpawnedByUs: false, Cleanup: func() {}}, nil
 	}
 
-	cmdName, args, root := serverCommand()
+	profile := ""
+	if len(profiles) > 0 {
+		profile = profiles[0]
+	}
+	cmdName, args, root := serverCommand(profile)
 	cmd := exec.Command(cmdName, args...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "HARNESS_PORT="+port)

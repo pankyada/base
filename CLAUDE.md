@@ -11,12 +11,14 @@ Feature backlog and status live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Rea
 ```bash
 # Dev (no compile step needed)
 pnpm dev                        # start WebSocket server (default profile)
-pnpm dev:tui                    # start Ink TUI
+pnpm dev:tui                    # start Go/Bubble Tea TUI
 pnpm dev:cli                    # start readline CLI client
 
 # Build
 pnpm build                      # tsc → dist/
+pnpm build:bin                  # server/CLI + Go TUI release binaries
 pnpm typecheck                  # type-check without emitting
+cd tui && go test ./...         # Go TUI unit/app-flow tests
 
 # Test
 pnpm test                       # vitest run (all)
@@ -67,7 +69,10 @@ Server (ws:7337)
 | `src/mcp/client.ts` | Connects to MCP servers (stdio/streamable-http/sse/websocket); tools exposed as `<serverName>__<toolName>` with real schemas |
 | `src/improver/default-improver.ts` | Post-session reflection → memory writes; skill mining every N sessions |
 | `src/telemetry/logger.ts` | Appends JSONL events to `~/.harness/telemetry.jsonl` |
-| `src/tui/` | Ink-based TUI; `App` fans WS messages out to `useMessages`, `useTools`, `useMemory` hooks |
+| `tui/` | Go/Bubble Tea control surface: transcript, approval/input modals, overlay, rail, skills, and reconnecting WS client |
+| `src/models/registry.ts` | Curated model metadata, provider availability, context windows, and cost math |
+| `src/safety/` | Static danger rules, verdict cache, and fail-closed classifier |
+| `src/skills/manage.ts` | Proposed/installed skill review, safe edit, promote, and recoverable discard |
 
 ### Profiles
 
@@ -153,4 +158,4 @@ Uses the OpenAI SDK pointed at any `base_url` — model is fully configurable pe
 
 ### Cost estimation
 
-Hardcoded in `agent-loop.ts::estimateCost`: `$0.000003/input token`, `$0.000015/output token`. Update when switching models.
+Model pricing and context windows live in `src/models/registry.ts`; `estimateCost` uses the active model and fallback pricing for unknown ids.

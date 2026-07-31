@@ -69,3 +69,8 @@ contract:
 improvement:
   enabled: true
   mine_skills_every_n_sessions: 10
+safety:
+  enabled: true
+  classifier_model_id: claude-haiku-4-5-20251001
+  timeout_ms: 1500
+  cache_ttl_hours: 24

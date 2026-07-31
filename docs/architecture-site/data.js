@@ -19,11 +19,11 @@
         nodes: [
           {
             id: "tui",
-            name: "Ink TUI",
-            files: ["src/tui/index.tsx", "src/tui/app.tsx"],
+            name: "Go TUI",
+            files: ["tui/main.go", "tui/internal/ui/model.go"],
             responsibility: "Terminal UI client.",
             detail:
-              "A rich, React-in-the-terminal client built with Ink. It opens a WebSocket to the server, streams assistant tokens live, and renders tool calls, memory, and approvals as interactive panes."
+              "A Go/Bubble Tea control surface. It opens a WebSocket to the server, streams assistant tokens live, and renders tool calls, memory, approvals, skills, and context as interactive panes."
           },
           {
             id: "cli",
@@ -371,7 +371,7 @@
         toId: "wss",
         label: "user sends message over WebSocket",
         narrative:
-          "A client — here the Ink TUI — opens a WebSocket to ws:7337 and sends the user's message as a ClientMessage frame."
+          "A client — here the Go/Bubble Tea TUI — opens a WebSocket to ws:7337 and sends the user's message as a ClientMessage frame."
       },
       {
         step: 2,

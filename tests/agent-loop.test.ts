@@ -26,6 +26,93 @@ describe('runAgentLoop', () => {
 
   beforeEach(() => clearRegistry())
 
+  it('danger mode prompts destructive Bash but allows safe Bash', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Bash: 'prompt' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    registerTool({ name: 'Bash', description: 'shell', parameters: {}, execute: async (input: any) => input.command })
+    const memory = new FsMemoryProvider(tmp, session)
+    const prompt = vi.fn().mockResolvedValue(false)
+    const openai = {
+      chat: { completions: { create: vi.fn()
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'danger', function: { name: 'Bash', arguments: '{"command":"rm -rf build"}' } }] } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ]))
+        .mockReturnValueOnce(makeStream([{ choices: [{ delta: { content: 'blocked' } }] }, { choices: [{ delta: {} },], usage: { prompt_tokens: 1, completion_tokens: 1 } }])) } },
+    }
+    await runAgentLoop('clean', profile, session, { profile, session, workingDir: tmp, memory, skills: [], approvalMode: 'danger' } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: prompt, onSessionEnd: vi.fn(),
+    }, openai as any)
+    expect(prompt).toHaveBeenCalledWith('danger', 'Bash', { command: 'rm -rf build' }, 'danger', 'destructive filesystem removal')
+  })
+
+  it('danger mode never classifies a tool the profile already denies', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Bash: 'deny' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    registerTool({ name: 'Bash', description: 'shell', parameters: {}, execute: async (input: any) => input.command })
+    const memory = new FsMemoryProvider(tmp, session)
+    const prompt = vi.fn()
+    const classifierCreate = vi.fn().mockResolvedValue({ choices: [{ message: { content: '{"risk":"caution","reason":"n/a"}' } }] })
+    const streamOpenai = {
+      chat: { completions: { create: vi.fn()
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'denied', function: { name: 'Bash', arguments: '{"command":"ls"}' } }] } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ]))
+        .mockReturnValueOnce(makeStream([{ choices: [{ delta: { content: 'ok' } }] }, { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } }])) } },
+    }
+    await runAgentLoop('clean', profile, session, {
+      profile, session, workingDir: tmp, memory, skills: [], approvalMode: 'danger',
+      openai: { chat: { completions: { create: classifierCreate } } },
+    } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: prompt, onSessionEnd: vi.fn(),
+    }, streamOpenai as any)
+    expect(prompt).not.toHaveBeenCalled()
+    expect(classifierCreate).not.toHaveBeenCalled()
+    const toolMsgs = (session.messages as any[]).filter(m => m.role === 'tool')
+    expect(toolMsgs[0].content).toContain('denied by profile ACL')
+  })
+
+  it('sends reasoning_effort: none for reasoning-family models when tools are present', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-5.6-luna', base_url: '', api_key_env: '' },
+      tools: { builtin: { Echo: 'allow' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    registerTool({ name: 'Echo', description: 'echo', parameters: {}, execute: async (input: any) => input.msg })
+    const memory = new FsMemoryProvider(tmp, session)
+    const create = vi.fn()
+      .mockReturnValueOnce(makeStream([{ choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } }]))
+    const openai = { chat: { completions: { create } } }
+    await runAgentLoop('hi', profile, session, { profile, session, workingDir: tmp, memory, skills: [] } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+    }, openai as any)
+    expect(create.mock.calls[0][0]).toMatchObject({ reasoning_effort: 'none' })
+  })
+
+  it('omits reasoning_effort for non-reasoning models', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Echo: 'allow' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    registerTool({ name: 'Echo', description: 'echo', parameters: {}, execute: async (input: any) => input.msg })
+    const memory = new FsMemoryProvider(tmp, session)
+    const create = vi.fn()
+      .mockReturnValueOnce(makeStream([{ choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } }]))
+    const openai = { chat: { completions: { create } } }
+    await runAgentLoop('hi', profile, session, { profile, session, workingDir: tmp, memory, skills: [] } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+    }, openai as any)
+    expect(create.mock.calls[0][0]).not.toHaveProperty('reasoning_effort')
+  })
+
   it('streams tokens and fires onSessionEnd when no tool calls', async () => {
     const session = createSession('test', 'testuser')
     const profile: any = {

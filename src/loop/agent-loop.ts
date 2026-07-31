@@ -4,11 +4,24 @@ import { Session } from '../session/types.js'
 import { ToolContext, AgentLoopEvents } from '../tools/types.js'
 import { getAllTools, toOpenAITools } from '../tools/registry.js'
 import { getMcpToolDefinitions } from '../mcp/client.js'
-import { getAcl, getMcpAcl } from '../tools/acl.js'
+import { resolveAcl } from '../tools/acl.js'
+import { classify } from '../safety/classifier.js'
+import { classifyStatic } from '../safety/rules.js'
 import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
-import { maybeCondenseMessages } from './context-manager.js'
+import { maybeCondenseMessages, estimateTokens } from './context-manager.js'
 import { withRetry } from './retry.js'
+import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
+
+export { estimateCost }
+
+// Ceiling on a single tool result's contribution to session.messages. Several
+// tools (Read, ExecuteCode, Grep) have no output cap of their own, and a
+// single oversized result can exceed the provider's per-message size limit
+// (observed: a 20MB tool result 400'd against a 10MB ceiling). Full,
+// untruncated output still lands in session.tool_calls for telemetry/replay —
+// only what goes to the LLM is capped.
+const MAX_TOOL_RESULT_CHARS = 100_000
 
 interface ToolResult {
   tool_call_id: string
@@ -42,11 +55,17 @@ export async function runAgentLoop(
 
     await maybeCondenseMessages(session, profile, openai)
 
-    const stream = await withRetry(
+    // Reasoning-family models (o-series, GPT-5.4+) 400 on /v1/chat/completions
+    // when function tools are attached unless reasoning_effort is 'none' —
+    // see requiresReasoningEffortNone for the affected models.
+    const needsReasoningEffortNone = openaiTools.length > 0 && requiresReasoningEffortNone(profile.model.id)
+
+    const stream = await withRetry<any>(
       () => (openai.chat.completions as any).create({
         model: profile.model.id,
         messages: session.messages as OpenAI.ChatCompletionMessageParam[],
         tools: openaiTools.length > 0 ? openaiTools : undefined,
+        ...(needsReasoningEffortNone ? { reasoning_effort: 'none' } : {}),
         stream: true,
         stream_options: { include_usage: true },
       }, { signal }),
@@ -92,7 +111,7 @@ export async function runAgentLoop(
     session.usage.input += tokensIn
     session.usage.output += tokensOut
     session.usage.cost_usd += cost
-    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd)
+    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(session.messages))
     logEvent({
       session: session.id, profile: profile.name, kind: 'llm',
       model: profile.model.id, tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost,
@@ -171,6 +190,27 @@ export async function runAgentLoop(
     const toolResults: ToolResult[] = new Array(toolCalls.length)
     let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number }> = []
 
+    const parsedInputs: Record<string, unknown>[] = toolCalls.map(tc => {
+      try { return JSON.parse(tc.args || '{}') } catch { return {} }
+    })
+
+    const classifications = new Map<number, { risk: 'safe' | 'caution' | 'danger'; reason: string; source: string }>()
+    if ((context.approvalMode ?? 'danger') === 'danger') {
+      await Promise.all(toolCalls.map(async (tc, idx) => {
+        const isMcp = tc.name.includes('__')
+        const serverName = isMcp ? tc.name.split('__', 2)[0] : undefined
+        const baseName = isMcp ? tc.name.split('__', 2)[1] : tc.name
+        // Skip classification for calls the profile already denies outright —
+        // resolveAcl will short-circuit to 'deny' below regardless of risk.
+        if (resolveAcl(baseName, profile, 'danger', serverName) === 'deny') return
+        const verdict = context.openai
+          ? await classify(tc.name, parsedInputs[idx], context)
+          : { ...classifyStatic(tc.name, parsedInputs[idx], context.workingDir), source: 'static' as const }
+        classifications.set(idx, verdict)
+        if (verdict.source === 'model') events.onSafetyNotice?.(context.profile.safety?.classifier_model_id ?? context.profile.model.id)
+      }))
+    }
+
     const flushBatch = async () => {
       if (pendingBatch.length === 0) return
       // Fire onToolStart in LLM-specified order before parallel execution
@@ -192,12 +232,19 @@ export async function runAgentLoop(
 
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i]
-      let input: Record<string, unknown>
-      try { input = JSON.parse(tc.args || '{}') } catch { input = {} }
+      const input = parsedInputs[i]
       const isMcp = tc.name.includes('__')
-      const acl = isMcp
-        ? getMcpAcl(tc.name.split('__', 2)[0], tc.name.split('__', 2)[1], profile)
-        : getAcl(tc.name, profile)
+      const serverName = isMcp ? tc.name.split('__', 2)[0] : undefined
+      let acl = resolveAcl(isMcp ? tc.name.split('__', 2)[1] : tc.name, profile, context.approvalMode ?? 'danger', serverName)
+      let risk: 'safe' | 'caution' | 'danger' | undefined
+      let reason: string | undefined
+      if ((context.approvalMode ?? 'danger') === 'danger' && acl !== 'deny') {
+        const verdict = classifications.get(i)
+        if (!verdict) throw new Error(`internal: missing danger-mode classification for tool call "${tc.name}"`)
+        risk = verdict.risk
+        reason = verdict.reason
+        acl = verdict.risk === 'danger' ? 'prompt' : 'allow'
+      }
 
       if (acl === 'deny') {
         await flushBatch()
@@ -208,7 +255,7 @@ export async function runAgentLoop(
         }
       } else if (acl === 'prompt') {
         await flushBatch()
-        const approved = await events.onToolPrompt(tc.id, tc.name, input)
+        const approved = await events.onToolPrompt(tc.id, tc.name, input, risk, reason)
         if (!approved) {
           toolResults[i] = {
             tool_call_id: tc.id,
@@ -230,40 +277,15 @@ export async function runAgentLoop(
 
     // Push results in original LLM-specified order
     for (const r of toolResults) {
+      const content = r.content.length > MAX_TOOL_RESULT_CHARS
+        ? r.content.slice(0, MAX_TOOL_RESULT_CHARS) + `\n[truncated ${r.content.length - MAX_TOOL_RESULT_CHARS} chars]`
+        : r.content
       session.messages.push({
-        role: 'tool', tool_call_id: r.tool_call_id, content: r.content,
+        role: 'tool', tool_call_id: r.tool_call_id, content,
       } as any)
       session.tool_calls.push({
         name: r.name, input: r.input, result: r.content, ok: r.ok, ts: new Date().toISOString(),
       })
     }
   }
-}
-
-// USD per token. Source: provider pricing pages (as of 2026-06).
-const MODEL_PRICES: Record<string, { input: number; output: number }> = {
-  // Anthropic Claude 4.x
-  'claude-opus-4-8':           { input: 0.000015,  output: 0.000075  },
-  'claude-sonnet-4-6':         { input: 0.000003,  output: 0.000015  },
-  'claude-haiku-4-5-20251001': { input: 0.0000008, output: 0.000004  },
-  // Anthropic Claude 3.x
-  'claude-3-5-sonnet-20241022':{ input: 0.000003,  output: 0.000015  },
-  'claude-3-haiku-20240307':   { input: 0.00000025,output: 0.00000125},
-  // OpenAI GPT-4o family
-  'gpt-4o':                    { input: 0.0000025, output: 0.00001   },
-  'gpt-4o-mini':               { input: 0.00000015,output: 0.0000006 },
-  'gpt-5.4-mini-2026-03-17':   { input: 0.00000015,output: 0.0000006 },
-  'o3':                        { input: 0.00001,   output: 0.00004   },
-  'o4-mini':                   { input: 0.0000011, output: 0.0000044 },
-}
-
-const FALLBACK_PRICES = { input: 0.000003, output: 0.000015 }
-
-export function estimateCost(model: string, tokensIn: number, tokensOut: number): number {
-  const prices = MODEL_PRICES[model]
-  if (!prices) {
-    console.warn(`[cost] unknown model "${model}" — using fallback pricing`)
-  }
-  const { input, output } = prices ?? FALLBACK_PRICES
-  return tokensIn * input + tokensOut * output
 }

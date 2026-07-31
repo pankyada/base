@@ -2,57 +2,208 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Turn is one user message or one agent response.
+// Turn is one user message, agent response, local command result, memory
+// write, or task run.
 type Turn struct {
-	Role     string // "user" | "agent"
-	Text     string // user content, or streamed agent text
-	Time     string
-	Sections []Section // agent only
-	Tokens   int       // agent only, for the footer
-	Elapsed  string    // agent only, for the footer
+	Role           string // "user" | "agent" | "local" | "memory" | "task"
+	TaskID         string // task turns only — the task whose output Text mirrors
+	Text           string // user content, or streamed agent text
+	Time           string
+	Sections       []Section // agent only
+	ExpandedGroups map[string]bool
+	ExpandedProse  map[string]bool // agent only, keyed by prose section index
+	Tokens         int             // agent only, for the footer
+	Cost           float64         // agent only, for the footer
+	Elapsed        string          // agent only, for the footer
+	Started        time.Time       // agent only, for elapsed-time tracking
+	Pulse          int             // completion pulse frames remaining
+	Revealed       int             // agent only, runes of Text revealed so far (typewriter)
 }
 
 // Transcript renders the full conversation.
 type Transcript struct {
 	Turns       []Turn
 	AllExpanded bool // ^O toggle
+	Motion      bool
+	Density     string // "full" | "normal" | "compact" — prose fold aggressiveness
 }
 
 func (tr Transcript) Render(width, frame int) string {
+	content, _ := tr.RenderWithHitMap(width, frame)
+	return content
+}
+
+// HitRow records the interactive transcript row for a group header or item.
+// Group keys are stable across render passes; item pointers refer to the
+// source Section values in Turn.Sections.
+type HitRow struct {
+	Y          int
+	TurnIndex  int
+	GroupKey   string
+	Item       *Section
+	IsProse    bool
+	ProseIndex int
+}
+
+// RenderWithHitMap renders the transcript and records rows that can be
+// toggled with the mouse. Rows are relative to the transcript content.
+func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 	var blocks []string
-	for _, t := range tr.Turns {
+	var hits []HitRow
+	row := 0
+	for turnIndex, t := range tr.Turns {
 		if t.Role == "user" {
-			header := StDim.Render("YOU › " + t.Time)
-			body := lipgloss.NewStyle().
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderLeft(true).
-				BorderForeground(ColInfo).
-				PaddingLeft(1).
-				Render(StText.Render(t.Text))
-			blocks = append(blocks, lipgloss.JoinVertical(lipgloss.Left, header, body))
+			rendered := userBubble(t, width)
+			blocks = append(blocks, rendered)
+			row += lipgloss.Height(rendered) + 1
+			continue
+		}
+		if t.Role == "local" {
+			rendered := StDim.Render("LOCAL") + "\n" + StText.Render(t.Text)
+			blocks = append(blocks, rendered)
+			row += lipgloss.Height(rendered) + 1
+			continue
+		}
+		if t.Role == "task" {
+			// Task blocks are pre-rendered by the model each frame so they
+			// track their process's live output.
+			blocks = append(blocks, t.Text)
+			row += lipgloss.Height(t.Text) + 1
+			continue
+		}
+		if t.Role == "memory" {
+			rendered := StOK.Render("REMEMBERED") + StDim.Render(" · "+t.Time) + "\n" + StText.Render(t.Text)
+			blocks = append(blocks, rendered)
+			row += lipgloss.Height(rendered) + 1
 			continue
 		}
 		// agent
 		header := StDim.Render("HARNESS ◆ " + t.Time)
 		parts := []string{header}
-		for _, s := range t.Sections {
-			parts = append(parts, s.Render(width, frame, tr.AllExpanded))
+		row += lipgloss.Height(header)
+		sectionPtrs := make([]*Section, len(t.Sections))
+		for i := range t.Sections {
+			sectionPtrs[i] = &t.Sections[i]
+		}
+		for _, entry := range BuildTimeline(sectionPtrs, t.ExpandedGroups) {
+			if entry.Group != nil {
+				hits = append(hits, HitRow{Y: row, TurnIndex: turnIndex, GroupKey: entry.Group.Key})
+				rendered := entry.Group.Render(width, frame, tr.AllExpanded)
+				itemRow := row + 1
+				forceOpen := entry.Group.Expanded || tr.AllExpanded
+				for _, item := range entry.Group.Items {
+					hits = append(hits, HitRow{Y: itemRow, TurnIndex: turnIndex, Item: item})
+					itemRow += lipgloss.Height(item.Render(maxInt(0, width-2), frame, forceOpen))
+				}
+				parts = append(parts, rendered)
+				row += lipgloss.Height(rendered)
+				continue
+			}
+			rendered := entry.Standalone.Render(width, frame, true)
+			parts = append(parts, rendered)
+			row += lipgloss.Height(rendered)
+		}
+		// Between send and the first token or tool call there is otherwise
+		// nothing on screen — this is what tells the user the agent is
+		// actually working, not stalled.
+		if t.Text == "" && len(t.Sections) == 0 && t.Elapsed == "" && !t.Started.IsZero() {
+			glyph := thinkingSpinChar(frame)
+			elapsed := fmt.Sprintf("%.0fs", time.Since(t.Started).Seconds())
+			parts = append(parts, StAccent.Render(glyph)+" "+StDim.Render("thinking… "+elapsed))
+			row++
 		}
 		if t.Text != "" {
-			parts = append(parts, StText.Render(t.Text))
+			visible := t.Text
+			if tr.Motion && t.Elapsed == "" {
+				runes := []rune(t.Text)
+				if t.Revealed < len(runes) {
+					visible = string(runes[:maxInt(0, t.Revealed)])
+				}
+			}
+			// Fold only once a turn has finished streaming — collapsing
+			// prose while the user is still reading it stream in would be
+			// jarring — and only when density mode + section count call
+			// for it. Short or in-progress replies render exactly as
+			// before: no fold, no lead/section split at all.
+			lead, sections := "", []ProseSection(nil)
+			if tr.Density != "full" && t.Elapsed != "" {
+				lead, sections = SplitProse(visible)
+			}
+			if len(sections) < foldThreshold(tr.Density) {
+				lead, sections = visible, nil
+			}
+			addedAny := false
+			if lead != "" {
+				body := renderAgentText(lead, width)
+				parts = append(parts, body)
+				row += lipgloss.Height(body)
+				addedAny = true
+			}
+			for si, sec := range sections {
+				key := fmt.Sprintf("%d", si)
+				expanded := tr.AllExpanded || (t.ExpandedProse != nil && t.ExpandedProse[key])
+				chevron := "▸"
+				if expanded {
+					chevron = "▾"
+				}
+				headerRow := StAccentB.Render(chevron+" "+sec.Header) + StDim.Render(fmt.Sprintf(" · %d lines", sec.Lines))
+				hits = append(hits, HitRow{Y: row, TurnIndex: turnIndex, IsProse: true, ProseIndex: si})
+				parts = append(parts, headerRow)
+				row += lipgloss.Height(headerRow)
+				addedAny = true
+				if !expanded {
+					continue
+				}
+				// The chevron row already carries the header — drop it from
+				// the expanded body so it isn't rendered twice.
+				bodyOnly := ""
+				if rawLines := strings.SplitN(sec.Raw, "\n", 2); len(rawLines) > 1 {
+					bodyOnly = rawLines[1]
+				}
+				expandedBody := lipgloss.NewStyle().
+					Foreground(ColDim).
+					BorderStyle(lipgloss.NormalBorder()).
+					BorderLeft(true).
+					BorderForeground(ColBorder).
+					MarginLeft(1).
+					PaddingLeft(1).
+					Render(renderAgentText(bodyOnly, maxInt(4, width-4)))
+				parts = append(parts, expandedBody)
+				row += lipgloss.Height(expandedBody)
+			}
+			if tr.Motion && t.Elapsed == "" && frame%2 == 0 {
+				cursor := StAccent.Render("▌")
+				if addedAny {
+					parts[len(parts)-1] += cursor
+				} else {
+					parts = append(parts, cursor)
+					row++
+				}
+			}
 		}
-		if t.Tokens > 0 || t.Elapsed != "" {
-			footer := StFaint.Render(fmt.Sprintf("▌ %d tools · %d tok · %s",
-				len(t.Sections), t.Tokens, t.Elapsed))
+		if t.Tokens > 0 || t.Elapsed != "" || t.Cost > 0 {
+			footerStyle := StFaint
+			if t.Pulse >= 3 {
+				footerStyle = StAccent
+			} else if t.Pulse > 0 {
+				footerStyle = StOK
+			}
+			footer := footerStyle.Render(fmt.Sprintf("▌ %d tools · %d tok · %s · $%.4f",
+				len(t.Sections), t.Tokens, t.Elapsed, t.Cost))
 			parts = append(parts, footer)
+			row += lipgloss.Height(footer)
 		}
-		blocks = append(blocks, lipgloss.JoinVertical(lipgloss.Left, parts...))
+		rendered := lipgloss.JoinVertical(lipgloss.Left, parts...)
+		blocks = append(blocks, rendered)
+		row++
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, spread(blocks)...)
+	return lipgloss.JoinVertical(lipgloss.Left, spread(blocks)...), hits
 }
 
 // spread inserts a blank line between blocks.

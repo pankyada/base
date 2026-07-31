@@ -1,0 +1,56 @@
+{
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:child_process": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:child_process",
+    "files": [
+      "static/chunks/_3275.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:crypto": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:crypto",
+    "files": [
+      "static/chunks/_88ff.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:fs": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:fs",
+    "files": [
+      "static/chunks/_f722.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:fs/promises": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:fs/promises",
+    "files": [
+      "static/chunks/_287e.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:path": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:path",
+    "files": [
+      "static/chunks/_eaa3.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:url": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:url",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_pnpm_next_15_5_18__babel_core_7_29_7_react-dom_18_3_1_react_1-321f6b.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:vm": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> node:vm",
+    "files": [
+      "static/chunks/_de73.js"
+    ]
+  },
+  "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> ws": {
+    "id": "../node_modules/.pnpm/pyodide@0.29.4/node_modules/pyodide/pyodide.mjs -> ws",
+    "files": [
+      "static/chunks/_1cb3.js"
+    ]
+  },
+  "components/HarnessPython.tsx -> pyodide": {
+    "id": "components/HarnessPython.tsx -> pyodide",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_pnpm_pyodide_0_29_4_node_modules_pyodide_pyodide_mjs.js"
+    ]
+  }
+}

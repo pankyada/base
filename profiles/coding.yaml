@@ -34,3 +34,8 @@ hooks:
 improvement:
   enabled: true
   mine_skills_every_n_sessions: 10
+# Optional ambiguous-call classifier. Static danger rules always run first.
+safety:
+  enabled: true
+  timeout_ms: 3000
+  cache_ttl_hours: 168

@@ -1,9 +1,15 @@
 import OpenAI from 'openai'
 import { Session } from '../session/types.js'
 import { Profile } from '../profiles/schema.js'
+import { listModels } from '../models/registry.js'
 
-function estimateTokens(messages: unknown[]): number {
+export function estimateTokens(messages: unknown[]): number {
   return Math.ceil(JSON.stringify(messages).length / 4)
+}
+
+export function contextWindowForProfile(profile: Profile): number {
+  if (profile.context_window?.max_tokens) return profile.context_window.max_tokens
+  return listModels(profile).find(model => model.id === profile.model.id)?.context_window ?? Infinity
 }
 
 function isAnchor(msg: unknown): boolean {
@@ -16,10 +22,12 @@ function isAnchor(msg: unknown): boolean {
 export async function maybeCondenseMessages(
   session: Session,
   profile: Profile,
-  openai: OpenAI
-): Promise<void> {
-  const maxTokens = profile.context_window?.max_tokens ?? Infinity
-  if (estimateTokens(session.messages) <= maxTokens) return
+  openai: OpenAI,
+  force = false,
+): Promise<number> {
+  const maxTokens = contextWindowForProfile(profile)
+  const before = estimateTokens(session.messages)
+  if (!force && before <= maxTokens) return 0
 
   const messages = session.messages as any[]
   const keepSet = new Set<number>()
@@ -66,7 +74,7 @@ export async function maybeCondenseMessages(
   }
 
   const summarisable = messages.filter((_, i) => !keepSet.has(i))
-  if (summarisable.length === 0) return
+  if (summarisable.length === 0) return 0
 
   const modelId = profile.context_window?.model_id ?? profile.model.id
   let summary: string
@@ -81,11 +89,12 @@ export async function maybeCondenseMessages(
     })
     summary = resp.choices[0].message.content ?? 'No summary available.'
   } catch {
-    return // leave messages unchanged on failure
+    return 0 // leave messages unchanged on failure
   }
 
   const summaryMsg = { role: 'user', content: `[Earlier conversation summary: ${summary}]` }
   const kept = messages.filter((_, i) => keepSet.has(i))
   // system message first, summary second, then rest of kept messages
   session.messages = [kept[0], summaryMsg, ...kept.slice(1)] as unknown[]
+  return Math.max(0, before - estimateTokens(session.messages))
 }

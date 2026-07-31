@@ -12,10 +12,10 @@ case "${OS}" in
   Darwin)
     case "${ARCH}" in
       arm64)
-        SUFFIX="macos-arm64"
+        SUFFIX="darwin-arm64"
         ;;
       x86_64)
-        SUFFIX="macos-x64"
+        SUFFIX="darwin-amd64"
         ;;
       *)
         echo "Unsupported macOS architecture: ${ARCH}"
@@ -26,7 +26,7 @@ case "${OS}" in
   Linux)
     case "${ARCH}" in
       x86_64)
-        SUFFIX="linux-x64"
+        SUFFIX="linux-amd64"
         ;;
       *)
         echo "Unsupported Linux architecture: ${ARCH}"

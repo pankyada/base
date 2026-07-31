@@ -44,8 +44,8 @@ jobs:
             bin/harness-server-macos-arm64 \
             bin/harness-server-macos-x64 \
             bin/harness-server-linux-x64 \
-            bin/harness-tui-macos-arm64 \
-            bin/harness-tui-macos-x64 \
-            bin/harness-tui-linux-x64 \
+            bin/harness-tui-darwin-arm64 \
+            bin/harness-tui-darwin-amd64 \
+            bin/harness-tui-linux-amd64 \
             --title "${{ github.ref_name }}" \
             --generate-notes

@@ -5,6 +5,30 @@ export type AclValue = 'allow' | 'prompt' | 'deny'
 
 export type InputRequestKind = 'text' | 'select' | 'multi_select'
 
+export type ApprovalMode = 'strict' | 'bash' | 'danger' | 'yolo'
+export type RiskLevel = 'safe' | 'caution' | 'danger'
+
+export interface ModelInfo {
+  id: string
+  label: string
+  provider: string
+  base_url: string
+  context_window: number
+  input_price: number
+  output_price: number
+  tags: string[]
+  available: boolean
+  reason?: string
+}
+
+export interface SkillSummary {
+  name: string
+  description: string
+  path: string
+  source: 'proposed' | 'installed'
+  mtime: string
+}
+
 export interface TodoItem {
   id: string
   content: string
@@ -16,7 +40,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety'
   name?: string
   server?: string
   model?: string
@@ -41,16 +65,26 @@ export type ClientMessage =
   | { type: 'project_list' }
   | { type: 'project_assign'; sessionId: string; projectId: string }
   | { type: 'session_list'; projectId?: string }
+  | { type: 'models_list' }
+  | { type: 'set_model'; model: string }
+  | { type: 'set_approval_mode'; mode: ApprovalMode }
+  | { type: 'skills_list' }
+  | { type: 'skill_get'; name: string; source: 'proposed' | 'installed' }
+  | { type: 'skill_save'; name: string; content: string }
+  | { type: 'skill_promote'; name: string }
+  | { type: 'skill_discard'; name: string }
+  | { type: 'skills_mine' }
+  | { type: 'compact' }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
   | { type: 'tool_start'; name: string; input: Record<string, unknown> }
   | { type: 'tool_end'; name: string; result: string }
-  | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'session_ready'; sessionId: string; profile: string; yolo: boolean }
+  | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string }
+  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; yolo: boolean }
   | { type: 'session_end'; sessionId: string }
   | { type: 'session_resumed'; sessionId: string }
-  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number }
+  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number }
   | { type: 'error'; message: string }
   | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[] }
   | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[] }
@@ -59,6 +93,13 @@ export type ServerMessage =
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
+  | { type: 'models'; models: ModelInfo[]; current: string }
+  | { type: 'model_changed'; model: string }
+  | { type: 'approval_mode_changed'; mode: ApprovalMode }
+  | { type: 'skills'; proposed: SkillSummary[]; installed: SkillSummary[] }
+  | { type: 'skill_content'; name: string; source: string; path: string; content: string }
+  | { type: 'skill_result'; action: 'saved' | 'promoted' | 'discarded'; name: string; path?: string }
+  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 
