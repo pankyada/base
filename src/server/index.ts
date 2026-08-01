@@ -25,6 +25,8 @@ import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { listProposed, listInstalled, readSkill, writeSkill, promoteSkill, discardSkill } from '../skills/manage.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
+import { runWorkflow } from '../workflow/runner.js'
+import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { listModels } from '../models/registry.js'
 import { contextWindowForProfile, estimateTokens, maybeCondenseMessages } from '../loop/context-manager.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
@@ -59,6 +61,10 @@ async function main() {
     : resolve(homedir(), '.harness', 'profiles', 'coding.yaml')
 
   const profile = loadProfile(profilePath)
+  // One-time sweep of the legacy profile-scoped label bucket (pre-dates
+  // per-user/per-project scoping below). Per-session sweeps below are what
+  // actually keep deferred labels current across a long-running server.
+  void sweepDeferredLabels(profile).catch(() => {})
 
   const runStore = new RunStore()
   const abortRegistry = new Map<string, AbortController>()
@@ -208,6 +214,10 @@ async function main() {
             ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
             : new FsMemoryProvider(connectionProfile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
+          // Runs per hello, not just once at process boot — the server is
+          // long-running and stays up across many sessions, so this is what
+          // actually keeps deferred (human-edit-churn) labels current.
+          void sweepDeferredLabels(session.user, session.project).catch(() => {})
         }
         send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false })
         send({ type: 'approval_mode_changed', mode: approvalMode })
@@ -420,6 +430,7 @@ async function main() {
             pendingCodeExecutions.set(id, resolve)
             send({ type: 'code_execute', id, code, language, data })
           }),
+          onStage: (stage, intensity, tier, model, state, cost_usd) => send({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
         }
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
@@ -433,7 +444,11 @@ async function main() {
 
         const runSignal = abortController.signal
         try {
-          await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, runSignal)
+          if (connectionProfile.workflow?.enabled) {
+            await runWorkflow(msg.content, connectionProfile, session, context, events, openai, runSignal)
+          } else {
+            await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, runSignal)
+          }
           if (runSignal.aborted) {
             saveSession(session)
             send({ type: 'session_end', sessionId: session.id })

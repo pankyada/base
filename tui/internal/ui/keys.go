@@ -21,7 +21,6 @@ type KeyMap struct {
 	HistoryUp        key.Binding
 	HistoryDown      key.Binding
 	AcceptCompletion key.Binding
-	Help             key.Binding
 }
 
 var DefaultKeyMap = NewKeyMap()
@@ -42,7 +41,6 @@ func NewKeyMap() KeyMap {
 		HistoryUp:        key.NewBinding(key.WithKeys("up"), key.WithHelp("↑/↓", "history")),
 		HistoryDown:      key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "history")),
 		AcceptCompletion: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "complete"), key.WithDisabled()),
-		Help:             key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "keys")),
 	}
 }
 
@@ -53,12 +51,12 @@ func (m *KeyMap) SetCompletionOpen(open bool) {
 }
 
 func (m KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{m.Send, m.Overlay, m.Rail, m.Help}
+	return []key.Binding{m.Send, m.Overlay, m.Rail}
 }
 
 func (m KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{m.Send, m.Newline, m.Cancel, m.Quit, m.Help},
+		{m.Send, m.Newline, m.Cancel, m.Quit},
 		{m.Overlay, m.Rail, m.ExpandAll},
 		{m.PageUp, m.PageDown, m.HalfPageUp, m.HalfPageDown, m.HistoryUp, m.HistoryDown},
 		{m.AcceptCompletion},

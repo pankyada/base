@@ -16,11 +16,21 @@ const taskTailLines = 14
 // maps are only meaningful when it is.
 func (m Model) railShown() bool { return m.railVisible && m.width >= 100 }
 
+// pressFlashFrames is how many spinner ticks (100ms each) a clicked button
+// stays in its bright, pressed state before reverting — long enough to read
+// as a deliberate flash, short enough that it never lags behind the action
+// it is confirming.
+const pressFlashFrames = 3
+
 // clickRail resolves a click inside the rail against the hit map recorded by
-// the most recent reflow.
+// the most recent reflow. Every hit flashes before its action runs, so a
+// click always gets visible acknowledgment even when the action itself (a
+// notice, a state flip) lands in a part of the screen the eye isn't on yet.
 func (m Model) clickRail(x, y int) (tea.Model, tea.Cmd) {
 	for _, hit := range m.railHits {
 		if hit.Y == y && x >= hit.X1 && x < hit.X2 {
+			m.pressedAction = hit.Action
+			m.pressedAt = m.frame
 			return m.railAction(hit.Action)
 		}
 	}
@@ -30,6 +40,15 @@ func (m Model) clickRail(x, y int) (tea.Model, tea.Cmd) {
 // railAction runs one rail button. Actions are strings so the rail can declare
 // its own buttons without the model needing an enum per section.
 func (m Model) railAction(action string) (tea.Model, tea.Cmd) {
+	if section, ok := strings.CutPrefix(action, "fold:"); ok {
+		if m.prefs.RailSections == nil {
+			m.prefs.RailSections = map[string]bool{}
+		}
+		m.prefs.RailSections[section] = !m.prefs.RailSections[section]
+		_ = m.prefs.Save("")
+		m.reflow()
+		return m, nil
+	}
 	if taskID, ok := strings.CutPrefix(action, "task:"); ok {
 		cmd := m.toggleTask(taskID)
 		m.reflow()

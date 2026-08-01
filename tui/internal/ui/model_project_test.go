@@ -31,7 +31,7 @@ func clickRailAction(t *testing.T, m Model, action string) (Model, tea.Cmd) {
 		if hit.Action != action {
 			continue
 		}
-		topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, m.running, m.frame, time.Now(), m.width))
+		topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, time.Now(), m.width))
 		updated, cmd := m.Update(tea.MouseMsg{
 			X:      m.width - railWidth + railBorder + railPadding + hit.X1,
 			Y:      topBarHeight + hit.Y,

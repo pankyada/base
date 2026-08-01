@@ -3,9 +3,24 @@ import * as readline from 'readline'
 import { userInfo } from 'os'
 import { ClientMessage, ServerMessage } from '../types.js'
 import pkg from '../../package.json' with { type: 'json' }
+import { routingStats } from '../analysis/cli.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(`harness ${pkg.version}`)
+  process.exit(0)
+}
+
+if (process.argv[2] === 'stats' && process.argv[3] === 'routing') {
+  try {
+    const flagValue = (flag: string) => { const index = process.argv.indexOf(flag); return index >= 0 ? process.argv[index + 1] : undefined }
+    const sinceArg = flagValue('--since')
+    const stageArg = flagValue('--stage')
+    const classArg = flagValue('--class')
+    console.log(routingStats({ since: sinceArg && !sinceArg.startsWith('--') ? new Date(sinceArg) : undefined, stage: stageArg && !stageArg.startsWith('--') ? stageArg : undefined, taskClass: classArg && !classArg.startsWith('--') ? classArg : undefined, shadow: process.argv.includes('--shadow') }))
+  } catch (error: any) {
+    console.error(error.message)
+    process.exitCode = 1
+  }
   process.exit(0)
 }
 

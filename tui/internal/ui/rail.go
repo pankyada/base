@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"harness-tui/internal/protocol"
 )
 
@@ -41,11 +42,10 @@ type TaskStatus struct {
 
 // RailInput is everything the rail draws. Passing a struct keeps the call site
 // readable as the panel grows sections.
+// Profile, model, trust and session id are deliberately absent: they are
+// static for the session and already shown in the topbar and status bar, so
+// a rail copy would be a third render of the same four facts.
 type RailInput struct {
-	Profile       string
-	Model         string
-	Approval      string
-	Session       string
 	Running       bool
 	ActiveTool    string
 	ActiveElapsed string
@@ -63,8 +63,17 @@ type RailInput struct {
 	TaskState     map[string]TaskStatus
 	TasksDetected bool
 
-	Height int
-	Frame  int
+	// Pressed is the action currently mid click-flash — see pressFlashFrames
+	// in model_project.go. Empty when nothing was clicked recently.
+	Pressed string
+
+	// Expanded tracks which sections have their secondary actions unfolded,
+	// keyed by section name ("git", "tasks").
+	Expanded map[string]bool
+
+	Height     int
+	Frame      int
+	StageCosts map[string]float64
 }
 
 // railView renders the right-hand panel as clearly bounded sections and
@@ -79,18 +88,26 @@ func railView(in RailInput) (string, []RailHit) {
 		hits  []RailHit // Y relative to the block
 	}
 	blocks := []block{}
+	// A section that has nothing to say is not rendered at all. "TODOS 0 /
+	// none yet" is four wasted rows that push real controls off the panel;
+	// the section reappears the moment it has content.
 	appendBlock := func(lines []string, hits []RailHit) {
+		if len(lines) == 0 {
+			return
+		}
 		blocks = append(blocks, block{lines: lines, hits: hits})
 	}
 
+	// Ordered in three bands: what the agent is doing now, what you can drive,
+	// then what the session has produced.
 	appendBlock(railActiveSection(in, inner), nil)
+	appendBlock(railWorkflowSection(in.StageCosts, inner), nil)
+	appendBlock(railTodosSection(in.Todos, inner), nil)
 	taskLines, taskHits := railTasksSection(in, inner)
 	appendBlock(taskLines, taskHits)
 	gitLines, gitHits := railGitSection(in, inner)
 	appendBlock(gitLines, gitHits)
-	appendBlock(railTodosSection(in.Todos, inner), nil)
 	appendBlock(railContextSection(in.ContextTokens, in.ContextWindow, inner), nil)
-	appendBlock(railSessionSection(in, inner), nil)
 	appendBlock(railArtifactsSection(in.Artifacts, inner), nil)
 
 	// Fill the fixed height in priority order. A section that cannot fit whole
@@ -144,6 +161,22 @@ func railView(in RailInput) (string, []RailHit) {
 	return rendered, hits
 }
 
+func railWorkflowSection(costs map[string]float64, inner int) []string {
+	if len(costs) == 0 {
+		return nil
+	}
+	rows := []string{sectionHeader("WORKFLOW", inner)}
+	total := 0.0
+	for _, stage := range []string{"recon", "plan", "design", "build", "verify", "review"} {
+		if cost, ok := costs[stage]; ok {
+			rows = append(rows, StDim.Render(fmt.Sprintf("%-8s $%.4f", stage, cost)))
+			total += cost
+		}
+	}
+	rows = append(rows, StAccent.Render(fmt.Sprintf("total    $%.4f", total)))
+	return rows
+}
+
 // clampWidth truncates a rendered, already-styled string to a cell width.
 // The plain `truncate` helper counts runes and would cut an ANSI escape in
 // half, silently swallowing everything styled after it.
@@ -151,40 +184,30 @@ func clampWidth(text string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(maxInt(0, width)).Inline(true).Render(text)
 }
 
+// railActiveSection renders only while something is running. When idle the
+// topbar/statusbar READY badge already answers "is it working", so a whole
+// section repeating it in words earns nothing.
 func railActiveSection(in RailInput, inner int) []string {
-	lines := []string{sectionHeader("active", inner)}
-	if in.Running {
-		tool := in.ActiveTool
-		if tool == "" {
-			tool = "thinking"
-		}
-		lines = append(lines,
-			StAccent.Render(thinkingSpinChar(in.Frame))+" "+StText.Render(truncate(tool, maxInt(1, inner-2))),
-			StDim.Render(pad("elapsed", 8)+in.ActiveElapsed),
-			StDim.Render(pad("rate", 8)+in.Spark.View()),
-		)
-		return lines
+	if !in.Running {
+		return nil
 	}
-	dot := lipgloss.NewStyle().Foreground(breathe(currentTheme.Faint, currentTheme.Dim, in.Frame, 50)).Render("○")
-	return append(lines, dot+StFaint.Render(" idle — nothing running"))
-}
-
-func railSessionSection(in RailInput, inner int) []string {
-	kv := func(label, value string) string {
-		return StFaint.Render(pad(label, 8)) + StText.Render(truncate(value, maxInt(1, inner-8)))
+	tool := in.ActiveTool
+	if tool == "" {
+		tool = "thinking"
 	}
-	lines := []string{sectionHeader("session", inner), kv("profile", in.Profile), kv("model", in.Model), kv("trust", in.Approval)}
-	if in.Session != "" {
-		lines = append(lines, kv("id", shortID(in.Session)))
+	return []string{
+		sectionHeader("active", inner),
+		StAccent.Render(thinkingSpinChar(in.Frame)) + " " + StText.Render(truncate(tool, maxInt(1, inner-2))),
+		StDim.Render(pad("elapsed", 8) + in.ActiveElapsed),
+		StDim.Render(pad("rate", 8) + in.Spark.View()),
 	}
-	return lines
 }
 
 func railTodosSection(todos []protocol.TodoItem, inner int) []string {
-	header := sectionHeader(fmt.Sprintf("todos %d", len(todos)), inner)
 	if len(todos) == 0 {
-		return []string{header, StFaint.Render("none yet")}
+		return nil
 	}
+	header := sectionHeader(fmt.Sprintf("todos %d", len(todos)), inner)
 	lines := []string{header}
 	for index, todo := range todos {
 		if index == railListCap {
@@ -197,6 +220,11 @@ func railTodosSection(todos []protocol.TodoItem, inner int) []string {
 }
 
 func railContextSection(contextTokens, contextWindow, inner int) []string {
+	// Before the first turn the window is unknown and the gauge can only say
+	// "context —", which is noise. It appears once there is a real number.
+	if contextWindow <= 0 {
+		return nil
+	}
 	// contextGauge appends " NN% · used/window" after the bar, so the bar only
 	// gets what is left — otherwise the numbers are clamped off the edge.
 	const gaugeLabel = 21
@@ -204,10 +232,10 @@ func railContextSection(contextTokens, contextWindow, inner int) []string {
 }
 
 func railArtifactsSection(artifacts []protocol.Artifact, inner int) []string {
-	header := sectionHeader(fmt.Sprintf("artifacts %d", len(artifacts)), inner)
 	if len(artifacts) == 0 {
-		return []string{header, StFaint.Render("none yet")}
+		return nil
 	}
+	header := sectionHeader(fmt.Sprintf("artifacts %d", len(artifacts)), inner)
 	lines := []string{header}
 	for index, artifact := range artifacts {
 		if index == railListCap {
@@ -259,12 +287,22 @@ func railTasksSection(in RailInput, inner int) ([]string, []RailHit) {
 			gap := maxInt(1, inner-lipgloss.Width(row)-lipgloss.Width(suffix))
 			row += strings.Repeat(" ", gap) + suffix
 		}
-		hits = append(hits, RailHit{Y: len(lines), X1: 0, X2: inner, Action: "task:" + task.ID})
+		action := "task:" + task.ID
+		hits = append(hits, RailHit{Y: len(lines), X1: 0, X2: inner, Action: action})
+		if in.Pressed == action {
+			row = flashRow(row, inner)
+		}
 		lines = append(lines, row)
 	}
 
-	chips := []chip{{Label: "detect", Action: "tasks:detect"}, {Label: "ask agent", Action: "tasks:ask"}, {Label: "edit", Action: "tasks:edit"}}
-	chipRows, chipHits := chipLines(chips, inner, len(lines))
+	// The task rows above are themselves the primary action (click to run), so
+	// every chip here is secondary configuration and folds away by default.
+	secondary := []chip{
+		{Label: "detect", Action: "tasks:detect"},
+		{Label: "ask agent", Action: "tasks:ask"},
+		{Label: "edit", Action: "tasks:edit"},
+	}
+	chipRows, chipHits := actionRows(nil, secondary, "tasks", "manage", in.Expanded["tasks"], inner, len(lines), in.Pressed)
 	return append(lines, chipRows...), append(hits, chipHits...)
 }
 
@@ -318,25 +356,33 @@ func railGitSection(in RailInput, inner int) ([]string, []RailHit) {
 		lines = append(lines, StAccent.Render(spinChar(in.Frame)+" "+in.GitBusy+"…"))
 	}
 
-	chips := []chip{
-		{Label: "stage", Action: "git:stage", Disabled: git.Unstaged+git.Untracked == 0},
+	// stage → commit → push is the loop people actually run; the rest are
+	// occasional, so they fold.
+	primary := []chip{
+		{Label: "stage", Action: "git:stage", Primary: true, Disabled: git.Unstaged+git.Untracked == 0},
+		{Label: "commit", Action: "git:commit", Primary: true, Disabled: git.Staged == 0},
+		{Label: "push", Action: "git:push", Primary: true},
+	}
+	secondary := []chip{
 		{Label: "unstage", Action: "git:unstage", Disabled: git.Staged == 0},
-		{Label: "commit", Action: "git:commit", Disabled: git.Staged == 0},
-		{Label: "push", Action: "git:push"},
 		{Label: "pull", Action: "git:pull"},
 		{Label: "diff", Action: "git:diff"},
 		{Label: "log", Action: "git:log"},
 		{Label: "refresh", Action: "git:refresh"},
 	}
-	for i := range chips {
-		if chips[i].Action == "git:"+in.GitConfirm {
-			chips[i].Armed = true
-		}
-		if in.GitBusy != "" {
-			chips[i].Disabled = true
+	decorate := func(chips []chip) {
+		for i := range chips {
+			if chips[i].Action == "git:"+in.GitConfirm {
+				chips[i].Armed = true
+			}
+			if in.GitBusy != "" {
+				chips[i].Disabled = true
+			}
 		}
 	}
-	chipRows, chipHits := chipLines(chips, inner, len(lines))
+	decorate(primary)
+	decorate(secondary)
+	chipRows, chipHits := actionRows(primary, secondary, "git", "more", in.Expanded["git"], inner, len(lines), in.Pressed)
 	return append(lines, chipRows...), chipHits
 }
 
@@ -348,11 +394,54 @@ type chip struct {
 	Action   string
 	Disabled bool
 	Armed    bool // second click confirms
+	Primary  bool // the action you probably came for — gets the loud fill
+}
+
+// actionRows renders a section's buttons: primary chips always inline, the
+// rest behind a fold row. Folding *everything* would put the common path
+// (stage → commit → push) two clicks away, so only the secondary set hides.
+// foldLabel names the hidden group ("more", "manage").
+func actionRows(primary, secondary []chip, sectionKey, foldLabel string, expanded bool, width, startY int, pressed string) ([]string, []RailHit) {
+	var lines []string
+	var hits []RailHit
+
+	if len(primary) > 0 {
+		rows, primaryHits := chipLines(primary, width, startY, pressed)
+		lines = append(lines, rows...)
+		hits = append(hits, primaryHits...)
+		startY += len(rows)
+	}
+	if len(secondary) == 0 {
+		return lines, hits
+	}
+
+	// The ▸/▾ chevron is the same disclosure grammar tool sections and prose
+	// sections already use, so one glyph means "there is more here" everywhere.
+	chevron, caption := "▸", fmt.Sprintf("%s (%d)", foldLabel, len(secondary))
+	if expanded {
+		chevron, caption = "▾", foldLabel
+	}
+	foldRow := StDim.Render(chevron + " " + caption)
+	hits = append(hits, RailHit{Y: startY, X1: 0, X2: lipgloss.Width(foldRow), Action: "fold:" + sectionKey})
+	lines = append(lines, foldRow)
+	startY++
+
+	if expanded {
+		rows, secondaryHits := chipLines(secondary, width, startY, pressed)
+		lines = append(lines, rows...)
+		hits = append(hits, secondaryHits...)
+	}
+	return lines, hits
 }
 
 // chipLines packs chips into rows no wider than width and reports where each
-// one landed. startY is the row the first chip line will occupy.
-func chipLines(chips []chip, width, startY int) ([]string, []RailHit) {
+// one landed. startY is the row the first chip line will occupy. pressed is
+// the action currently mid click-flash (see pressFlashFrames).
+//
+// Buttons render as filled pills, not plain bracketed text — the rail is
+// otherwise all StDim/StFaint labels, so a button has to read as visibly
+// raised against that or it disappears into the surrounding status text.
+func chipLines(chips []chip, width, startY int, pressed string) ([]string, []RailHit) {
 	var lines []string
 	var hits []RailHit
 	current := ""
@@ -374,14 +463,7 @@ func chipLines(chips []chip, width, startY int) ([]string, []RailHit) {
 			current += " "
 			column++
 		}
-		style := StDim
-		switch {
-		case item.Disabled:
-			style = StFaint
-		case item.Armed:
-			style = StErr
-		}
-		current += style.Render(text)
+		current += chipStyle(item, item.Action == pressed).Render(text)
 		if !item.Disabled {
 			hits = append(hits, RailHit{Y: row, X1: column, X2: column + lipgloss.Width(text), Action: item.Action})
 		}
@@ -391,6 +473,33 @@ func chipLines(chips []chip, width, startY int) ([]string, []RailHit) {
 		lines = append(lines, current)
 	}
 	return lines, hits
+}
+
+// chipStyle picks one button's fill. Buttons need real color to register as
+// clickable rather than as chrome — but making *every* button equally loud
+// just moves the problem, so the fill is tiered: primary actions take the
+// solid accent, secondary ones a muted raised pill. Pressed flashes green
+// (confirmation), armed turns red (this click is destructive), disabled drops
+// the fill entirely — four states an eye sorts without reading labels.
+func chipStyle(item chip, pressed bool) lipgloss.Style {
+	switch {
+	case pressed:
+		return lipgloss.NewStyle().Background(ColOK).Foreground(ColBg).Bold(true)
+	case item.Disabled:
+		return lipgloss.NewStyle().Foreground(ColFaint)
+	case item.Armed:
+		return lipgloss.NewStyle().Background(ColDel).Foreground(ColBg).Bold(true)
+	case item.Primary:
+		return lipgloss.NewStyle().Background(ColAccent).Foreground(ColBg).Bold(true)
+	default:
+		return lipgloss.NewStyle().Background(ColBorderHi).Foreground(ColText)
+	}
+}
+
+// flashRow gives a non-chip clickable row (a task's own line) the same
+// pressed treatment as a button: briefly inverted, full width.
+func flashRow(row string, width int) string {
+	return lipgloss.NewStyle().Background(ColOK).Foreground(ColBg).Bold(true).Width(width).Render(ansi.Strip(row))
 }
 
 func todoGlyph(status string) string {

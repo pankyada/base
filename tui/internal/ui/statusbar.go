@@ -31,11 +31,20 @@ func statusBar(running bool, model, approval string, tokensIn, tokensOut int, co
 		mode,
 		StInfo.Render(model),
 		approvalStyle.Render("approval:" + approval),
-		StFaint.Render(fmt.Sprintf("in %d · out %d", tokensIn, tokensOut)),
-		StFaint.Render(fmt.Sprintf("$%.4f", cost)),
-		StFaint.Render(contextGaugeCompact(contextTokens, contextWindow)),
-		StDim.Render("tab panels · ^b rail · ? keys"),
 	}
+	// Before the first turn these are all zero — "in 0 · out 0 · $0.0000 · —"
+	// is four segments of nothing competing with the hints that actually help
+	// a new session. They appear as soon as they mean something.
+	if tokensIn > 0 || tokensOut > 0 {
+		segments = append(segments,
+			StFaint.Render(fmt.Sprintf("in %d · out %d", tokensIn, tokensOut)),
+			StFaint.Render(fmt.Sprintf("$%.4f", cost)),
+		)
+	}
+	if contextWindow > 0 {
+		segments = append(segments, StFaint.Render(contextGaugeCompact(contextTokens, contextWindow)))
+	}
+	segments = append(segments, StDim.Render("tab panels · ^b rail · /? keys"))
 	if queued > 0 {
 		segments = append(segments, StAccent.Render(fmt.Sprintf("queued:%d", queued)))
 	}

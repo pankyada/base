@@ -8,6 +8,7 @@ import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
+import { runWorkflow } from '../workflow/runner.js'
 import { recordUsage } from '../usage/ledger.js'
 import { sanitizeUserId } from '../session/user-paths.js'
 import type { Profile } from '../profiles/schema.js'
@@ -54,7 +55,11 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       events, openai, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2,
     }
 
-    await runAgentLoop(userMessage, profile, session, context, events, openai, signal)
+    if (profile.workflow?.enabled) {
+      await runWorkflow(userMessage, profile, session, context, events, openai, signal)
+    } else {
+      await runAgentLoop(userMessage, profile, session, context, events, openai, signal)
+    }
 
     const messages = session.messages as Array<{ role: string; content?: string | null }>
     const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)

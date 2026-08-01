@@ -29,7 +29,7 @@ func helpView(keys KeyMap, width, height int) string {
 		"/tasks    list, edit, detect, run <id>, stop <id>",
 		"/git      status, stage, unstage, commit <msg>, push, pull, diff, log",
 		"",
-		sectionHeader("global", inner), helpBinding(keys.Quit), helpBinding(keys.Help), "ctrl+x  clear queued messages", "ctrl+r  clear attachments",
+		sectionHeader("global", inner), helpBinding(keys.Quit), "/?      open this popup", "ctrl+x  clear queued messages", "ctrl+r  clear attachments",
 		"",
 		sectionHeader("commands", inner), slashHelp(),
 		"",

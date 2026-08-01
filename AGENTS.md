@@ -8,11 +8,9 @@ Guidance for all AI agents (Claude, Jules, Gemini, etc.) working in this reposit
 
 It contains the master feature list with status (✅ done / 🔄 in progress / ❌ not started) and suggested sequencing. Pick up the next `❌` item in sequence unless told otherwise. Do not duplicate work already marked ✅.
 
-## Suggested next feature
+## Current roadmap state
 
-**#10 — Comprehensive product documentation (GitHub Pages)** (see ROADMAP.md for full spec).
-
-This is the only remaining `❌` item. All runtime features are done; the blocker is discoverability. VitePress is the recommended stack — zero-config, Markdown-native, fast. The TUI (#7), web client (#8), and example profiles (`profiles/devops.yaml`, `profiles/research.yaml`, `profiles/writer.yaml`, `profiles/security.yaml`) are the primary things to document.
+Adaptive workflow routing (#15) is implemented. Read `docs/ROADMAP.md` for the current feature status before new work.
 
 ## Architecture overview
 
@@ -45,3 +43,11 @@ See `CLAUDE.md` for the full architecture, key module table, commands, and profi
 - Do not restructure files outside the task you're working on
 - Do not merge to main with failing tests or typecheck errors
 - Do not add npm packages without a clear reason — the stdlib is preferred
+
+## Workflow routing
+
+Adaptive workflow is profile-optional. Playbooks under
+`.agents/playbooks/<name>/PLAYBOOK.md` define stage contracts; `src/workflow/`
+handles triage, artifact handoff, escalation, and project knowledge; and
+`src/analysis/` handles stratified routing statistics. Keep the flat loop
+unchanged for profiles without `workflow.enabled`.

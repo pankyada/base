@@ -18,6 +18,7 @@ type Preferences struct {
 	RailVisible           bool              `json:"rail_visible"`
 	OverlayTab            string            `json:"overlay_tab"`
 	DensityMode           string            `json:"density_mode"`
+	RailSections          map[string]bool   `json:"rail_sections"`
 	SeenNotices           map[string]bool   `json:"seen_notices"`
 }
 

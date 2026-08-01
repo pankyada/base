@@ -4,6 +4,13 @@ model:
   api_key_env: OPENAI_API_KEY
   id: gpt-4o
   fallback_id: gpt-4o-mini
+models:
+  roles: { cheap: gpt-4o-mini, balanced: gpt-4o, frontier: gpt-5.6-sol, critic: claude-sonnet-5 }
+workflow:
+  enabled: true
+  playbook: data
+  routing:
+    table: { recon: cheap, plan: balanced, design: balanced, build: balanced, verify: cheap, review: critic }
 system_prompt: ./prompts/data.md
 working_dir: $CWD
 artifact_dir: .harness/data

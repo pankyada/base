@@ -13,10 +13,18 @@ type Theme struct {
 }
 
 var Themes = map[string]Theme{
-	"ember": {Name: "ember", Bg: "#0b0c0e", Panel: "#111317", Border: "#262b33", BorderHi: "#3a414e", Purple: "#b394e0", Text: "#e7e9ee", Dim: "#99a0ad", Faint: "#595f6b", Accent: "#f1a44d", OK: "#74c79a", Error: "#e87f8d", Info: "#6cb6d9", Teal: "#5fb8a8", Rose: "#e0a1c4"},
-	"mono":  {Name: "mono", Bg: "#080808", Panel: "#151515", Border: "#363636", BorderHi: "#585858", Purple: "#c0c0c0", Text: "#eeeeee", Dim: "#aaaaaa", Faint: "#666666", Accent: "#dddddd", OK: "#bbbbbb", Error: "#ffffff", Info: "#cccccc", Teal: "#999999", Rose: "#d4d4d4"},
-	"neon":  {Name: "neon", Bg: "#090817", Panel: "#15112a", Border: "#30265a", BorderHi: "#574698", Purple: "#d08cff", Text: "#f3f2ff", Dim: "#aaa6d9", Faint: "#625b91", Accent: "#ffb86c", OK: "#65ffca", Error: "#ff6b9d", Info: "#65d9ff", Teal: "#5ef2c9", Rose: "#ff9ecf"},
+	"ember":     {Name: "ember", Bg: "#0b0c0e", Panel: "#111317", Border: "#262b33", BorderHi: "#3a414e", Purple: "#b394e0", Text: "#e7e9ee", Dim: "#99a0ad", Faint: "#595f6b", Accent: "#f1a44d", OK: "#74c79a", Error: "#e87f8d", Info: "#6cb6d9", Teal: "#5fb8a8", Rose: "#e0a1c4"},
+	"mono":      {Name: "mono", Bg: "#080808", Panel: "#151515", Border: "#363636", BorderHi: "#585858", Purple: "#c0c0c0", Text: "#eeeeee", Dim: "#aaaaaa", Faint: "#666666", Accent: "#dddddd", OK: "#bbbbbb", Error: "#ffffff", Info: "#cccccc", Teal: "#999999", Rose: "#d4d4d4"},
+	"neon":      {Name: "neon", Bg: "#090817", Panel: "#15112a", Border: "#30265a", BorderHi: "#574698", Purple: "#d08cff", Text: "#f3f2ff", Dim: "#aaa6d9", Faint: "#625b91", Accent: "#ffb86c", OK: "#65ffca", Error: "#ff6b9d", Info: "#65d9ff", Teal: "#5ef2c9", Rose: "#ff9ecf"},
+	"solarized": {Name: "solarized", Bg: "#002b36", Panel: "#073642", Border: "#0a4552", BorderHi: "#586e75", Purple: "#6c71c4", Text: "#93a1a1", Dim: "#839496", Faint: "#586e75", Accent: "#b58900", OK: "#859900", Error: "#dc322f", Info: "#268bd2", Teal: "#2aa198", Rose: "#d33682"},
+	"dracula":   {Name: "dracula", Bg: "#282a36", Panel: "#21222c", Border: "#414458", BorderHi: "#6272a4", Purple: "#bd93f9", Text: "#f8f8f2", Dim: "#bfc3d9", Faint: "#6272a4", Accent: "#ff79c6", OK: "#50fa7b", Error: "#ff5555", Info: "#8be9fd", Teal: "#8be9fd", Rose: "#ff79c6"},
+	"nord":      {Name: "nord", Bg: "#2e3440", Panel: "#3b4252", Border: "#434c5e", BorderHi: "#4c566a", Purple: "#b48ead", Text: "#eceff4", Dim: "#d8dee9", Faint: "#4c566a", Accent: "#d08770", OK: "#a3be8c", Error: "#bf616a", Info: "#88c0d0", Teal: "#8fbcbb", Rose: "#b48ead"},
+	"gruvbox":   {Name: "gruvbox", Bg: "#282828", Panel: "#3c3836", Border: "#504945", BorderHi: "#665c54", Purple: "#d3869b", Text: "#ebdbb2", Dim: "#bdae93", Faint: "#7c6f64", Accent: "#fe8019", OK: "#b8bb26", Error: "#fb4934", Info: "#83a598", Teal: "#8ec07c", Rose: "#d3869b"},
 }
+
+// themeOrder fixes the cycling and picker-list order, roughly dark-neutral to
+// colorful.
+var themeOrder = []string{"ember", "mono", "neon", "solarized", "dracula", "nord", "gruvbox"}
 
 var currentTheme = Themes["ember"]
 
@@ -88,17 +96,6 @@ func parseHex(hex string) (r, g, b int, ok bool) {
 		return 0, 0, 0, false
 	}
 	return int(rv), int(gv), int(bv), true
-}
-
-func nextTheme(current string) string {
-	switch current {
-	case "ember":
-		return "mono"
-	case "mono":
-		return "neon"
-	default:
-		return "ember"
-	}
 }
 
 // Palette mirrors the C object in src/tui/theme.ts.

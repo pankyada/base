@@ -1,4 +1,5 @@
 export interface MemoryLink {
+  source?: string
   target: string
   relation?: string
 }

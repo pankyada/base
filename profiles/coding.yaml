@@ -4,6 +4,28 @@ model:
   api_key_env: OPENAI_API_KEY
   id: gpt-5.4-mini-2026-03-17
   fallback_id: gpt-5.4-mini-2026-03-17
+models:
+  roles:
+    cheap: gpt-5.6-luna
+    balanced: gpt-5.6-terra
+    frontier: gpt-5.6-sol
+    critic: claude-sonnet-5
+workflow:
+  enabled: true
+  playbook: coding
+  min_intensity: { recon: 1, review: 1 }
+  budget:
+    max_usd_per_task: 2.00
+    max_stage_retries: 2
+    max_stage_minutes: 15
+  routing:
+    policy: static
+    explore_rate: 0.12
+    shadow_rate: 0.05
+    table: { recon: cheap, plan: balanced, design: balanced, build: balanced, verify: cheap, review: critic }
+  knowledge:
+    graph: true
+    generalization_probe: true
 system_prompt: ./prompts/coding.md
 working_dir: $CWD
 artifact_dir: .harness/coding

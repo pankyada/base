@@ -17,7 +17,6 @@ func testRail(in RailInput) RailInput {
 
 func TestRailHasDistinctLabeledSections(t *testing.T) {
 	rendered, _ := railView(testRail(RailInput{
-		Profile: "coding", Model: "gpt-4o", Approval: "danger", Session: "sess-12345",
 		Running: true, ActiveTool: "Bash", ActiveElapsed: "1.2s",
 		Todos:         []protocol.TodoItem{{Content: "write tests", Status: "in_progress"}},
 		Artifacts:     []protocol.Artifact{{Icon: "📊", Title: "coverage"}},
@@ -26,7 +25,9 @@ func TestRailHasDistinctLabeledSections(t *testing.T) {
 	}))
 	out := stripANSI(rendered)
 
-	order := []string{"ACTIVE", "TASKS", "GIT", "TODOS", "CONTEXT", "SESSION", "ARTIFACTS"}
+	// Three bands: what the agent is doing, what you can drive, what the
+	// session produced.
+	order := []string{"ACTIVE", "TODOS", "TASKS", "GIT", "CONTEXT", "ARTIFACTS"}
 	previous := -1
 	for _, label := range order {
 		index := strings.Index(out, label)
@@ -42,22 +43,43 @@ func TestRailHasDistinctLabeledSections(t *testing.T) {
 
 func TestRailShowsCountsAndContent(t *testing.T) {
 	rendered, _ := railView(testRail(RailInput{
-		Profile: "coding", Model: "gpt-4o", Approval: "danger", Session: "sess-1",
 		Todos:         []protocol.TodoItem{{Content: "a", Status: "completed"}, {Content: "b", Status: "pending"}},
-		ContextWindow: 10000,
+		ContextTokens: 10, ContextWindow: 10000,
 	}))
 	out := stripANSI(rendered)
-	for _, want := range []string{"TODOS 2", "ARTIFACTS 0", "none yet", "○ idle"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected %q in rail:\n%s", want, out)
+	if !strings.Contains(out, "TODOS 2") {
+		t.Fatalf("expected populated todos section:\n%s", out)
+	}
+}
+
+// A section with nothing to say must not render at all — empty placeholders
+// crowd real controls off a fixed-height panel.
+func TestRailOmitsEmptySections(t *testing.T) {
+	rendered, _ := railView(testRail(RailInput{
+		Git: GitState{Checked: true, Repo: true, Branch: "main"},
+	}))
+	out := stripANSI(rendered)
+	for _, unwanted := range []string{"TODOS", "ARTIFACTS", "CONTEXT", "ACTIVE", "SESSION", "none yet", "idle"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("idle rail should not render %q:\n%s", unwanted, out)
 		}
+	}
+}
+
+// Profile, model, trust and session id live in the topbar and status bar; a
+// rail copy would be a third render of the same four facts.
+func TestRailDoesNotRepeatSessionIdentity(t *testing.T) {
+	rendered, _ := railView(testRail(RailInput{
+		Git: GitState{Checked: true, Repo: true, Branch: "main"},
+	}))
+	if strings.Contains(stripANSI(rendered), "SESSION") {
+		t.Fatalf("rail must not duplicate session identity:\n%s", rendered)
 	}
 }
 
 func TestRailIsExactlyRequestedHeightAndWidth(t *testing.T) {
 	for _, height := range []int{6, 20, 45} {
 		rendered, _ := railView(testRail(RailInput{
-			Profile: "coding", Model: "claude-sonnet-5", Approval: "strict", Session: "sess-1",
 			Running: true, ActiveTool: "a-very-long-tool-name-indeed", ActiveElapsed: "12.3s",
 			ContextTokens: 500, ContextWindow: 5000,
 			Git:    GitState{Checked: true, Repo: true, Branch: "a-very-long-branch-name-here"},
@@ -128,9 +150,55 @@ func TestRailTaskRowsAreClickable(t *testing.T) {
 	for _, hit := range hits {
 		actions[hit.Action] = true
 	}
-	for _, want := range []string{"task:dev", "task:build", "tasks:detect", "tasks:edit", "tasks:ask"} {
+	// Task rows are the primary action, so the config chips start folded.
+	for _, want := range []string{"task:dev", "task:build", "fold:tasks"} {
 		if !actions[want] {
 			t.Fatalf("missing rail action %q in %v", want, actions)
+		}
+	}
+	if actions["tasks:detect"] {
+		t.Fatalf("folded task chips should not be clickable: %v", actions)
+	}
+}
+
+// Secondary actions hide behind a fold row so the primary path stays one
+// click away, and appear once that row is expanded.
+func TestRailFoldRevealsSecondaryActions(t *testing.T) {
+	in := RailInput{
+		Height: 60,
+		Git:    GitState{Checked: true, Repo: true, Branch: "main", Unstaged: 1},
+		Tasks:  []Task{{ID: "dev", Label: "dev", Command: "pnpm dev", Kind: "serve"}},
+	}
+	collapsed, collapsedHits := railView(in)
+	if strings.Contains(stripANSI(collapsed), "[diff]") {
+		t.Fatalf("secondary git actions should start folded:\n%s", collapsed)
+	}
+	if !strings.Contains(stripANSI(collapsed), "[stage]") {
+		t.Fatalf("primary git actions must stay inline:\n%s", collapsed)
+	}
+	foldable := map[string]bool{}
+	for _, hit := range collapsedHits {
+		foldable[hit.Action] = true
+	}
+	if !foldable["fold:git"] || !foldable["fold:tasks"] {
+		t.Fatalf("expected fold rows for git and tasks: %v", foldable)
+	}
+
+	in.Expanded = map[string]bool{"git": true, "tasks": true}
+	expanded, expandedHits := railView(in)
+	out := stripANSI(expanded)
+	for _, want := range []string{"[diff]", "[log]", "[pull]", "[detect]", "[edit]"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expanded rail missing %q:\n%s", want, out)
+		}
+	}
+	actions := map[string]bool{}
+	for _, hit := range expandedHits {
+		actions[hit.Action] = true
+	}
+	for _, want := range []string{"git:diff", "git:log", "tasks:detect", "tasks:edit", "tasks:ask"} {
+		if !actions[want] {
+			t.Fatalf("expanded rail missing action %q in %v", want, actions)
 		}
 	}
 }
@@ -160,7 +228,7 @@ func TestRailDropsLowPrioritySectionsWhenShort(t *testing.T) {
 		Tasks:  []Task{{ID: "dev", Label: "dev", Command: "pnpm dev", Kind: "serve"}},
 	})
 	out := stripANSI(rendered)
-	if !strings.Contains(out, "TASKS") || !strings.Contains(out, "ACTIVE") {
+	if !strings.Contains(out, "TASKS") || !strings.Contains(out, "GIT") {
 		t.Fatalf("a short rail must keep its highest-priority sections:\n%s", out)
 	}
 	if lipgloss.Height(rendered) != 12 {

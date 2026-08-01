@@ -95,7 +95,7 @@ type ServerMessage struct {
 
 	TokensIn      int     `json:"tokens_in,omitempty"`      // stats
 	TokensOut     int     `json:"tokens_out,omitempty"`     // stats
-	CostUSD       float64 `json:"cost_usd,omitempty"`       // stats
+	CostUSD       float64 `json:"cost_usd,omitempty"`       // stats, stage
 	ContextWindow int     `json:"context_window,omitempty"` // stats
 	ContextTokens int     `json:"context_tokens,omitempty"` // stats
 	Mode          string  `json:"mode,omitempty"`           // approval_mode_changed
@@ -114,6 +114,10 @@ type ServerMessage struct {
 	Source    string           `json:"source,omitempty"`
 	Path      string           `json:"path,omitempty"`
 	Action    string           `json:"action,omitempty"`
+	Stage     string           `json:"stage,omitempty"`
+	Intensity int              `json:"intensity,omitempty"`
+	Tier      string           `json:"tier,omitempty"`
+	State     string           `json:"state,omitempty"`
 }
 
 // DecodeServer parses one server->client frame.

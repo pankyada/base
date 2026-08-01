@@ -275,6 +275,37 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 
 ---
 
+### ✅ 15. Adaptive workflow routing (stages · intensity · model tiers)
+
+**Shipped.** Replace the flat single-model loop with a generic stage pipeline —
+`recon → plan → design → build → verify → review` — where a cheap triage model
+picks each stage's *intensity* (0–3) from evidence gathered in recon, a routing
+policy picks each stage's *model tier* (cheap / balanced / frontier / critic) and
+escalates only on observed failure, and telemetry records enough to answer
+empirically which tier each kind of work actually needs.
+
+Profile-agnostic by design: stages are abstract, and per-profile **playbooks**
+(`.agents/playbooks/<name>/PLAYBOOK.md`, discovered like skills) bind each
+(stage, intensity) to a concrete artifact contract — coding, research, data,
+writing, security.
+
+**What shipped:**
+- `src/workflow/` — playbook loader, triage, policy/escalation, stage runner, artifacts, knowledge extraction, deferred labeler
+- `src/analysis/` — stratified aggregation + `harness stats routing`
+- Telemetry gains `task_id`/`stage`/`tier`/`intensity` tags and `stage`/`outcome` event kinds
+- `models.roles` + `workflow` profile blocks; per-call model override in `src/loop/agent-loop.ts`
+- Project knowledge graph written at stage close via the existing `project` memory scope + `GraphMemoryProvider`; enforced recon gate and review-time generalization probe
+- TUI stage strip + per-stage cost
+
+**Why:** model choice is currently a static guess in YAML with no feedback loop,
+and no structure forces "understand before planning". Phase 0 ships
+observability only — the dataset comes first, adaptivity after.
+
+**Design:** [`docs/superpowers/specs/2026-08-01-adaptive-workflow-routing-design.md`](superpowers/specs/2026-08-01-adaptive-workflow-routing-design.md)
+**Plan:** [`docs/superpowers/plans/2026-08-01-adaptive-workflow-routing.md`](superpowers/plans/2026-08-01-adaptive-workflow-routing.md)
+
+---
+
 ## Suggested sequencing
 
 ```
@@ -288,6 +319,7 @@ Make the harness trivial to run. Today a TUI session needs two terminals (server
 ✅ #11 Pluggable code execution
 ✅ #12 Instance modes
 ✅ #13 Simplified deployment
+✅ #15 Adaptive workflow routing
 ```
 
 ---

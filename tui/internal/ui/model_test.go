@@ -91,7 +91,7 @@ func TestMouseClickTogglesGroup(t *testing.T) {
 	if len(hits) == 0 || hits[0].GroupKey == "" {
 		t.Fatal("expected group header hit")
 	}
-	topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, m.running, m.frame, time.Now(), m.width))
+	topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, time.Now(), m.width))
 	updated, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, Y: topBarHeight + hits[0].Y})
 	m = updated.(Model)
 	if !m.transcript.Turns[0].ExpandedGroups[hits[0].GroupKey] {

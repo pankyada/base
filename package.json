@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "harness": "dist/cli/index.js",
-    "harness-server": "dist/server/index.js",
+    "harness": "dist/src/cli/index.js",
+    "harness-server": "dist/src/server/index.js",
     "harness-tui": "bin/harness-tui"
   },
   "scripts": {

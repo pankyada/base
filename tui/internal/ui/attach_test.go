@@ -198,12 +198,23 @@ func TestTypingGAndQuestionMarkDoesNotDropCharacters(t *testing.T) {
 	}
 }
 
-func TestEmptyComposerGAndQuestionMarkStillWorkAsShortcuts(t *testing.T) {
+func TestQuestionMarkTypesLiterallyAndSlashQuestionOpensHelp(t *testing.T) {
 	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	// '?' is a real character in ordinary messages ("what does this do?"), so
+	// even on an empty composer it must type, never hijack into a shortcut.
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 	m = updated.(Model)
+	if m.helpOpen {
+		t.Fatal("'?' should type literally, not open help")
+	}
+	if m.composer.Value() != "?" {
+		t.Fatalf("composer = %q, want literal '?'", m.composer.Value())
+	}
+	if _, handled := m.handleSlash("/?"); !handled {
+		t.Fatal("/? should be handled as a slash command")
+	}
 	if !m.helpOpen {
-		t.Fatal("'?' on an empty composer should still open help")
+		t.Fatal("/? should open the keys popup")
 	}
 }
 

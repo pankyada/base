@@ -59,6 +59,8 @@ type Model struct {
 	contextWarned      bool
 	turnTokensOut      int
 	turnCost           float64
+	workflowStages     map[string]StageItem
+	stageCosts         map[string]float64
 	queue              []string
 	pendingApproval    *ApprovalRequest
 	pendingInput       *InputRequest
@@ -102,6 +104,11 @@ type Model struct {
 	localCancel        context.CancelFunc
 	lastLocal          *localResultMsg
 	density            string // "full" | "normal" | "compact" — prose fold aggressiveness
+	themeCursor        int
+	densityCursor      int
+
+	pressedAction string // rail action mid click-flash, "" when none
+	pressedAt     int    // frame the press landed, for flash decay
 
 	git        GitState
 	gitBusy    string // git action in flight, "" when idle
@@ -133,23 +140,25 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 	modelInput.CharLimit = 200
 	viewportModel := viewport.New(80, 16)
 	m := Model{
-		sender:       sender,
-		composer:     composer,
-		viewport:     viewportModel,
-		skillEditor:  skillEditor,
-		taskEditor:   taskEditor,
-		taskRuns:     map[string]*TaskRun{},
-		modelInput:   modelInput,
-		keys:         NewKeyMap(),
-		prefs:        preferences,
-		profile:      profile,
-		model:        "connecting",
-		workingDir:   ".",
-		approvalMode: "danger",
-		userID:       userID,
-		follow:       true,
-		width:        80,
-		height:       24,
+		sender:         sender,
+		composer:       composer,
+		viewport:       viewportModel,
+		skillEditor:    skillEditor,
+		taskEditor:     taskEditor,
+		taskRuns:       map[string]*TaskRun{},
+		workflowStages: map[string]StageItem{},
+		stageCosts:     map[string]float64{},
+		modelInput:     modelInput,
+		keys:           NewKeyMap(),
+		prefs:          preferences,
+		profile:        profile,
+		model:          "connecting",
+		workingDir:     ".",
+		approvalMode:   "danger",
+		userID:         userID,
+		follow:         true,
+		width:          80,
+		height:         24,
 	}
 	if mode := preferences.ApprovalModeByProfile[profile]; mode == "strict" || mode == "bash" || mode == "danger" || mode == "yolo" {
 		m.approvalMode = mode
@@ -236,6 +245,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.running {
 			m.spark.Add(float64(m.tokensOut))
 		}
+		if m.pressedAction != "" && m.frame-m.pressedAt >= pressFlashFrames {
+			m.pressedAction = ""
+		}
 		m.notices.Expire(time.Now())
 		m.reflow()
 		// Nothing to poll once we know this is not a repository — that answer
@@ -302,7 +314,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
 			return m, nil
 		}
-		topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, m.running, m.frame, time.Now(), m.width))
+		topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, time.Now(), m.width, m.stageItems()))
 		if m.railShown() && msg.X >= m.width-railWidth {
 			// Rail coordinates: the block starts at the rail column, and its
 			// content starts after the left border and PaddingLeft(2).
@@ -443,12 +455,6 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case msg.String() == "end":
 		m.viewport.GotoBottom()
 		m.follow = true
-		return m, nil
-	// "?" is only a shortcut on an empty composer — mid-message it must reach
-	// the composer as a literal character instead of being eaten.
-	case msg.String() == "?" && m.composer.Value() == "":
-		m.helpOpen = true
-		m.reflow()
 		return m, nil
 	case matches(msg, m.keys.Overlay):
 		m.openOverlay(m.prefs.OverlayTab)
@@ -688,6 +694,75 @@ func (m Model) updateApprovalTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateThemeTab drives the Theme tab. Unlike approval, a theme is purely
+// cosmetic and instantly reversible, so moving the cursor applies it right
+// away — the picker doubles as a live full-screen preview instead of making
+// the user commit to a name they can't see yet.
+func (m Model) updateThemeTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.overlayOpen = false
+	case "left":
+		m.cycleOverlay(-1)
+	case "right":
+		m.cycleOverlay(1)
+	case "up":
+		if m.themeCursor > 0 {
+			m.themeCursor--
+			m.applyThemeCursor()
+		}
+	case "down":
+		if m.themeCursor < len(themeOrder)-1 {
+			m.themeCursor++
+			m.applyThemeCursor()
+		}
+	case "enter":
+		m.overlayOpen = false
+	}
+	m.reflow()
+	return m, nil
+}
+
+func (m *Model) applyThemeCursor() {
+	name := themeOrder[m.themeCursor]
+	m.prefs.Theme = ApplyTheme(name)
+	_ = m.prefs.Save("")
+}
+
+// updateDensityTab drives the Density tab — same live-apply shape as theme,
+// since a fold threshold is just as harmless to preview by scrolling through.
+func (m Model) updateDensityTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.overlayOpen = false
+	case "left":
+		m.cycleOverlay(-1)
+	case "right":
+		m.cycleOverlay(1)
+	case "up":
+		if m.densityCursor > 0 {
+			m.densityCursor--
+			m.applyDensityCursor()
+		}
+	case "down":
+		if m.densityCursor < len(densityModes)-1 {
+			m.densityCursor++
+			m.applyDensityCursor()
+		}
+	case "enter":
+		m.overlayOpen = false
+	}
+	m.reflow()
+	return m, nil
+}
+
+func (m *Model) applyDensityCursor() {
+	name := densityModes[m.densityCursor].name
+	m.density = name
+	m.prefs.DensityMode = name
+	_ = m.prefs.Save("")
+}
+
 // updateModelTab drives the Model tab inside the overlay, sharing the list,
 // filter, and custom-id behaviour with the standalone picker.
 func (m Model) updateModelTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -890,6 +965,12 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlayTab == "approval" {
 		return m.updateApprovalTab(msg)
 	}
+	if m.overlayTab == "theme" {
+		return m.updateThemeTab(msg)
+	}
+	if m.overlayTab == "density" {
+		return m.updateDensityTab(msg)
+	}
 	if m.overlayTab == "tasks" {
 		return m.updateTasksTab(msg)
 	}
@@ -1085,6 +1166,18 @@ func (m *Model) primeOverlayTab() {
 				m.approvalCursor = i
 			}
 		}
+	case "theme":
+		for i, name := range themeOrder {
+			if name == m.prefs.Theme {
+				m.themeCursor = i
+			}
+		}
+	case "density":
+		for i, mode := range densityModes {
+			if mode.name == m.density {
+				m.densityCursor = i
+			}
+		}
 	case "skills":
 		m.skillConfirm = ""
 		m.send(protocol.SkillsList())
@@ -1214,6 +1307,13 @@ func (m *Model) startAgentMessage(content string) {
 	m.send(protocol.Message(content))
 }
 
+// handleSlash dispatches every "/command" the composer can submit. The
+// convention, for any command whose values come from a small fixed set
+// (model, approval, theme, density): a bare "/command" opens that value's
+// picker overlay, "/command <value>" applies it directly without opening
+// anything. "/tasks" and "/skills" follow the same shape for their own list.
+// Commands without an enumerable value (git, compact, clear, quit, help, ?)
+// just run — there is nothing to pick, so there is no picker.
 func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 	command, args, ok := slashCommand(content)
 	if !ok {
@@ -1241,6 +1341,8 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		m.transcript.Turns = nil
 	case "help":
 		m.notices.Add(NoticeInfo, "commands", slashHelp(), "")
+	case "?":
+		m.helpOpen = true
 	case "quit":
 		m.notices.Add(NoticeInfo, "quit", "press ctrl+c to exit", "")
 	case "model":
@@ -1252,27 +1354,38 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 	case "compact":
 		m.send(protocol.Compact())
 	case "theme":
-		name := args
-		if name == "" {
-			name = nextTheme(m.prefs.Theme)
+		if args == "" {
+			m.openOverlay("theme")
+			m.reflow()
+			return nil, true
 		}
-		m.prefs.Theme = ApplyTheme(name)
+		if _, ok := Themes[args]; !ok {
+			m.notices.Add(NoticeError, "unknown theme", args, strings.Join(themeOrder, " · "))
+			break
+		}
+		m.prefs.Theme = ApplyTheme(args)
 		_ = m.prefs.Save("")
 		m.notices.Add(NoticeInfo, "theme", m.prefs.Theme, "")
 	case "density":
-		name := args
-		if name == "" {
-			name = nextDensity(m.density)
+		if args == "" {
+			m.openOverlay("density")
+			m.reflow()
+			return nil, true
 		}
-		switch name {
-		case "full", "normal", "compact":
-			m.density = name
-			m.prefs.DensityMode = name
-			_ = m.prefs.Save("")
-			m.notices.Add(NoticeInfo, "density", name, "")
-		default:
-			m.notices.Add(NoticeError, "unknown density", name, "use full, normal, or compact")
+		valid := false
+		for _, mode := range densityModes {
+			if mode.name == args {
+				valid = true
+			}
 		}
+		if !valid {
+			m.notices.Add(NoticeError, "unknown density", args, "use full, normal, or compact")
+			break
+		}
+		m.density = args
+		m.prefs.DensityMode = args
+		_ = m.prefs.Save("")
+		m.notices.Add(NoticeInfo, "density", args, "")
 	case "skills":
 		m.openOverlay("skills")
 		if args == "mine" {
@@ -1360,6 +1473,21 @@ func (m *Model) currentAgent() *Turn {
 		m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "agent", Time: time.Now().Format("15:04"), Started: time.Now()})
 	}
 	return &m.transcript.Turns[len(m.transcript.Turns)-1]
+}
+
+func (m *Model) stageItems() []StageItem {
+	if len(m.workflowStages) == 0 {
+		return nil
+	}
+	items := make([]StageItem, 0, 6)
+	for _, stage := range []string{"recon", "plan", "design", "build", "verify", "review"} {
+		if item, ok := m.workflowStages[stage]; ok {
+			items = append(items, item)
+		} else {
+			items = append(items, StageItem{Stage: stage, State: "skipped"})
+		}
+	}
+	return items
 }
 
 func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
@@ -1469,6 +1597,9 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			m.notices.Add(NoticeWarn, "context above 80%", "conversation is nearing the model limit", "run /compact")
 		}
 		m.currentAgent().Tokens = msg.TokensOut
+	case "stage":
+		m.stageCosts[msg.Stage] += msg.CostUSD
+		m.workflowStages[msg.Stage] = StageItem{Stage: msg.Stage, State: msg.State, Cost: m.stageCosts[msg.Stage]}
 	case "session_end":
 		m.running = false
 		m.activeTool = ""
@@ -1585,7 +1716,7 @@ func (m *Model) reflow() {
 		content = lipgloss.JoinVertical(lipgloss.Left, content, strings.Join(queued, "\n"))
 	}
 	if content == "" {
-		content = heroView(m.workingDir, m.git, m.tasks, contentWidth)
+		content = heroView(m.workingDir, m.git, m.tasks, m.railShown(), contentWidth)
 	}
 
 	m.contentLines = lipgloss.Height(content)
@@ -1614,10 +1745,6 @@ func (m *Model) reflowRail() {
 		activeElapsed = fmt.Sprintf("%.1fs", time.Since(m.activeToolStarted).Seconds())
 	}
 	m.railBlock, m.railHits = railView(RailInput{
-		Profile:       m.profile,
-		Model:         m.model,
-		Approval:      m.approvalMode,
-		Session:       m.sessionID,
 		Running:       m.running,
 		ActiveTool:    m.activeTool,
 		ActiveElapsed: activeElapsed,
@@ -1632,8 +1759,11 @@ func (m *Model) reflowRail() {
 		Tasks:         m.tasks,
 		TaskState:     m.taskStates(),
 		TasksDetected: m.tasksDetected,
+		Pressed:       m.pressedAction,
+		Expanded:      m.prefs.RailSections,
 		Height:        m.viewport.Height,
 		Frame:         m.frame,
+		StageCosts:    m.stageCosts,
 	})
 }
 
@@ -1648,7 +1778,7 @@ func (m Model) View() string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.railBlock)
 	}
 	parts := []string{
-		topBar(m.profile, m.sessionID, m.connected, m.running, m.frame, time.Now(), m.width),
+		topBar(m.profile, m.sessionID, m.connected, time.Now(), m.width, m.stageItems()),
 		body,
 	}
 	if hint := scrollHint(m.follow, m.viewport.Height, m.contentLines, m.viewport.YOffset, m.width); hint != "" {
@@ -1695,6 +1825,10 @@ func (m Model) View() string {
 			body = modelBody(m.modelOptions, m.modelCursor, m.modelFilter, m.modelCustom, m.modelInput.View(), modalInnerWidth(m.width))
 		} else if m.overlayTab == "approval" {
 			body = approvalBody(m.approvalMode, m.approvalCursor, modalInnerWidth(m.width))
+		} else if m.overlayTab == "theme" {
+			body = themeBody(m.prefs.Theme, m.themeCursor, modalInnerWidth(m.width))
+		} else if m.overlayTab == "density" {
+			body = densityBody(m.density, m.densityCursor, modalInnerWidth(m.width))
 		} else if m.overlayTab == "skills" {
 			body = skillsTab(m.proposedSkills, m.installedSkills, m.skillCursor, m.skillPreview, m.skillPreviewOffset, m.skillEditing, m.skillEditor.View(), m.skillEditorError, m.width)
 		} else if m.overlayTab == "tasks" {

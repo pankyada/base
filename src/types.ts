@@ -1,5 +1,6 @@
 import { Project } from './projects/types.js'
 import { SessionSummary } from './session/types.js'
+import type { Stage, Intensity, Tier, Reversibility } from './workflow/types.js'
 
 export type AclValue = 'allow' | 'prompt' | 'deny'
 
@@ -40,7 +41,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome'
   name?: string
   server?: string
   model?: string
@@ -50,6 +51,53 @@ export interface TelemetryEvent {
   tokens_out?: number
   cost_usd?: number
   trigger?: string
+  task_id?: string
+  stage_id?: string
+  stage?: Stage | 'triage'
+  attempt?: number
+  intensity?: Intensity
+  tier?: Tier
+  task_class?: string
+  blast_radius?: 'single-file' | 'module' | 'cross-module' | 'systemic'
+  reversibility?: Reversibility
+  playbook?: string
+  escalated_from?: string
+  explore?: boolean
+  contract_ok?: boolean
+  state?: 'start' | 'done' | 'escalated' | 'skipped'
+  failed_back_to?: Stage
+  verdict?: 'accepted' | 'reworked' | 'abandoned'
+  stages_run?: number
+  rework_count?: number
+  escalations?: number
+  verify_first_try?: boolean
+  review_findings?: { high: number; med: number; low: number }
+  total_cost_usd?: number
+  reason?: string
+  human_edit_churn?: number
+}
+
+export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {
+  kind: 'stage'
+  stage: Stage
+  stage_id: string
+  tier: Tier
+  intensity: Intensity
+  attempt: number
+  contract_ok: boolean
+  state: 'start' | 'done' | 'escalated' | 'skipped'
+}
+
+export interface OutcomeEvent extends Omit<TelemetryEvent, 'kind'> {
+  kind: 'outcome'
+  task_id: string
+  verdict: 'accepted' | 'reworked' | 'abandoned'
+  stages_run: number
+  rework_count: number
+  escalations: number
+  verify_first_try: boolean
+  review_findings: { high: number; med: number; low: number }
+  total_cost_usd: number
 }
 
 export type ClientMessage =
@@ -100,6 +148,7 @@ export type ServerMessage =
   | { type: 'skill_content'; name: string; source: string; path: string; content: string }
   | { type: 'skill_result'; action: 'saved' | 'promoted' | 'discarded'; name: string; path?: string }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }
+  | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 

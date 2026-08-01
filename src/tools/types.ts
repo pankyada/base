@@ -3,6 +3,7 @@ import type { Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
 import type { McpEntry } from '../mcp/client.js'
 import type { TodoItem, InputRequestKind, RiskLevel, ApprovalMode } from '../types.js'
+import type { Stage, Intensity, Tier } from '../workflow/types.js'
 import type { ExecutionResult } from '../executor/interface.js'
 import type OpenAI from 'openai'
 
@@ -18,6 +19,7 @@ export interface AgentLoopEvents {
   onInputRequest?(id: string, prompt: string, kind: InputRequestKind, options?: string[]): Promise<string>
   onTodosUpdate?(todos: TodoItem[]): void
   onCodeExecute?(id: string, code: string, language: string, data?: Record<string, unknown>): Promise<ExecutionResult>
+  onStage?(stage: Stage, intensity: Intensity, tier: Tier, model: string, state: 'start' | 'done' | 'escalated' | 'skipped', cost_usd?: number): void
 }
 
 export interface Skill {

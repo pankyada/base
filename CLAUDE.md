@@ -108,6 +108,16 @@ Four roots are auto-discovered at startup (most-specific wins on name collision)
 
 No profile configuration needed. The `Skill` tool returns `SKILL.md` content; use the `Read` tool for files in subdirectories.
 
+### Workflow & routing
+
+Optional `workflow.enabled` routes a request through bounded stage artifacts:
+`recon → plan → design → build → verify → review`. `models.roles` maps the
+cheap, balanced, frontier, and critic tiers to model IDs. Playbooks are
+`.agents/playbooks/<name>/PLAYBOOK.md` and use the same four discovery levels as
+skills. `src/workflow/` owns contracts, triage, routing, escalation, knowledge,
+and artifacts; `src/analysis/` owns stratified routing metrics and
+`harness stats routing`. Missing `workflow:` preserves the flat loop.
+
 ### MCP servers
 
 Configured in `tools.mcp_servers` of the profile YAML. Four transports supported (`transport` defaults to `stdio` if omitted):

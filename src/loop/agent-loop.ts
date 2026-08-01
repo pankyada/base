@@ -12,6 +12,7 @@ import { runHooks } from '../hooks/runner.js'
 import { maybeCondenseMessages, estimateTokens } from './context-manager.js'
 import { withRetry } from './retry.js'
 import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
+import type { StageTag } from '../workflow/types.js'
 
 export { estimateCost }
 
@@ -39,9 +40,11 @@ export async function runAgentLoop(
   context: ToolContext,
   events: AgentLoopEvents,
   openai: OpenAI,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: { modelId?: string; stage?: StageTag; appendUser?: boolean }
 ): Promise<void> {
-  session.messages.push({ role: 'user', content: userMessage })
+  const modelId = opts?.modelId ?? profile.model.id
+  if (opts?.appendUser !== false) session.messages.push({ role: 'user', content: userMessage })
 
   const allTools = [
     ...getAllTools(),
@@ -58,11 +61,11 @@ export async function runAgentLoop(
     // Reasoning-family models (o-series, GPT-5.4+) 400 on /v1/chat/completions
     // when function tools are attached unless reasoning_effort is 'none' —
     // see requiresReasoningEffortNone for the affected models.
-    const needsReasoningEffortNone = openaiTools.length > 0 && requiresReasoningEffortNone(profile.model.id)
+    const needsReasoningEffortNone = openaiTools.length > 0 && requiresReasoningEffortNone(modelId)
 
     const stream = await withRetry<any>(
       () => (openai.chat.completions as any).create({
-        model: profile.model.id,
+        model: modelId,
         messages: session.messages as OpenAI.ChatCompletionMessageParam[],
         tools: openaiTools.length > 0 ? openaiTools : undefined,
         ...(needsReasoningEffortNone ? { reasoning_effort: 'none' } : {}),
@@ -107,14 +110,15 @@ export async function runAgentLoop(
       }
     }
 
-    const cost = estimateCost(profile.model.id, tokensIn, tokensOut)
+    const cost = estimateCost(modelId, tokensIn, tokensOut)
     session.usage.input += tokensIn
     session.usage.output += tokensOut
     session.usage.cost_usd += cost
     events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(session.messages))
     logEvent({
       session: session.id, profile: profile.name, kind: 'llm',
-      model: profile.model.id, tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost,
+      model: modelId, tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost,
+      ...(opts?.stage ?? {}),
     })
 
     const toolCalls = [...toolCallMap.values()]

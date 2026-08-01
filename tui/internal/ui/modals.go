@@ -216,6 +216,67 @@ func modelPicker(models []protocol.ModelInfo, cursor int, filter string, custom 
 		StDim.Render("↑/↓ choose · / filter · enter apply · esc close"), width, height)
 }
 
+// themeBody renders the theme chooser as bare content — a swatch of each
+// theme's own accent/ok/error/info colors so a pick previews as a palette,
+// not just a name, plus a live full-screen preview since moving the cursor
+// applies the theme immediately (see updateThemeTab).
+func themeBody(current string, cursor, innerWidth int) string {
+	nameWidth := 0
+	for _, name := range themeOrder {
+		if w := lipgloss.Width(name); w > nameWidth {
+			nameWidth = w
+		}
+	}
+	lines := []string{StDim.Render("current: " + current), ""}
+	for i, name := range themeOrder {
+		theme := Themes[name]
+		marker := "  "
+		if i == cursor {
+			marker = StAccent.Render("› ")
+		}
+		selected := StFaint.Render("○")
+		label := StText.Render(pad(name, nameWidth))
+		if name == current {
+			selected = StOK.Render("●")
+			label = StAccentB.Render(pad(name, nameWidth))
+		}
+		swatch := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent)).Render("██") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(theme.OK)).Render("██") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Info)).Render("██") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error)).Render("██")
+		row := marker + selected + " " + label + "  " + swatch
+		lines = append(lines, truncate(row, innerWidth))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// densityBody renders the fold-density chooser — three fixed options, no
+// filter, same shape as approvalBody.
+func densityBody(current string, cursor, innerWidth int) string {
+	nameWidth := 0
+	for _, mode := range densityModes {
+		if w := lipgloss.Width(mode.name); w > nameWidth {
+			nameWidth = w
+		}
+	}
+	lines := []string{StDim.Render("current: " + current), ""}
+	for i, mode := range densityModes {
+		marker := "  "
+		if i == cursor {
+			marker = StAccent.Render("› ")
+		}
+		selected := StFaint.Render("○")
+		label := StText.Render(pad(mode.name, nameWidth))
+		if mode.name == current {
+			selected = StOK.Render("●")
+			label = StAccentB.Render(pad(mode.name, nameWidth))
+		}
+		row := marker + selected + " " + label + "  " + StDim.Render(mode.detail)
+		lines = append(lines, truncate(row, innerWidth))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func modalOuterWidth(width int) int {
 	if width < 60 {
 		return maxInt(1, width-2)

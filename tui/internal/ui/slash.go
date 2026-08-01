@@ -9,15 +9,20 @@ var slashCommands = map[string]string{
 	"tasks":    "run/edit project build commands",
 	"git":      "stage, commit, push, diff",
 	"compact":  "condense session context",
-	"theme":    "switch terminal theme",
-	"density":  "cycle response fold density",
+	"theme":    "pick a terminal theme",
+	"density":  "pick response fold density",
 	"clear":    "clear transcript",
-	"help":     "show key help",
+	"help":     "list commands",
+	"?":        "open the keys popup",
 	"quit":     "exit harness",
 }
 
 // slashOrder fixes the order commands are listed and completed in, most
-// reached-for first.
+// reached-for first. "?" opens the full keys popup — a bare "?" cannot be a
+// global keyboard shortcut (it's a real character in ordinary messages: "what
+// does this do?"), so this is its only trigger. Left out of the list itself
+// so the inline hint doesn't have to explain two different help surfaces;
+// "/help" covers the discoverable case.
 var slashOrder = []string{"model", "approval", "tasks", "git", "skills", "compact", "theme", "density", "clear", "help", "quit"}
 
 func slashCommand(value string) (command, args string, ok bool) {

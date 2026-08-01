@@ -23,7 +23,7 @@ type Composer struct {
 
 func NewComposer() Composer {
 	input := textarea.New()
-	input.Placeholder = "/model to switch · Tab for panels · ? for keys"
+	input.Placeholder = "/model to switch · Tab for panels · /? for keys"
 	input.Prompt = "› "
 	input.ShowLineNumbers = false
 	input.MaxHeight = composerMaxHeight

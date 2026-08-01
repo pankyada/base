@@ -3,6 +3,7 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
 import { ProfileSchema, Profile, MODE_DEFAULTS } from './schema.js'
+import { MODEL_REGISTRY } from '../models/registry.js'
 
 function untildify(p: string): string {
   return p.startsWith('~') ? p.replace('~', homedir()) : p
@@ -86,6 +87,24 @@ export function validateMode(profile: Profile): void {
   }
 }
 
+function providerForModel(id: string): string {
+  const registered = MODEL_REGISTRY.find(model => model.id === id)
+  if (registered) return registered.provider
+  if (id.toLowerCase().startsWith('claude')) return 'Anthropic'
+  if (id.toLowerCase().startsWith('gpt') || id.toLowerCase().startsWith('o')) return 'OpenAI'
+  return 'unknown'
+}
+
+export function validateWorkflowModels(profile: Profile): void {
+  if (!profile.workflow?.enabled || !profile.models?.roles) return
+  const buildTier = profile.workflow.routing.table.build ?? 'balanced'
+  const build = profile.models.roles[buildTier] ?? profile.model.id
+  const critic = profile.models.roles.critic ?? profile.model.id
+  if (providerForModel(build) === providerForModel(critic) && providerForModel(build) !== 'unknown') {
+    console.warn(`[workflow] critic and build roles share ${providerForModel(build)} model family; review diversity is reduced`)
+  }
+}
+
 export function loadProfile(profilePath: string): Profile {
   const raw = readFileSync(profilePath, 'utf-8')
   const parsed = yaml.load(raw)
@@ -101,5 +120,6 @@ export function loadProfile(profilePath: string): Profile {
 
   const withMode = applyModeDefaults(profile)
   validateMode(withMode)
+  validateWorkflowModels(withMode)
   return withMode
 }

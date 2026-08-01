@@ -6,11 +6,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var overlayTabs = []string{"model", "approval", "skills", "tasks"}
+var overlayTabs = []string{"model", "approval", "theme", "density", "skills", "tasks"}
 
 var overlayTabHints = map[string]string{
 	"model":    "↑/↓ choose · / filter · enter apply · tab next · esc close",
 	"approval": "↑/↓ choose · enter apply · tab next · esc close",
+	"theme":    "↑/↓ choose · live preview · tab next · esc close",
+	"density":  "↑/↓ choose · live preview · tab next · esc close",
 	"skills":   "↑/↓ select · enter open · e edit · p promote · d discard · m mine · r refresh",
 	"tasks":    "↑/↓ select · enter run/stop · e edit · d detect · a ask agent · r reload",
 }

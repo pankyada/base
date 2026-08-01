@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { Tier, Intensity } from '../workflow/types.js'
 
 const AclValue = z.enum(['allow', 'prompt', 'deny'])
 
@@ -128,6 +129,36 @@ const SafetySchema = z.object({
   enabled: z.boolean().default(true),
 })
 
+const IntensityValue = z.number().int().min(0).max(3) as z.ZodType<Intensity>
+const RoleModelsSchema = z.object({
+  cheap: z.string().optional(),
+  balanced: z.string().optional(),
+  frontier: z.string().optional(),
+  critic: z.string().optional(),
+})
+const WorkflowSchema = z.object({
+  enabled: z.boolean().default(false),
+  playbook: z.string().default('generic'),
+  min_intensity: z.record(z.string(), IntensityValue).default({ recon: 1 }),
+  max_intensity: z.record(z.string(), IntensityValue).default({}),
+  budget: z.object({
+    max_usd_per_task: z.number().positive().default(2),
+    max_stage_retries: z.number().int().min(0).default(2),
+    max_stage_minutes: z.number().positive().default(15),
+  }).default({ max_usd_per_task: 2, max_stage_retries: 2, max_stage_minutes: 15 }),
+  routing: z.object({
+    policy: z.enum(['static', 'adaptive']).default('static'),
+    explore_rate: z.number().min(0).max(0.5).default(0.12),
+    shadow_rate: z.number().min(0).max(0.5).default(0.05),
+    table: z.record(z.string(), z.enum(['cheap', 'balanced', 'frontier', 'critic'])).default({}),
+  }).default({ policy: 'static', explore_rate: 0.12, shadow_rate: 0.05, table: {} }),
+  knowledge: z.object({
+    graph: z.boolean().default(false),
+    generalization_probe: z.boolean().default(true),
+  }).default({ graph: false, generalization_probe: true }),
+})
+export { RoleModelsSchema, WorkflowSchema }
+
 export type SafetyConfig = z.infer<typeof SafetySchema>
 
 export const ProfileSchema = z.object({
@@ -138,6 +169,8 @@ export const ProfileSchema = z.object({
     id: z.string(),
     fallback_id: z.string().optional(),
   }),
+  models: z.object({ roles: RoleModelsSchema }).optional(),
+  workflow: WorkflowSchema.optional(),
   system_prompt: z.string(),
   working_dir: z.string().default('$CWD'),
   artifact_dir: z.string(),
@@ -204,3 +237,7 @@ type ParsedProfile = z.infer<typeof ProfileSchema>
 // Keep hand-built test/embedding profiles source-compatible while parsed YAML
 // always receives the safe classifier defaults above.
 export type Profile = Omit<ParsedProfile, 'safety'> & { safety?: SafetyConfig }
+
+export function resolveRole(profile: Profile, role: Tier): string {
+  return profile.models?.roles?.[role] ?? profile.model.id
+}

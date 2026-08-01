@@ -7,6 +7,8 @@ import { Improver, ProposedSkill } from './interface.js'
 import { queryEvents } from '../telemetry/query.js'
 import { Profile } from '../profiles/schema.js'
 import { saveSession } from '../session/store.js'
+import { aggregateRouting } from '../analysis/routing.js'
+import { parseRoutingPolicy, updateRoutingPolicy } from '../workflow/adaptive.js'
 
 export class DefaultImprover implements Improver {
   constructor(
@@ -62,6 +64,20 @@ export class DefaultImprover implements Improver {
       const entry = `\n## Session ${session.id} (${new Date().toISOString()})\n` +
         memories.map(m => `- **${m.key}**: ${m.content.slice(0, 200)}`).join('\n') + '\n'
       writeFileSync(join(learningsDir, `${date}.md`), entry, { flag: 'a' })
+    }
+
+    if (this.profile.workflow?.enabled && this.profile.workflow.routing.policy === 'adaptive') {
+      try {
+        const currentRaw = await memory.read('project', 'routing-policy')
+        const current = parseRoutingPolicy(currentRaw?.content) ?? {}
+        const report = aggregateRouting(queryEvents({ profile: this.profile.name }))
+        const cells = Object.fromEntries(Object.values(report.cells).map(cell => [`${cell.task_class}|${cell.stage}`, { tier: cell.tier as 'cheap' | 'balanced' | 'frontier' | 'critic', n: cell.n, first_try: cell.first_try_rate ?? 0, rework_rate: cell.rework_rate ?? 0, consecutive_escalations: cell.consecutive_escalations, reversibility: cell.reversibility }]))
+        const floor = this.profile.workflow.routing.table as Partial<Record<'recon' | 'plan' | 'design' | 'build' | 'verify' | 'review', 'cheap' | 'balanced' | 'frontier' | 'critic'>>
+        const updated = updateRoutingPolicy({ cells }, current, floor, this.profile.workflow.playbook)
+        await memory.write('project', 'routing-policy', JSON.stringify(updated, null, 2))
+      } catch {
+        // Adaptive policy is advisory and must never break reflection.
+      }
     }
   }
 
