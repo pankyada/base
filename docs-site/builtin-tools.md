@@ -116,6 +116,22 @@ Load and return a skill by name. Returns the full `SKILL.md` content.
 
 ---
 
+### `ContextRestore`
+
+Restore the full result of an earlier tool call that was elided from the model's context projection. The result remains in the session ledger; this tool retrieves it by the stored `tool_call_id`.
+
+**ACL default:** `allow`
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Earlier tool-call id |
+| `offset` | number | no | Character offset, default `0` |
+| `limit` | number | no | Maximum characters to restore |
+
+When `limit` truncates output, the result ends with a remaining-character marker. Old sessions without stored tool-call ids return a clear unavailable message.
+
+---
+
 ## Memory tools
 
 All memory tools operate on one of three scopes:

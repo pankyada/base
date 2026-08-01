@@ -58,6 +58,7 @@ Server (ws:7337)
 | `src/types.ts` | Shared WS protocol types (`ClientMessage` / `ServerMessage`) |
 | `src/profiles/schema.ts` | Zod schema for profiles — **start here** when changing config shape |
 | `src/loop/agent-loop.ts` | Core streaming agentic loop; handles tool call fan-out, ACL, hooks, telemetry |
+| `src/context/` | Append-only ledger projection, estimator calibration, decay ladder, digest, pins, and cache markers |
 | `src/server/index.ts` | WS server; one `Session` + `FsMemoryProvider` per connection |
 | `src/tools/registry.ts` | Global tool registry; `registerAll()` in `src/tools/builtin/index.ts` registers built-ins |
 | `src/tools/acl.ts` | ACL resolution: profile `tools.builtin[name]` for built-ins; `tools.mcp_servers[].acl` for MCP |
@@ -169,3 +170,5 @@ Uses the OpenAI SDK pointed at any `base_url` — model is fully configurable pe
 ### Cost estimation
 
 Model pricing and context windows live in `src/models/registry.ts`; `estimateCost` uses the active model and fallback pricing for unknown ids.
+
+Context management keeps `Session.messages` as an append-only ledger. `src/context/projection.ts` recomputes a budgeted wire projection each turn: tool results elide to restorable handles, whole turns may digest, and tier-3 dropping guarantees termination without rewriting history.

@@ -14,6 +14,7 @@ export interface AgentLoopEvents {
   onToolPrompt(id: string, name: string, input: Record<string, unknown>, risk?: RiskLevel, reason?: string): Promise<boolean>
   onSessionEnd(sessionId: string): void
   onStats?(tokens_in: number, tokens_out: number, cost_usd: number, context_tokens?: number): void
+  onNotice?(level: 'info' | 'warn' | 'error', message: string, detail?: string): void
   onSafetyNotice?(model: string): void
   onArtifacts?(sessionId: string, artifacts: any[]): void
   onInputRequest?(id: string, prompt: string, kind: InputRequestKind, options?: string[]): Promise<string>

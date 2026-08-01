@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { ToolDefinition, ToolContext } from '../types.js'
 import { logEvent } from '../../telemetry/logger.js'
+import { pin } from '../../context/pins.js'
 
 export const skillTool: ToolDefinition = {
   name: 'Skill',
@@ -26,6 +27,10 @@ export const skillTool: ToolDefinition = {
       name,
       trigger: 'model',
     })
-    return readFileSync(skill.filePath, 'utf-8')
+    const content = readFileSync(skill.filePath, 'utf-8')
+    if (pin(ctx.session, ctx.profile, name, content) === 'over-budget') {
+      ctx.events.onNotice?.('warn', 'skill pin budget exceeded', `Skill "${name}" remains available as a normal tool result`)
+    }
+    return content
   },
 }

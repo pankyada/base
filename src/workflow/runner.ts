@@ -26,9 +26,23 @@ function triageIsFixed(profile: Profile): boolean {
   return STAGES.every(stage => min[stage] !== undefined && max[stage] !== undefined && min[stage] === max[stage])
 }
 
+// A sentence-scoped negation check on the failure vocabulary — "no errors
+// found, all tests passed" and "previously broken, now fixed" both contain a
+// raw fail-keyword hit but are resolutions, not failures. Splitting on
+// sentence boundaries and requiring the negator to land in the *same*
+// sentence keeps this local (no cross-sentence bleed) while catching the
+// common "no X" / "X, now fixed" phrasings a verify stage actually produces.
+const FAIL_WORD = /\b(fail(?:ed|s|ure)?|error(?:s)?|broken|incorrect)\b/i
+const RESOLVED_NEARBY = /\b(no|not|n't|never|zero|none|without|resolved|fixed|passed?|corrected|addressed)\b/i
+
+function hasUnresolvedFailure(body: string): boolean {
+  const sentences = body.split(/(?<=[.!\n])\s*/)
+  return sentences.some(sentence => FAIL_WORD.test(sentence) && !RESOLVED_NEARBY.test(sentence))
+}
+
 export function shouldEscalate(result: StageResult): { escalate: boolean; reason: string } {
   if (!result.contract_ok) return { escalate: true, reason: 'stage contract unmet' }
-  if (result.stage === 'verify' && (/\b(fail|failed|error|broken|incorrect)\b/i.test(result.body) || failBackTarget(result) !== null)) return { escalate: true, reason: 'verification failed' }
+  if (result.stage === 'verify' && (hasUnresolvedFailure(result.body) || failBackTarget(result) !== null)) return { escalate: true, reason: 'verification failed' }
   if ((result.edit_rewrites ?? 0) >= 3) return { escalate: true, reason: 'edit thrash' }
   if ((result.tool_error_rate ?? 0) > 0.3) return { escalate: true, reason: 'tool error rate above 30%' }
   if ((result.confidence ?? 1) < 0.4) return { escalate: true, reason: 'low confidence' }
@@ -36,10 +50,23 @@ export function shouldEscalate(result: StageResult): { escalate: boolean; reason
   return { escalate: false, reason: '' }
 }
 
+// Back-targetable stages. Checked in pipeline order, but the window in
+// stageWrongPattern is kept tight (adjacent words only) precisely so an
+// earlier stage merely *mentioned* nearby a later stage's "is wrong" clause
+// can't spuriously match — e.g. "the plan missed this so the build is wrong"
+// must resolve to build, the stage actually called wrong, not plan.
+const BACK_TARGETS: Stage[] = ['recon', 'plan', 'design', 'build']
+const BACK_TARGET_PATTERN = new RegExp(`(?:precondition|fail[- ]back|go(?:ing)?\\s+back|revisit|redo|return)\\s+(?:to\\s+)?(?:the\\s+)?(${BACK_TARGETS.join('|')})(?:\\s+stage)?`, 'i')
+
+function stageWrongPattern(stage: Stage): RegExp {
+  return new RegExp(`\\b${stage}\\b(?:\\s+stage)?[^.\\n]{0,10}\\b(?:is|was)\\b[^.\\n]{0,10}\\b(wrong|incorrect|flawed|broken|invalid)\\b|\\b(wrong|incorrect|flawed|broken|invalid)\\b[^.\\n]{0,10}\\bwith\\s+(?:the\\s+)?${stage}\\b`, 'i')
+}
+
 export function failBackTarget(result: StageResult): Stage | null {
-  const match = result.body.match(/(?:precondition|fail[- ]back|wrong)\s+(?:stage\s+)?(?:is\s+)?(recon|plan|design|build)/i)
-  if (match) return match[1] as Stage
-  return result.stage === 'verify' && /\b(design|contract)\b.*\bwrong|wrong.*\b(design|contract)\b/i.test(result.body) ? 'design' : result.stage === 'verify' && /\b(build|code)\b.*\bwrong|wrong.*\b(build|code)\b/i.test(result.body) ? 'build' : null
+  const explicit = result.body.match(BACK_TARGET_PATTERN)
+  if (explicit) return explicit[1].toLowerCase() as Stage
+  if (result.stage !== 'verify') return null
+  return BACK_TARGETS.find(stage => stageWrongPattern(stage).test(result.body)) ?? null
 }
 
 function stageBody(session: Session): string {

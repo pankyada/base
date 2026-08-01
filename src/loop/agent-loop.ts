@@ -9,7 +9,8 @@ import { classify } from '../safety/classifier.js'
 import { classifyStatic } from '../safety/rules.js'
 import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
-import { maybeCondenseMessages, estimateTokens } from './context-manager.js'
+import { project, projectionTelemetry } from '../context/projection.js'
+import { calibrate, estimateTokens, rawTokens } from '../context/estimator.js'
 import { withRetry } from './retry.js'
 import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
 import type { StageTag } from '../workflow/types.js'
@@ -56,7 +57,15 @@ export async function runAgentLoop(
   while (true) {
     if (signal?.aborted) return
 
-    await maybeCondenseMessages(session, profile, openai)
+    const projectedMessages = await project(
+      session,
+      profile,
+      openai,
+      context.memory,
+      (message, detail) => events.onNotice?.('warn', message, detail),
+    )
+    const sentRaw = rawTokens(projectedMessages)
+    const contextTokensEst = estimateTokens(projectedMessages, session)
 
     // Reasoning-family models (o-series, GPT-5.4+) 400 on /v1/chat/completions
     // when function tools are attached unless reasoning_effort is 'none' —
@@ -66,7 +75,7 @@ export async function runAgentLoop(
     const stream = await withRetry<any>(
       () => (openai.chat.completions as any).create({
         model: modelId,
-        messages: session.messages as OpenAI.ChatCompletionMessageParam[],
+        messages: projectedMessages as OpenAI.ChatCompletionMessageParam[],
         tools: openaiTools.length > 0 ? openaiTools : undefined,
         ...(needsReasoningEffortNone ? { reasoning_effort: 'none' } : {}),
         stream: true,
@@ -81,6 +90,7 @@ export async function runAgentLoop(
     const toolCallMap = new Map<number, { id: string; name: string; args: string }>()
     let tokensIn = 0
     let tokensOut = 0
+    let cacheReadTokens: number | undefined
 
     for await (const chunk of stream) {
       const delta = chunk.choices?.[0]?.delta
@@ -107,6 +117,9 @@ export async function runAgentLoop(
       if (chunk.usage) {
         tokensIn = chunk.usage.prompt_tokens ?? 0
         tokensOut = chunk.usage.completion_tokens ?? 0
+        const usage = chunk.usage as any
+        cacheReadTokens = usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens
+        calibrate(session, tokensIn, sentRaw)
       }
     }
 
@@ -114,10 +127,15 @@ export async function runAgentLoop(
     session.usage.input += tokensIn
     session.usage.output += tokensOut
     session.usage.cost_usd += cost
-    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(session.messages))
+    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(projectedMessages, session))
     logEvent({
       session: session.id, profile: profile.name, kind: 'llm',
       model: modelId, tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost,
+      context_tokens_est: contextTokensEst,
+      context_tokens_actual: tokensIn,
+      calib_ratio: session.context?.calib.ratio,
+      ...projectionTelemetry(projectedMessages),
+      ...(cacheReadTokens === undefined ? {} : { cache_read_tokens: cacheReadTokens }),
       ...(opts?.stage ?? {}),
     })
 
@@ -288,6 +306,7 @@ export async function runAgentLoop(
         role: 'tool', tool_call_id: r.tool_call_id, content,
       } as any)
       session.tool_calls.push({
+        id: r.tool_call_id,
         name: r.name, input: r.input, result: r.content, ok: r.ok, ts: new Date().toISOString(),
       })
     }

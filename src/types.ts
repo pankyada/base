@@ -75,6 +75,14 @@ export interface TelemetryEvent {
   total_cost_usd?: number
   reason?: string
   human_edit_churn?: number
+  context_tokens_est?: number
+  context_tokens_actual?: number
+  calib_ratio?: number
+  elided_count?: number
+  elided_bytes?: number
+  digest_calls?: number
+  restore_calls?: number
+  cache_read_tokens?: number
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {

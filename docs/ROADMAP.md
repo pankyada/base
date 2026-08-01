@@ -304,6 +304,19 @@ observability only — the dataset comes first, adaptivity after.
 **Design:** [`docs/superpowers/specs/2026-08-01-adaptive-workflow-routing-design.md`](superpowers/specs/2026-08-01-adaptive-workflow-routing-design.md)
 **Plan:** [`docs/superpowers/plans/2026-08-01-adaptive-workflow-routing.md`](superpowers/plans/2026-08-01-adaptive-workflow-routing.md)
 
+### ✅ 16. Context projection
+
+**Shipped:** append-only session ledger with a recomputed budgeted projection;
+self-calibrating estimator; tiered tool-result elision with `ContextRestore`;
+explicit Skill pins; whole-turn digest with project-memory fact promotion;
+termination-safe turn dropping; non-destructive `/compact`; optional cache
+breakpoints; and context telemetry.
+
+**Cache result:** a live two-call probe against the Anthropic
+OpenAI-compatible endpoint returned ordinary `prompt_tokens` but no
+`cache_read_tokens` field. Cache markers ship behind `context.cache`, default
+`false`; no caching win is claimed.
+
 ---
 
 ## Suggested sequencing

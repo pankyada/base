@@ -18,6 +18,7 @@ const BuiltinToolsSchema = z.object({
   Stats: AclValue.default('allow'),
   Delegate: AclValue.default('prompt'),
   ExecuteCode: AclValue.default('allow'),
+  ContextRestore: AclValue.default('allow'),
 }).passthrough()
 
 const McpAcl = z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const }))
@@ -159,6 +160,22 @@ const WorkflowSchema = z.object({
 })
 export { RoleModelsSchema, WorkflowSchema }
 
+const ContextSchema = z.object({
+  max_tokens: z.number().positive().default(100000),
+  high_water: z.number().min(0).max(1).default(0.80),
+  low_water: z.number().min(0).max(1).default(0.45),
+  tail_turns: z.number().int().min(0).default(3),
+  pin_budget: z.number().min(0).max(1).default(0.25),
+  digest_model_id: z.string().optional(),
+  cache: z.boolean().default(false),
+}).superRefine((value, ctx) => {
+  if (value.high_water <= value.low_water) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['high_water'], message: 'high_water must be greater than low_water' })
+  }
+})
+
+export type ContextConfig = z.infer<typeof ContextSchema>
+
 export type SafetyConfig = z.infer<typeof SafetySchema>
 
 export const ProfileSchema = z.object({
@@ -207,6 +224,7 @@ export const ProfileSchema = z.object({
     max_tokens: z.number().default(100000),
     model_id: z.string().optional(),
   }).optional(),
+  context: ContextSchema.optional(),
   memory: z.preprocess(
     (val) => val ?? {},
     z.object({
@@ -231,12 +249,18 @@ export const ProfileSchema = z.object({
   }).optional(),
   executor: ExecutorSchema.optional(),
   mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
+}).transform(profile => {
+  const context = profile.context ?? ContextSchema.parse({
+    max_tokens: profile.context_window?.max_tokens,
+    digest_model_id: profile.context_window?.model_id,
+  })
+  return { ...profile, context }
 })
 
 type ParsedProfile = z.infer<typeof ProfileSchema>
 // Keep hand-built test/embedding profiles source-compatible while parsed YAML
 // always receives the safe classifier defaults above.
-export type Profile = Omit<ParsedProfile, 'safety'> & { safety?: SafetyConfig }
+export type Profile = Omit<ParsedProfile, 'safety' | 'context'> & { safety?: SafetyConfig; context?: ContextConfig }
 
 export function resolveRole(profile: Profile, role: Tier): string {
   return profile.models?.roles?.[role] ?? profile.model.id

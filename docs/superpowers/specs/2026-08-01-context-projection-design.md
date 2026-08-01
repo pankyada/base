@@ -259,6 +259,18 @@ telemetry field, and a documented result — before it is recommended.
 Note the interaction: pinning mid-session mutates the prefix and invalidates
 the cache **once**, at pin time. That is accepted; pins are append-only and rare.
 
+### 7.1 Measurement result (2026-08-01)
+
+Two live calls were sent to `https://api.anthropic.com/v1/chat/completions`
+using model `claude-haiku-4-5-20251001`, with the same system prefix marked
+`cache_control: { type: "ephemeral" }`. The endpoint returned
+`prompt_tokens: 24` and `prompt_tokens: 25`; it returned no
+`cache_read_tokens` (or equivalent cache-read field) on either response. The
+probe replies were `PING` and `PONG`, so the request path itself worked. This
+does not demonstrate provider-side caching through the OpenAI-compatible path;
+the cache flag remains off by default, and a native Anthropic path would be
+needed before claiming a caching win.
+
 ---
 
 ## 8. Eviction order

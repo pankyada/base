@@ -32,4 +32,7 @@ features:
   - icon: 🧠
     title: Self-improving
     details: Post-session reflection writes key learnings to memory. Skill mining extracts reusable patterns every N sessions.
+  - icon: 📐
+    title: Context projection
+    details: Durable session ledgers project into a budgeted context with restorable tool output, explicit pins, digest promotion, and calibrated token estimates.
 ---

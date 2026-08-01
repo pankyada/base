@@ -17,6 +17,7 @@ import { askUserTool } from './ask-user.js'
 import { todoWriteTool } from './todo-write.js'
 import { todoReadTool } from './todo-read.js'
 import { executeCodeTool } from './execute-code.js'
+import { contextRestoreTool } from './context-restore.js'
 
 export { clearRegistry, registerTool } from '../registry.js'
 
@@ -39,4 +40,5 @@ export function registerAll(): void {
   registerTool(todoWriteTool)
   registerTool(todoReadTool)
   registerTool(executeCodeTool)
+  registerTool(contextRestoreTool)
 }

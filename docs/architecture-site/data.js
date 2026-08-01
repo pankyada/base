@@ -101,11 +101,11 @@
           },
           {
             id: "ctx",
-            name: "Context Manager",
-            files: ["src/loop/context-manager.ts"],
-            responsibility: "Condenses messages when context exceeds budget.",
+            name: "Context Projection",
+            files: ["src/context/projection.ts", "src/context/estimator.ts"],
+            responsibility: "Projects the append-only ledger into a budgeted provider request.",
             detail:
-              "Watches the running token footprint and compresses or summarises older turns when the conversation grows past the model's budget. This keeps long sessions coherent without blowing the context window."
+              "Keeps the durable session ledger intact while eliding restorable tool output, digesting complete turns, and dropping oldest turns as a final bounded backstop."
           },
           {
             id: "retry",

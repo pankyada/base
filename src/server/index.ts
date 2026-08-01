@@ -28,7 +28,8 @@ import { runAgentLoop } from '../loop/agent-loop.js'
 import { runWorkflow } from '../workflow/runner.js'
 import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { listModels } from '../models/registry.js'
-import { contextWindowForProfile, estimateTokens, maybeCondenseMessages } from '../loop/context-manager.js'
+import { project } from '../context/projection.js'
+import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
@@ -328,12 +329,24 @@ async function main() {
       }
 
       if (msg.type === 'compact') {
-        const before = estimateTokens(session.messages)
-        const saved = await maybeCondenseMessages(session, connectionProfile, openai, true)
-        const after = estimateTokens(session.messages)
+        const before = estimateTokens(await project(session, connectionProfile, openai, memory))
+        const compactProfile = {
+          ...connectionProfile,
+          context: {
+            max_tokens: connectionProfile.context?.max_tokens ?? contextWindowFor(connectionProfile),
+            high_water: 0,
+            low_water: 0,
+            tail_turns: connectionProfile.context?.tail_turns ?? 0,
+            pin_budget: connectionProfile.context?.pin_budget ?? 0.25,
+            digest_model_id: connectionProfile.context?.digest_model_id,
+            cache: connectionProfile.context?.cache ?? false,
+          },
+        }
+        const afterProjection = await project(session, compactProfile, openai, memory)
+        const after = estimateTokens(afterProjection, session)
         saveSession(session)
-        send({ type: 'stats', tokens_in: session.usage.input, tokens_out: session.usage.output, cost_usd: session.usage.cost_usd, context_window: contextWindowForProfile(connectionProfile), context_tokens: after })
-        send({ type: 'notice', level: 'info', message: saved > 0 ? `compacted context · ${before - after} tokens saved` : 'context already compact', detail: saved > 0 ? `${before} → ${after} tokens` : 'no condensation needed' })
+        send({ type: 'stats', tokens_in: session.usage.input, tokens_out: session.usage.output, cost_usd: session.usage.cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens: after })
+        send({ type: 'notice', level: 'info', message: before > after ? `compacted context · ${before - after} tokens saved` : 'context already compact', detail: before > after ? `${before} → ${after} tokens` : 'no condensation needed' })
         return
       }
 
@@ -409,13 +422,14 @@ async function main() {
             send({ type: 'session_end', sessionId: id })
           },
           onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => {
-            send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowForProfile(connectionProfile), context_tokens })
+            send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens })
           },
           onSafetyNotice: (classifierModel) => {
             if (safetyDisclosed) return
             safetyDisclosed = true
             send({ type: 'notice', level: 'info', message: `ambiguous tools classified by ${classifierModel}`, detail: 'verdicts are cached · set safety.enabled: false or use /approval bash to opt out' })
           },
+          onNotice: (level, message, detail) => send({ type: 'notice', level, message, detail }),
           onArtifacts: (sessionId, artifacts) => {
             send({ type: 'artifacts', sessionId, artifacts })
           },
