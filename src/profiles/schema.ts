@@ -1,7 +1,25 @@
 import { z } from 'zod'
 import type { Tier, Intensity } from '../workflow/types.js'
 
-const AclValue = z.enum(['allow', 'prompt', 'deny'])
+export const AclValue = z.enum(['allow', 'prompt', 'deny'])
+
+const ChannelSchema = z.object({
+  name: z.string().min(1),
+  transport: z.string().min(1),
+  inbound: z.boolean().default(false),
+  default: z.boolean().default(false),
+  config: z.record(z.string(), z.unknown()).default({}),
+  acl: z.object({
+    notify: AclValue.default('allow'),
+    approvals: z.boolean().default(false),
+    inbound: z.enum(['paired', 'open', 'off']).default('paired'),
+  }).default({ notify: 'allow', approvals: false, inbound: 'paired' }),
+  limits: z.object({
+    max_sends_per_hour: z.number().int().positive().optional(),
+  }).default({}),
+})
+
+export type ChannelConfig = z.infer<typeof ChannelSchema>
 
 const BuiltinToolsSchema = z.object({
   Read: AclValue.default('allow'),
@@ -19,6 +37,7 @@ const BuiltinToolsSchema = z.object({
   Delegate: AclValue.default('prompt'),
   ExecuteCode: AclValue.default('allow'),
   ContextRestore: AclValue.default('allow'),
+  Notify: AclValue.default('allow'),
 }).passthrough()
 
 const McpAcl = z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const }))
@@ -249,7 +268,13 @@ export const ProfileSchema = z.object({
   }).optional(),
   executor: ExecutorSchema.optional(),
   mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
+  channels: z.array(ChannelSchema).optional(),
 }).transform(profile => {
+  const channelNames = new Set<string>()
+  for (const channel of profile.channels ?? []) {
+    if (channelNames.has(channel.name)) throw new Error(`duplicate channel name '${channel.name}'`)
+    channelNames.add(channel.name)
+  }
   const context = profile.context ?? ContextSchema.parse({
     max_tokens: profile.context_window?.max_tokens,
     digest_model_id: profile.context_window?.model_id,

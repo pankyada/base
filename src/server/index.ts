@@ -33,6 +33,7 @@ import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
+import { ChannelRuntime } from '../channels/runtime.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -62,6 +63,23 @@ async function main() {
     : resolve(homedir(), '.harness', 'profiles', 'coding.yaml')
 
   const profile = loadProfile(profilePath)
+  const channels = new ChannelRuntime(profile)
+  channels.onInbound(async route => {
+    if (route.binding.profile !== profile.name) return
+    const events: AgentLoopEvents = {
+      onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {},
+      onToolPrompt: (id, name, input, risk, reason) => channels.requestApproval(route.binding.user, name, input, risk, reason),
+      onInputRequest: (_id, prompt, kind, options) => channels.requestInput(route.binding.user, prompt, kind, options).then(value => value ?? ''),
+      onSessionEnd: () => {}, onStats: () => {},
+    }
+    try {
+      const result = await runProfileOnce({ profile, userId: route.binding.user, userMessage: route.message.text, events, channels })
+      if (result.finalText) await channels.send(route.binding.user, route.channel, { text: result.finalText })
+    } catch (error: any) {
+      await channels.send(route.binding.user, route.channel, { text: `run failed: ${error.message}`, urgency: 'high' })
+    }
+  })
+  await channels.init()
   // One-time sweep of the legacy profile-scoped label bucket (pre-dates
   // per-user/per-project scoping below). Per-session sweeps below are what
   // actually keep deferred labels current across a long-running server.
@@ -90,6 +108,7 @@ async function main() {
       profile: stalledProfile, userId: run.user,
       userMessage: typeof run.input === 'string' ? run.input : JSON.stringify(run.input),
       events: { onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {}, onToolPrompt: async () => false, onSessionEnd: () => {}, onStats: () => {} },
+      channels,
     })
       .then(r => runStore.update(run.id, { status: 'completed', session_id: r.session.id, finished_at: new Date().toISOString() }))
       .catch(e => runStore.update(run.id, { status: 'failed', error: e.message, finished_at: new Date().toISOString() }))
@@ -103,7 +122,7 @@ async function main() {
   }
 
   clearRegistry()
-  registerAll()
+  registerAll(channels)
 
   const customToolsDirs = resolveToolsDirs()
   const customTools = await loadAllCustomTools(customToolsDirs)
@@ -122,13 +141,13 @@ async function main() {
     console.warn('[auth] HARNESS_API_KEY is set but empty — ignoring, server is unauthenticated')
   }
 
-  const scheduler = new CronScheduler(profile, runStore, abortRegistry)
+  const scheduler = new CronScheduler(profile, runStore, abortRegistry, channels)
   scheduler.init()
   if (profile.triggers?.cron) {
     console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
   }
 
-  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills })
+  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills, channels })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({
     server: httpServer,
@@ -454,6 +473,7 @@ async function main() {
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
           approvalMode,
+          channels,
         }
 
         const runSignal = abortController.signal
@@ -523,6 +543,7 @@ async function main() {
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
     httpServer.close()
+    void channels.stop()
     process.exit(0)
   })
 }

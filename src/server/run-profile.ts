@@ -14,6 +14,7 @@ import { sanitizeUserId } from '../session/user-paths.js'
 import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
+import type { ChannelRuntime } from '../channels/runtime.js'
 
 export interface RestUsage { tokens_in: number; tokens_out: number; cost_usd: number }
 
@@ -29,11 +30,12 @@ export interface RunProfileOptions {
   userMessage: string
   events: AgentLoopEvents
   signal?: AbortSignal
+  channels?: ChannelRuntime
 }
 
 /** One-shot root run of a profile: build context, run the loop, extract final text + usage. */
 export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfileResult> {
-  const { profile, userMessage, events, signal } = opts
+  const { profile, userMessage, events, signal, channels } = opts
   const user = sanitizeUserId(opts.userId)
   const openai = createProviderClient(profile)
   const mcpEntries = await createMcpClients(profile)
@@ -52,7 +54,7 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
     const agentTools = await loadAgentTools(profile)
     const context: ToolContext = {
       profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
-      events, openai, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2,
+      events, openai, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2, channels,
     }
 
     if (profile.workflow?.enabled) {

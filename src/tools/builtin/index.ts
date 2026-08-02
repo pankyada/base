@@ -18,10 +18,12 @@ import { todoWriteTool } from './todo-write.js'
 import { todoReadTool } from './todo-read.js'
 import { executeCodeTool } from './execute-code.js'
 import { contextRestoreTool } from './context-restore.js'
+import { notifyTool } from './notify.js'
+import type { ChannelRuntime } from '../../channels/runtime.js'
 
 export { clearRegistry, registerTool } from '../registry.js'
 
-export function registerAll(): void {
+export function registerAll(channels?: ChannelRuntime): void {
   registerTool(readTool)
   registerTool(writeTool)
   registerTool(editTool)
@@ -41,4 +43,5 @@ export function registerAll(): void {
   registerTool(todoReadTool)
   registerTool(executeCodeTool)
   registerTool(contextRestoreTool)
+  if (channels?.enabled) registerTool(notifyTool)
 }

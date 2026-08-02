@@ -14,6 +14,7 @@ import type { Run } from '../runs/types.js'
 import type { Skill } from '../tools/types.js'
 import { createProject, listProjects, ensureInbox } from '../projects/store.js'
 import { listSessionSummaries, assignSession } from '../session/store.js'
+import type { ChannelRuntime } from '../channels/runtime.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
@@ -24,6 +25,7 @@ export interface RestDeps {
   runStore: RunStore
   abortRegistry: Map<string, AbortController>
   skills: Skill[]
+  channels?: ChannelRuntime
 }
 
 interface AgentCard {
@@ -146,6 +148,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
       profile: prepared.profile, userId: prepared.userId,
       userMessage: prepared.userMessage, events: headlessEvents(),
       signal: abort.signal,
+      channels: deps.channels,
     })
   } catch (e: any) {
     deps.abortRegistry.delete(runId)
@@ -193,6 +196,7 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
     const result = await runProfileOnce({
       profile: prepared.profile, userId: prepared.userId,
       userMessage: prepared.userMessage, events, signal: abort.signal,
+      channels: deps.channels,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
@@ -322,7 +326,7 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
 
   try {
     const result = await runProfileOnce({
-      profile, userId, userMessage: inputCheck.userMessage, events: headlessEvents(), signal: abort.signal,
+      profile, userId, userMessage: inputCheck.userMessage, events: headlessEvents(), signal: abort.signal, channels: deps.channels,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
@@ -408,6 +412,7 @@ async function handleAcpMessages(
       userMessage: run.input as string,
       events,
       signal: abort.signal,
+      channels: deps.channels,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, {
@@ -492,6 +497,7 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
       userMessage,
       events: headlessEvents(),
       signal: abort.signal,
+      channels: deps.channels,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, {
@@ -529,6 +535,10 @@ export function createRestHandler(deps: RestDeps) {
     const method = req.method ?? 'GET'
 
     try {
+      if (method === 'POST' && url.startsWith('/channels/')) {
+        const channel = url.slice('/channels/'.length, -'/inbound'.length)
+        if (url.endsWith('/inbound') && deps.channels && await deps.channels.handleHttp(channel, req, res)) return
+      }
       if (method === 'GET' && url === '/health') {
         return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, version: VERSION })
       }

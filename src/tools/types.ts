@@ -6,6 +6,7 @@ import type { TodoItem, InputRequestKind, RiskLevel, ApprovalMode } from '../typ
 import type { Stage, Intensity, Tier } from '../workflow/types.js'
 import type { ExecutionResult } from '../executor/interface.js'
 import type OpenAI from 'openai'
+import type { ChannelRuntime } from '../channels/runtime.js'
 
 export interface AgentLoopEvents {
   onToken(token: string): void
@@ -45,6 +46,7 @@ export interface ToolContext {
   maxDepth?: number
   wasmSupported?: boolean
   approvalMode?: ApprovalMode
+  channels?: ChannelRuntime
 }
 
 export interface ToolDefinition {
