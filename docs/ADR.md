@@ -83,6 +83,9 @@ pointer to what replaced them.
 | [59](#adr-59) | Money integration is read-only, permanently | 📋 | product |
 | [60](#adr-60) | One brain, with guarded dev escalation | 📋 | product |
 | [61](#adr-61) | Hosting is deferred until after the OSS release | 📋 | product |
+| [62](#adr-62) | The assistant is named Mitra | 📋 | product |
+| [63](#adr-63) | Product state lives in `~/.mitra/`, separate from `~/.harness/` | 📋 | product |
+| [64](#adr-64) | Harness edits never happen from inside the product repo | 📋 | product |
 
 ---
 
@@ -776,3 +779,44 @@ threat model and a different set of obligations.
 isolation, OAuth verification, quotas, and compliance come after.
 *Consequences:* Slower path to a hosted offering; avoids building for tenants
 before the single-user product is proven.
+
+### ADR-62
+**The assistant is named Mitra** — 📋
+
+*Context:* The product needed a name for the repo, the CLI binary, the config
+file, and the state directory — all of which are expensive to change later.
+*Decision:* **Mitra** — Sanskrit for *friend*, and the Vedic deity of contracts,
+oaths, and kept agreements. Tagline: *an assistant that keeps its agreements.*
+Chosen over `sahay` (warmer but more generic) and `keel` (neutral but cold);
+`smriti` was rejected outright for colliding with an active AI-agent memory
+package.
+*Consequences:* The name is a checkable promise, so three things must stay
+visible product surfaces rather than settings pages: the audit trail
+([ADR-45](#adr-45)), the limits ([ADR-43](#adr-43), [ADR-44](#adr-44)), and
+explained refusals ([ADR-49](#adr-49)). A feature that makes those harder to see
+is off-brand regardless of utility. The npm name is held by an abandoned 2022
+package, which is irrelevant under [ADR-57](#adr-57).
+
+### ADR-63
+**Product state lives in `~/.mitra/`, separate from `~/.harness/`** — 📋
+
+*Context:* The product and the harness both persist state, and a single
+directory would entangle their lifecycles.
+*Decision:* Harness state (sessions, runs, telemetry, usage) stays in
+`~/.harness/` per [ADR-11](#adr-11). Product state (secrets, channel bindings,
+cursors, product config) lives in `~/.mitra/`.
+*Consequences:* A harness upgrade never threatens product state, and resetting
+the product never destroys session history. Two directories to back up.
+
+### ADR-64
+**Harness edits never happen from inside the product repo** — 📋
+
+*Context:* A git submodule is a full checkout, so `vendor/base` is editable from
+the product repo — which is precisely how the [ADR-28](#adr-28) boundary erodes,
+one convenient fix at a time.
+*Decision:* Harness changes are made in the `base` repo, committed and pushed
+there, then pinned. A pre-commit hook in the product repo rejects any staged
+change under `vendor/`, and CI re-checks it.
+*Consequences:* Co-developing a harness change with a product feature takes an
+extra commit-push-pin cycle. Accepted: the friction is the point, and it is the
+mirror of the guard `base` runs in the other direction.

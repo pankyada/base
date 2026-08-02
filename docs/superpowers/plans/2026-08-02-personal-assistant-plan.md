@@ -2,7 +2,7 @@
 
 **Generated**: 2026-08-02
 **Estimated Complexity**: High
-**Repos**: `base` (this harness, generic) + new `aide` repo (product; name TBD)
+**Repos**: `base` (this harness, generic) + new [`mitra`](2026-08-02-mitra-bootstrap.md) repo (product)
 
 ---
 
@@ -439,43 +439,43 @@ a fixture ✓ · `pnpm ls` shows no voice vendor in core ✓
 
 ---
 
-# PART B — Product repo (`aide`)
+# PART B — Product repo (`mitra`)
 
 ## Sprint A1: Skeleton + install story
-**Goal**: `pnpm aide init` produces a working, configured, empty assistant.
-**Demo**: clone, run init, answer prompts, `aide start`, chat in the TUI.
+**Goal**: `pnpm mitra init` produces a working, configured, empty assistant.
+**Demo**: clone, run init, answer prompts, `mitra start`, chat in the TUI.
 
 ### Task A1.1: Repo + workspace wiring
 - **Location**: new repo root
 - **Description**: pnpm workspace; `base` as git submodule at `vendor/base`
-  pinned by commit; `packages/aide-core`, `packages/aide-channels`,
-  `packages/aide-cli`, `profiles/`, `.agents/`.
+  pinned by commit; `packages/mitra-core`, `packages/mitra-channels`,
+  `packages/mitra-cli`, `profiles/`, `.agents/`.
 - **Acceptance**: `pnpm i && pnpm build` green from a fresh clone incl. submodule init.
 
 ### Task A1.2: Config schema + secrets vault
-- **Location**: `packages/aide-core/src/config.ts`, `src/secrets.ts`
-- **Description**: `aide.config.yaml` (non-secret) + OS keychain on macOS with
+- **Location**: `packages/mitra-core/src/config.ts`, `src/secrets.ts`
+- **Description**: `mitra.config.yaml` (non-secret) + OS keychain on macOS with
   encrypted-file fallback (age/libsodium) for Linux/Docker. Never plaintext keys
   in the repo or in profile YAML — profiles reference env var *names* only, as
   the harness already requires.
-- **Acceptance**: `aide doctor` reports every missing secret by name with the
+- **Acceptance**: `mitra doctor` reports every missing secret by name with the
   exact command to set it.
 
-### Task A1.3: `aide` CLI
-- **Location**: `packages/aide-cli`
+### Task A1.3: `mitra` CLI
+- **Location**: `packages/mitra-cli`
 - **Description**: `init`, `start`, `stop`, `status`, `doctor`, `logs`, `audit`,
   `channel add`, `profile list`.
 - **Acceptance**: every command works before any integration is configured.
 
 ### Task A1.4: Onboarding wizard
-- **Location**: `packages/aide-cli/src/init.ts`
+- **Location**: `packages/mitra-cli/src/init.ts`
 - **Description**: Interactive: name, timezone, channels, integrations, autonomy
   level, model budget. Writes config + profiles; idempotent re-run.
 - **Acceptance**: a first-time user reaches a working chat in under 10 minutes
   with no file editing. **This is the primary UX bet vs openclaw — treat wizard
   quality as a feature, not scaffolding.**
 
-**Checklist:** fresh clone → chat working ✓ · `aide doctor` actionable ✓
+**Checklist:** fresh clone → chat working ✓ · `mitra doctor` actionable ✓
 
 ---
 
@@ -501,8 +501,8 @@ inline keyboard.
   expired prompts render as disabled, not silently dead.
 
 ### Task A2.3: Identity binding + pairing
-- **Location**: `packages/aide-core/src/pairing.ts`
-- **Description**: `aide channel add telegram` prints a one-time pairing code;
+- **Location**: `packages/mitra-core/src/pairing.ts`
+- **Description**: `mitra channel add telegram` prints a one-time pairing code;
   first chat sends the code; binding persisted (H1.6). Unpaired chats get one
   refusal message and nothing else.
 - **Acceptance**: an unpaired stranger can never start a session or spend tokens.
@@ -523,7 +523,7 @@ inline keyboard.
 
 ### Task A3.1: MCP wiring for Gmail + Calendar
 - **Location**: `profiles/assistant.yaml`
-- **Description**: Google MCP servers; OAuth via `aide init`; **read scopes only**
+- **Description**: Google MCP servers; OAuth via `mitra init`; **read scopes only**
   this sprint. ACL: read `allow`, everything else `deny`.
 - **Acceptance**: token refresh survives restart; revoked token produces a
   human-readable prompt to re-auth, not a stack trace.
@@ -595,7 +595,7 @@ parked question survives restart ✓
 ## Sprint A5: Acting — allowlisted autonomy
 **Goal**: it does things, safely, with undo.
 **Demo**: auto-file and auto-reply to a listed contact; an unlisted recipient
-prompts; `aide audit --undo` reverses a filing.
+prompts; `mitra audit --undo` reverses a filing.
 
 ### Task A5.1: Write scopes + allowlists
 - **Description**: Upgrade Google scopes to send/modify; define
@@ -609,7 +609,7 @@ prompts; `aide audit --undo` reverses a filing.
 - **Description**: Product-side tools supply `undo` (unsend window, unarchive,
   delete created event).
 - **Dependencies**: H5.3
-- **Acceptance**: `aide audit --undo <id>` works for label, archive, event-create,
+- **Acceptance**: `mitra audit --undo <id>` works for label, archive, event-create,
   and draft-send within the provider's window.
 
 ### Task A5.3: Draft-first sending
@@ -655,7 +655,7 @@ containing the same instruction produces *nothing*.
   asserted by a test on the parsed profile, not by inspection.
 
 ### Task A5b.2: Hard preconditions on escalation
-- **Location**: `profiles/assistant.yaml`, `packages/aide-core/src/dev-gate.ts`
+- **Location**: `profiles/assistant.yaml`, `packages/mitra-core/src/dev-gate.ts`
 - **Description**: The `Dev` delegate tool is callable only when **all** hold:
   turn is untrusted-free (H6.2), the trigger was a paired human message (not
   cron/watch/poll), an explicit approval was given for this specific task, and
@@ -766,7 +766,7 @@ barge-in.
 ### Task A8.3: De-personalization audit
 - **Description**: Grep for personal paths, names, tokens, vault layout; move all
   to config with sane defaults.
-- **Acceptance**: `aide init` on a fresh account needs zero knowledge of Pankaj's setup.
+- **Acceptance**: `mitra init` on a fresh account needs zero knowledge of Pankaj's setup.
 
 ### Task A8.4: Threat model doc + security policy
 - **Dependencies**: H6.x
@@ -775,7 +775,7 @@ barge-in.
 
 ### Task A8.5: Release engineering
 - **Description**: Version the submodule pin explicitly; changelog; upgrade
-  guide; `aide upgrade` that migrates config.
+  guide; `mitra upgrade` that migrates config.
 - **Acceptance**: upgrade across one breaking config change is non-destructive.
 
 **Checklist:** clean-machine install ✓ · no personal residue ✓
@@ -827,7 +827,7 @@ project into a company with obligations. Ship A1–A8 and use it for a month fir
 | **Submodule friction** for outside contributors | `pnpm setup` wraps submodule init; document the two-repo model on the README front page |
 | **Temporal correctness** — DST, month-end, timezones while travelling | Explicit tz in config; table-driven tests; store UTC + originating tz, never naive local |
 | **Secrets in Docker** | Keychain unavailable in container → encrypted file + passphrase at start; document the tradeoff plainly |
-| **Deferred asks piling up** | TTL sweep + `aide status` surfaces open asks + weekly nag digest |
+| **Deferred asks piling up** | TTL sweep + `mitra status` surfaces open asks + weekly nag digest |
 | **Single always-on box dies** | State is files under `~/.harness`; document backup and restore; nothing critical lives only in memory |
 
 ---
@@ -840,7 +840,7 @@ project into a company with obligations. Ship A1–A8 and use it for a month fir
 - Harness rollback = revert the sprint's commits; existing suite is the proof.
 - Product rollback = repin the submodule to the previous harness commit; config
   is versioned and migrations are one-way-safe.
-- Kill switch: `aide stop` halts all triggers; `aide panic` additionally revokes
+- Kill switch: `mitra stop` halts all triggers; `mitra panic` additionally revokes
   channel bindings and flips every profile to read-only ACLs.
 
 ---
