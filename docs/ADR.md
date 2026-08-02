@@ -49,7 +49,7 @@ pointer to what replaced them.
 | [25](#adr-25) | Stratify, explore, and shadow-run to beat selection bias | ✅ | routing |
 | [26](#adr-26) | Artifact-based stage handoff, never transcript-based | ✅ | routing |
 | [27](#adr-27) | Recon is a hard gate | ✅ | routing |
-| [28](#adr-28) | Harness/product boundary rule, enforced in CI | 📋 | boundary |
+| [28](#adr-28) | Harness/product boundary rule, enforced in CI | ✅ | boundary |
 | [29](#adr-29) | Channels are transports, not integrations | 📋 | channels |
 | [30](#adr-30) | Opaque identity + round-tripped `correlation_id` | 📋 | channels |
 | [31](#adr-31) | Pairing required; unbound identity is inert | 📋 | channels |
@@ -379,14 +379,15 @@ constraint set by the repo owner, not derived from the code.
 # Boundary
 
 ### ADR-28
-**Harness/product boundary rule, enforced in CI** — 📋
+**Harness/product boundary rule, enforced in CI** — ✅
 
 *Context:* Building a personal-assistant product on the harness creates constant
 pressure to add "just one" vendor or life-domain feature to `src/`.
 *Decision:* A harness change is allowed only if its description never needs the
-words *assistant*, *Gmail*, *Telegram*, *WhatsApp*, or *voice*. A CI grep over
-`src/` enforces it, with a reviewed allowlist for justified exceptions. This
-lands **before** any other work in the #17–#23 track.
+words *assistant*, *Gmail*, *Telegram*, *WhatsApp*, or *voice*. A CI scan over
+`src/` enforces it, ignores comments, and uses a reviewed path-and-term
+allowlist for justified pre-existing generic identifiers. This shipped
+**before** any other work in the #17–#23 track.
 *Consequences:* Makes [ADR-1](#adr-1) mechanically checkable. Some product
 features become harder to build — which is the intended pressure, pushing them
 into adapters, profiles, and skills.

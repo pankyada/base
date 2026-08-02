@@ -1,0 +1,9 @@
+# Existing generic protocol/schema identifiers. New product/vendor vocabulary
+# belongs in adapters and fixtures, not in src/.
+src/agents/runner.ts|assistant
+src/context/projection.ts|assistant
+src/loop/agent-loop.ts|assistant
+src/profiles/schema.ts|assistant
+src/server/run-profile.ts|assistant
+src/tools/builtin/delegate.ts|assistant
+src/workflow/runner.ts|assistant

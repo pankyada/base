@@ -325,15 +325,22 @@ OpenAI-compatible endpoint returned ordinary `prompt_tokens` but no
 
 Seven primitives that together let a profile run unattended, reach a human, ask
 a question that outlives a process, act within bounds, and be audited afterward.
-Motivated by the personal-assistant product ([plan](superpowers/plans/2026-08-02-personal-assistant-plan.md)),
+Motivated by the separate product plan ([plan](superpowers/plans/2026-08-02-personal-assistant-plan.md)),
 but every item is profile-agnostic: **no vendor, no life-domain, and no product
 vocabulary enters `src/`.** A boundary CI check (H0.1 in the plan) enforces this
-mechanically and lands before #17.
+mechanically and shipped before #17.
 
 The product itself lives in a **separate repo**, consuming this harness as a
 pinned dependency. Nothing below is specific to it.
 
 ---
+
+### ✅ H0.1. Harness/product boundary guard
+
+**What shipped:** `scripts/check-boundary.sh` scans executable source under
+`src/`, ignores comments, rejects product/vendor vocabulary, and applies a
+narrow reviewed allowlist for pre-existing generic protocol identifiers. The
+guard runs in `.github/workflows/boundary.yml` on every push and pull request.
 
 ### ❌ 17. Channels — outbound + inbound transports
 
@@ -486,7 +493,7 @@ is text-only. Both are harness-shaped gaps; neither needs a vendor in core.
 Unattended track — **next up is the boundary CI guard, then #17**:
 
 ```
-H0.1 boundary guard   (CI grep: no vendor/product vocabulary in src/)
+✅ H0.1 boundary guard   (CI scan: no vendor/product vocabulary in src/)
   ↓
 #17 channels ─────────────┐
   ↓                       │
