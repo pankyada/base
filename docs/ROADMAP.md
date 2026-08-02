@@ -490,7 +490,7 @@ is text-only. Both are harness-shaped gaps; neither needs a vendor in core.
 ✅ #16 Context projection
 ```
 
-Unattended track — **next up is the boundary CI guard, then #17**:
+Unattended track — **boundary guard shipped; next up is #17**:
 
 ```
 ✅ H0.1 boundary guard   (CI scan: no vendor/product vocabulary in src/)
