@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Feature backlog and status live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Read it before starting any feature work. The next item to pick up is marked there.
 
+## Architecture decisions
+
+**[`docs/ADR.md`](docs/ADR.md)** records every load-bearing decision and the reason for it. Read the relevant entries before changing an existing subsystem's shape — several designs deliberately reject the obvious alternative, and the register says why.
+
 ## Commands
 
 ```bash

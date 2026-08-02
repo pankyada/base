@@ -8,9 +8,13 @@ Guidance for all AI agents (Claude, Jules, Gemini, etc.) working in this reposit
 
 It contains the master feature list with status (✅ done / 🔄 in progress / ❌ not started) and suggested sequencing. Pick up the next `❌` item in sequence unless told otherwise. Do not duplicate work already marked ✅.
 
+## Second: read the decision register
+
+**[`docs/ADR.md`](docs/ADR.md)** records every load-bearing decision and why it was made. Several subsystems deliberately reject the obvious approach; the register explains each one. Read the entries covering the subsystem you are about to change, and add an entry when you make a decision of the same weight.
+
 ## Current roadmap state
 
-Adaptive workflow routing (#15) is implemented. Read `docs/ROADMAP.md` for the current feature status before new work.
+Adaptive workflow routing (#15) and context projection (#16) are implemented. The unattended/ambient track (#17–#23) is specced but unimplemented — the first task there is the boundary CI guard, not a feature. Read `docs/ROADMAP.md` for current status before new work.
 
 ## Architecture overview
 
