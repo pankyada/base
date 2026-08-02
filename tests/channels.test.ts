@@ -2,13 +2,20 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { Readable } from 'stream'
 import { BindingStore } from '../src/channels/bindings.js'
 import { ChannelRuntime } from '../src/channels/runtime.js'
 import { registerChannel, clearChannelRegistry } from '../src/channels/registry.js'
 import { prepareChannelMessages } from '../src/channels/chunk.js'
 import { registerAll, clearRegistry } from '../src/tools/builtin/index.js'
 import { getAllTools } from '../src/tools/registry.js'
+import { notifyTool } from '../src/tools/builtin/notify.js'
+import { CronScheduler } from '../src/scheduler/cron.js'
+import { runProfileOnce } from '../src/server/run-profile.js'
 import type { ChannelAdapter, InboundMessage } from '../src/channels/types.js'
+
+vi.mock('node-cron', () => ({ default: { schedule: vi.fn().mockReturnValue({ stop: vi.fn() }) } }))
+vi.mock('../src/server/run-profile.js', () => ({ runProfileOnce: vi.fn() }))
 
 function profile(channel: Record<string, unknown>) {
   return { name: 'p', channels: [channel] } as any
@@ -33,6 +40,8 @@ describe('channels', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'harness-channels-'))
     clearChannelRegistry()
+    vi.clearAllMocks()
+    vi.mocked(runProfileOnce).mockReset()
   })
 
   afterEach(() => rmSync(root, { recursive: true, force: true }))
@@ -102,5 +111,55 @@ describe('channels', () => {
     const runtime = new ChannelRuntime(profile({ name: 'out', transport: 'test', inbound: false, acl: { inbound: 'off', notify: 'allow', approvals: false }, config: {}, limits: {} }), new BindingStore(join(root, 'bindings.json')))
     registerAll(runtime)
     expect(getAllTools().some(tool => tool.name === 'Notify')).toBe(true)
+  })
+
+  it('delivers a cron notification through the configured stdout channel', async () => {
+    const cron = await import('node-cron')
+    const callback = vi.fn()
+    vi.mocked(cron.default.schedule).mockImplementation((_expression, cb) => {
+      callback.mockImplementation(cb as any)
+      return { stop: vi.fn() } as any
+    })
+    const bindings = new BindingStore(join(root, 'bindings.json'))
+    bindings.bind('stdout', 'operator', { user: 'anonymous', profile: 'p', bound_at: new Date().toISOString() })
+    const runtime = new ChannelRuntime(profile({ name: 'out', transport: 'stdout', default: true, inbound: false, acl: { inbound: 'off', notify: 'allow', approvals: false }, config: {}, limits: {} }), bindings)
+    await runtime.init()
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    vi.mocked(runProfileOnce).mockImplementation(async (opts: any) => {
+      const session = { user: 'anonymous' }
+      const result = await notifyTool.execute({ text: 'cron fired' }, { session, channels: runtime } as any)
+      expect(result).toBe('[notification sent]')
+      return { finalText: '', usage: { tokens_in: 0, tokens_out: 0, cost_usd: 0 }, session: { id: 'cron-session' } } as any
+    })
+    const scheduler = new CronScheduler({ ...profile({}), triggers: { cron: '* * * * *' } } as any, { create: vi.fn(), update: vi.fn(), get: vi.fn().mockReturnValue(null), list: vi.fn(), scanRunning: vi.fn() } as any, new Map(), runtime)
+    scheduler.init()
+    await callback()
+    expect(write).toHaveBeenCalledWith(expect.stringContaining('[channel:operator] cron fired\n'))
+    write.mockRestore()
+  })
+
+  it('routes authenticated webhook inbound to a session run callback', async () => {
+    process.env.CHANNEL_TEST_SECRET = 'test-secret'
+    const bindings = new BindingStore(join(root, 'bindings.json'))
+    bindings.bind('webhook', 'opaque-webhook-id', { user: 'bound-user', profile: 'p', bound_at: new Date().toISOString() })
+    const runtime = new ChannelRuntime(profile({ name: 'in', transport: 'webhook', inbound: true, acl: { inbound: 'paired', notify: 'allow', approvals: false }, config: { url: 'https://example.test/inbound', secret_env: 'CHANNEL_TEST_SECRET' }, limits: {} }), bindings)
+    vi.mocked(runProfileOnce).mockResolvedValue({ finalText: 'reply', usage: { tokens_in: 1, tokens_out: 1, cost_usd: 0 }, session: { id: 'session-from-webhook' } } as any)
+    const sessionRun = vi.fn(async (route: any) => runProfileOnce({
+      profile: {} as any,
+      userId: route.binding.user,
+      userMessage: route.message.text,
+      events: {} as any,
+    }))
+    runtime.onInbound(async route => { await sessionRun(route) })
+    await runtime.init()
+    const req = Readable.from([JSON.stringify({ identity: 'opaque-webhook-id', text: 'hello from channel' })]) as any
+    req.method = 'POST'
+    req.headers = { 'x-channel-secret': 'test-secret' }
+    const res = { writeHead: vi.fn(), end: vi.fn() } as any
+    await runtime.handleHttp('in', req, res)
+    expect(sessionRun).toHaveBeenCalledWith(expect.objectContaining({ binding: expect.objectContaining({ user: 'bound-user' }), message: expect.objectContaining({ text: 'hello from channel' }) }))
+    expect(runProfileOnce).toHaveBeenCalledWith(expect.objectContaining({ userId: 'bound-user', userMessage: 'hello from channel' }))
+    expect(res.writeHead).toHaveBeenCalledWith(202, expect.any(Object))
+    delete process.env.CHANNEL_TEST_SECRET
   })
 })

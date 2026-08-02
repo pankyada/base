@@ -210,7 +210,7 @@ export class ChannelRuntime {
       return true
     }
     const chunks: Buffer[] = []
-    for await (const chunk of req) chunks.push(chunk as Buffer)
+    for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk as Buffer)
     let body: any
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {
       res.writeHead(400, { 'content-type': 'application/json' })
