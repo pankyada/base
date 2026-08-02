@@ -348,13 +348,13 @@ A named, pluggable, bidirectional transport between a profile and a human.
 Closes the gap where triggered runs (#5) are write-only: they can spend tokens
 but cannot report, ask, or be approved.
 
-**To build:**
-- `ChannelAdapter` interface + registry + `.agents/channels/` loader (mirrors the tool subsystem)
-- `channels:` profile block; adapter-opaque `config`, secrets as env var *names*
-- `Notify` builtin tool, registered only when channels are configured
-- Binding table + pairing; unbound identities are inert (no session, no spend)
-- Approvals and input requests routed to a channel when no client is attached
-- Core reference adapters: `stdout`, `webhook`. No vendor adapters in core.
+**What shipped:**
+- `ChannelAdapter` interface, registry, and `.agents/channels/` loader
+- Adapter-opaque `channels:` profile block with env-var-name secret references
+- Conditional `Notify` builtin, persistent bindings, pairing, and fail-closed routing
+- Channel approvals and input requests for unattended runs
+- Capability degradation, chunking, rate limits, and correlation routing
+- Core `stdout` and `webhook` reference adapters; no vendor adapters in core
 
 **Design:** [`channels-design.md`](superpowers/specs/2026-08-02-channels-design.md)
 
