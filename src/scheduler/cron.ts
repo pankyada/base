@@ -6,6 +6,7 @@ import type { RunStore } from '../runs/store.js'
 import { runProfileOnce } from '../server/run-profile.js'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { compileContract, validateAndBuildInput } from '../server/contract.js'
+import type { ChannelRuntime } from '../channels/runtime.js'
 
 function makeRunId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 8)
@@ -18,6 +19,7 @@ export class CronScheduler {
     private profile: Profile,
     private runStore: RunStore,
     private abortRegistry: Map<string, AbortController>,
+    private channels?: ChannelRuntime,
   ) {}
 
   init(): void {
@@ -59,9 +61,14 @@ export class CronScheduler {
           userMessage,
           events: {
             onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {},
-            onToolPrompt: async () => false, onSessionEnd: () => {}, onStats: () => {},
+            onToolPrompt: (name, tool, input, risk, reason) => this.channels?.requestApproval(user, tool, input, risk, reason) ?? Promise.resolve(false),
+            onInputRequest: this.channels
+              ? (_id, prompt, kind, options) => this.channels!.requestInput(user, prompt, kind, options).then(value => value ?? '')
+              : undefined,
+            onSessionEnd: () => {}, onStats: () => {},
           },
           signal: abort.signal,
+          channels: this.channels,
         })
         this.abortRegistry.delete(runId)
         this.runStore.update(runId, {

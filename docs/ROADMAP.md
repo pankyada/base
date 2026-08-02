@@ -342,7 +342,7 @@ pinned dependency. Nothing below is specific to it.
 narrow reviewed allowlist for pre-existing generic protocol identifiers. The
 guard runs in `.github/workflows/boundary.yml` on every push and pull request.
 
-### ❌ 17. Channels — outbound + inbound transports
+### ✅ 17. Channels — outbound + inbound transports
 
 A named, pluggable, bidirectional transport between a profile and a human.
 Closes the gap where triggered runs (#5) are write-only: they can spend tokens
@@ -357,6 +357,11 @@ but cannot report, ask, or be approved.
 - Core reference adapters: `stdout`, `webhook`. No vendor adapters in core.
 
 **Design:** [`channels-design.md`](superpowers/specs/2026-08-02-channels-design.md)
+
+**Shipped:** Opaque adapter API, builtin/custom registry and loader, capability
+degradation, persistent bindings with paired/open/off routing, fail-closed
+unbound inbound handling, correlation-based channel approvals, webhook ingress,
+stdout/webhook reference adapters, and conditional `Notify` registration.
 
 ---
 

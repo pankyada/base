@@ -821,3 +821,18 @@ change under `vendor/`, and CI re-checks it.
 *Consequences:* Co-developing a harness change with a product feature takes an
 extra commit-push-pin cycle. Accepted: the friction is the point, and it is the
 mirror of the guard `base` runs in the other direction.
+
+### ADR-65
+**Channels keep transport semantics outside core** — ✅
+
+*Context:* Unattended runs need outbound delivery and inbound human responses,
+but embedding any transport's identity format, auth, or message semantics in
+the harness would break the product boundary.
+*Decision:* Core owns only opaque identities, bindings, routing, approvals,
+capabilities, chunking, and rate limits. Adapters own transport config and
+delivery. Core ships only `stdout` and `webhook`; all other adapters load from
+`.agents/channels/`. Unbound paired identities never create sessions or invoke
+the model, and webhook ingress requires a constant-time shared-secret check.
+*Consequences:* New transports need no core change, but adapters must expose
+their own validation and retry behavior. Approval delivery degrades closed
+when no bound recipient or approved channel exists.

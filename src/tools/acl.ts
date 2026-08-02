@@ -26,7 +26,7 @@ export function getMcpAcl(serverName: string, toolName: string, profile: Profile
   return acl[toolName] ?? acl['*'] ?? 'prompt'
 }
 
-const MUTATING_TOOLS = new Set(['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete'])
+const MUTATING_TOOLS = new Set(['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'])
 
 function baseAcl(toolName: string, profile: Profile, serverName?: string): AclValue {
   return serverName ? getMcpAcl(serverName, toolName, profile) : getAcl(toolName, profile)
