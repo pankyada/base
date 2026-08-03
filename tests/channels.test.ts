@@ -179,4 +179,25 @@ describe('channels', () => {
     expect(res.writeHead).toHaveBeenCalledWith(202, expect.any(Object))
     delete process.env.CHANNEL_TEST_SECRET
   })
+
+  it('delegates HTTP handling to a custom channel adapter', async () => {
+    const fake = adapter()
+    fake.item.handleHttp = async (_req, _res, onInbound) => {
+      await onInbound({ identity: 'custom-http-id', text: 'from custom transport', received_at: new Date().toISOString() })
+      return true
+    }
+    registerChannel(fake.item)
+    const bindings = new BindingStore(join(root, 'bindings.json'))
+    bindings.bind('test', 'custom-http-id', { user: 'bound-user', profile: 'p', bound_at: new Date().toISOString() })
+    const runtime = new ChannelRuntime(profile({ name: 'in', transport: 'test', inbound: true, acl: { inbound: 'paired', notify: 'allow', approvals: false }, config: {}, limits: {} }), bindings)
+    const sessionRun = vi.fn()
+    runtime.onInbound(async route => { sessionRun(route) })
+    await runtime.init()
+
+    const res = { writeHead: vi.fn(), end: vi.fn() } as any
+    const handled = await runtime.handleHttp('in', { method: 'POST' } as any, res)
+
+    expect(handled).toBe(true)
+    expect(sessionRun).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ text: 'from custom transport' }) }))
+  })
 })

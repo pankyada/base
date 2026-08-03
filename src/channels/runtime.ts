@@ -195,6 +195,11 @@ export class ChannelRuntime {
 
   async handleHttp(channelName: string, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const config = this.configFor(channelName)
+    const adapter = config ? this.adapters.get(config.name) : undefined
+    if (adapter?.handleHttp) {
+      const handled = await adapter.handleHttp(req, res, message => this.receive(channelName, message))
+      if (handled) return true
+    }
     if (!config || config.transport !== 'webhook' || req.method !== 'POST') return false
     const expected = typeof config.config.secret_env === 'string' ? process.env[config.config.secret_env] : undefined
     if (!expected) {
