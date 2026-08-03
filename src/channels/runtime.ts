@@ -82,6 +82,7 @@ export class ChannelRuntime {
   }
 
   private targetFor(config: ChannelProfileConfig, user: string): { adapter: ChannelAdapter; identity: string } | ChannelSendResult {
+    this.bindings.reload()
     const adapter = this.adapters.get(config.name)
     if (!adapter) return { ok: false, error: `channel '${config.name}' is not initialized` }
     const binding = this.bindings.findForUser(config.transport, user)
@@ -129,6 +130,7 @@ export class ChannelRuntime {
   }
 
   async receive(channel: string, message: InboundMessage): Promise<void> {
+    this.bindings.reload()
     const config = this.configFor(channel)
     if (!config || !config.inbound || config.acl.inbound === 'off') return
 
