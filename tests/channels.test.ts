@@ -79,6 +79,23 @@ describe('channels', () => {
     expect(bindings.get('test', 'opaque-2')?.profile).toBe('p')
   })
 
+  it('observes a binding persisted by another process before routing', async () => {
+    const fake = adapter()
+    registerChannel(fake.item)
+    const bindingPath = join(root, 'shared-bindings.json')
+    const runtimeBindings = new BindingStore(bindingPath)
+    const runtime = new ChannelRuntime(profile({ name: 'in', transport: 'test', inbound: true, acl: { inbound: 'paired', notify: 'allow', approvals: false }, config: {}, limits: {} }), runtimeBindings)
+    const handler = vi.fn()
+    runtime.onInbound(handler)
+    await runtime.init()
+    new BindingStore(bindingPath).bind('test', 'paired-later', { user: 'pankaj', profile: 'p', bound_at: new Date().toISOString() })
+
+    await runtime.receive('in', { identity: 'paired-later', text: 'hello', received_at: new Date().toISOString() })
+
+    expect(handler).toHaveBeenCalledOnce()
+    expect(handler.mock.calls[0][0].binding.user).toBe('pankaj')
+  })
+
   it('resolves channel approval by opaque correlation id', async () => {
     const fake = adapter()
     registerChannel(fake.item)

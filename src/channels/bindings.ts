@@ -17,6 +17,12 @@ export class BindingStore {
     this.load()
   }
 
+  reload(): void {
+    this.bindings.clear()
+    this.pairingNotices.clear()
+    this.load()
+  }
+
   private load(): void {
     try {
       if (existsSync(this.filePath)) {
