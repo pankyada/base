@@ -15,6 +15,9 @@ import type { Skill } from '../tools/types.js'
 import { createProject, listProjects, ensureInbox } from '../projects/store.js'
 import { listSessionSummaries, assignSession } from '../session/store.js'
 import type { ChannelRuntime } from '../channels/runtime.js'
+import { PendingStore } from '../runs/pending.js'
+import { isParkSignal } from '../runs/park.js'
+import { resumeCancelledInput, resumePendingInput } from '../runs/resume.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
@@ -26,6 +29,7 @@ export interface RestDeps {
   abortRegistry: Map<string, AbortController>
   skills: Skill[]
   channels?: ChannelRuntime
+  pendingStore?: PendingStore
 }
 
 interface AgentCard {
@@ -97,6 +101,10 @@ function headlessEvents(): AgentLoopEvents {
   }
 }
 
+function pendingStore(deps: RestDeps): PendingStore {
+  return deps.pendingStore ?? new PendingStore()
+}
+
 interface RunRequest { profile?: string; user?: string; input?: unknown }
 
 /**
@@ -149,9 +157,14 @@ async function handleRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
       userMessage: prepared.userMessage, events: headlessEvents(),
       signal: abort.signal,
       channels: deps.channels,
+      runId, pendingInputs: pendingStore(deps), unattended: true,
     })
   } catch (e: any) {
     deps.abortRegistry.delete(runId)
+    if (isParkSignal(e)) {
+      deps.runStore.update(runId, { status: 'waiting_input', session_id: e.sessionId })
+      return sendJson(res, 202, { status: 'waiting_input', pending_id: e.pendingId, run_id: runId, session_id: e.sessionId })
+    }
     const existing = deps.runStore.get(runId)
     if (existing?.status === 'running') {
       deps.runStore.update(runId, { status: 'failed', error: e.message, finished_at: new Date().toISOString() })
@@ -197,6 +210,8 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
       profile: prepared.profile, userId: prepared.userId,
       userMessage: prepared.userMessage, events, signal: abort.signal,
       channels: deps.channels,
+      runId, pendingInputs: pendingStore(deps),
+      unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
@@ -208,6 +223,11 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
     }
   } catch (e: any) {
     deps.abortRegistry.delete(runId)
+    if (isParkSignal(e)) {
+      deps.runStore.update(runId, { status: 'waiting_input', session_id: e.sessionId })
+      sse('pending', { status: 'waiting_input', pending_id: e.pendingId, run_id: runId, session_id: e.sessionId })
+      return
+    }
     const existing = deps.runStore.get(runId)
     if (existing?.status === 'running') {
       const isCancelled = (e as Error).name === 'AbortError'
@@ -236,6 +256,55 @@ function handleListRuns(req: IncomingMessage, res: ServerResponse, deps: RestDep
   sendJson(res, 200, { runs })
 }
 
+function handleListPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
+  const rawUrl = req.url ?? '/pending'
+  const [, query = ''] = rawUrl.split('?')
+  const params = new URLSearchParams(query)
+  const store = pendingStore(deps)
+  const pending = store.list({ user: params.get('user') ?? undefined, state: (params.get('state') ?? undefined) as any })
+    .map(({ path: _path, ...record }) => record)
+  sendJson(res, 200, { pending })
+}
+
+async function handleAnswerPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps, runId: string): Promise<void> {
+  let body: { pending_id?: string; value?: string }
+  try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  if (!body.pending_id || typeof body.value !== 'string') return sendJson(res, 400, { error: 'pending_id and value required' })
+  const store = pendingStore(deps)
+  const pending = store.get(body.pending_id)
+  if (!pending || pending.run_id !== runId) return sendJson(res, 404, { error: 'pending input not found' })
+  const result = await resumePendingInput(body.pending_id, body.value, 'rest', {
+    pendingStore: store,
+    runStore: deps.runStore,
+    abortRegistry: deps.abortRegistry,
+    resolveProfile: name => resolveProfile(name, deps),
+    channels: deps.channels,
+  })
+  if (result.status === 'ignored') return sendJson(res, 409, { error: result.reason })
+  if (result.status === 'failed') return sendJson(res, 500, result)
+  return sendJson(res, result.status === 'completed' ? 200 : 202, result)
+}
+
+async function handleCancelPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps, pendingId: string): Promise<void> {
+  const store = pendingStore(deps)
+  const pending = store.get(pendingId)
+  if (!pending) return sendJson(res, 404, { error: 'pending input not found' })
+  if (pending.state !== 'open') return sendJson(res, 409, { error: `pending input is already ${pending.state}` })
+  const run = deps.runStore.get(pending.run_id)
+  if (!run || run.status !== 'waiting_input') return sendJson(res, 409, { error: 'run is not waiting for input' })
+  const cancelled = store.cancel(pendingId)
+  if (!cancelled) return sendJson(res, 409, { error: 'pending input could not be cancelled' })
+  const result = await resumeCancelledInput(pendingId, {
+    pendingStore: store,
+    runStore: deps.runStore,
+    abortRegistry: deps.abortRegistry,
+    resolveProfile: name => resolveProfile(name, deps),
+    channels: deps.channels,
+  })
+  if (result.status === 'ignored') return sendJson(res, 409, { error: result.reason })
+  return sendJson(res, result.status === 'failed' ? 500 : result.status === 'completed' ? 200 : 202, result)
+}
+
 function handleGetRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps, id: string): void {
   const run = deps.runStore.get(id)
   if (!run) return sendJson(res, 404, { error: 'run not found' })
@@ -245,8 +314,13 @@ function handleGetRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps,
 function handleDeleteRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps, id: string): void {
   const run = deps.runStore.get(id)
   if (!run) return sendJson(res, 404, { error: 'run not found' })
-  if (run.status !== 'running' && run.status !== 'pending') return sendJson(res, 409, { error: `run is already ${run.status}` })
+  if (run.status !== 'running' && run.status !== 'pending' && run.status !== 'waiting_input') return sendJson(res, 409, { error: `run is already ${run.status}` })
   deps.abortRegistry.get(id)?.abort()
+  if (run.status === 'waiting_input') {
+    for (const pending of pendingStore(deps).list({ user: run.user, state: 'open' }).filter(item => item.run_id === id)) {
+      pendingStore(deps).cancel(pending.id)
+    }
+  }
   deps.runStore.update(id, { status: 'cancelled', finished_at: new Date().toISOString() })
   sendJson(res, 200, { ok: true })
 }
@@ -327,6 +401,7 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
   try {
     const result = await runProfileOnce({
       profile, userId, userMessage: inputCheck.userMessage, events: headlessEvents(), signal: abort.signal, channels: deps.channels,
+      runId, pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
@@ -335,6 +410,10 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
     return sendJson(res, 200, { output: out.output, usage: result.usage, session_id: result.session.id, run_id: runId })
   } catch (e: any) {
     deps.abortRegistry.delete(runId)
+    if (isParkSignal(e)) {
+      deps.runStore.update(runId, { status: 'waiting_input', session_id: e.sessionId })
+      return sendJson(res, 202, { status: 'waiting_input', pending_id: e.pendingId, run_id: runId, session_id: e.sessionId })
+    }
     const existing = deps.runStore.get(runId)
     if (existing?.status === 'running') {
       deps.runStore.update(runId, { status: 'failed', error: e.message, finished_at: new Date().toISOString() })
@@ -413,6 +492,7 @@ async function handleAcpMessages(
       events,
       signal: abort.signal,
       channels: deps.channels,
+      runId, pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, {
@@ -498,6 +578,7 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
       events: headlessEvents(),
       signal: abort.signal,
       channels: deps.channels,
+      runId, pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, {
@@ -514,6 +595,10 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
     deps.abortRegistry.delete(runId)
     const existing = deps.runStore.get(runId)
     if (existing?.status === 'running') {
+      if (isParkSignal(e)) {
+        deps.runStore.update(runId, { status: 'waiting_input', session_id: e.sessionId })
+        return sendJson(res, 202, { id: taskId, status: { state: 'waiting_input' }, run_id: runId, pending_id: e.pendingId })
+      }
       deps.runStore.update(runId, {
         status: 'failed',
         error: e.message,
@@ -561,6 +646,13 @@ export function createRestHandler(deps: RestDeps) {
       if (method === 'POST' && url === '/stream') return handleStream(req, res, deps)
 
       if (method === 'GET' && url === '/runs') return handleListRuns(req, res, deps)
+      if (method === 'GET' && url === '/pending') return handleListPending(req, res, deps)
+      if (method === 'POST' && url.startsWith('/runs/') && url.endsWith('/input')) {
+        return handleAnswerPending(req, res, deps, url.slice('/runs/'.length, -'/input'.length))
+      }
+      if (method === 'DELETE' && url.startsWith('/pending/')) {
+        return handleCancelPending(req, res, deps, url.slice('/pending/'.length))
+      }
       if (method === 'GET' && url.startsWith('/runs/') && url.endsWith('/messages')) {
         return handleAcpMessages(req, res, deps, url.slice('/runs/'.length, -'/messages'.length), acpInFlight)
       }

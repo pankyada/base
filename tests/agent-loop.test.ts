@@ -6,6 +6,8 @@ import { mkdtempSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { clearRegistry, registerTool } from '../src/tools/registry.js'
+import { PendingStore } from '../src/runs/pending.js'
+import { ParkSignal } from '../src/runs/park.js'
 
 async function* makeStream(chunks: any[]) {
   for (const chunk of chunks) yield chunk
@@ -216,5 +218,57 @@ describe('runAgentLoop', () => {
     const toolMsgs = (session.messages as any[]).filter(m => m.role === 'tool')
     expect(toolMsgs[0].tool_call_id).toBe('tc1')
     expect(toolMsgs[1].tool_call_id).toBe('tc2')
+  })
+
+  it('parks unattended approval in the pending store', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Bash: 'prompt' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    registerTool({ name: 'Bash', description: 'shell', parameters: {}, execute: async () => 'ran' })
+    const pendingInputs = new PendingStore(mkdtempSync(join(tmpdir(), 'approval-')))
+    const channels = { enabled: true, send: vi.fn().mockResolvedValue({ ok: true }) }
+    const openai = {
+      chat: { completions: { create: vi.fn().mockReturnValue(makeStream([
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'approval-tool', function: { name: 'Bash', arguments: '{"command":"rm"}' } }] } }] },
+        { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+      ])) } },
+    }
+
+    await expect(runAgentLoop('do it', profile, session, {
+      profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [],
+      approvalMode: 'strict', unattended: true, runId: 'run-approval', pendingInputs, channels,
+    } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+    }, openai as any)).rejects.toBeInstanceOf(ParkSignal)
+
+    expect(pendingInputs.list()[0]).toMatchObject({ purpose: 'approval', tool_call_id: 'approval-tool', state: 'open' })
+    expect(channels.send).toHaveBeenCalledOnce()
+  })
+
+  it('executes approved tool when resuming parked approval', async () => {
+    const session = createSession('test', 'testuser')
+    session.messages.push({ role: 'assistant', content: null, tool_calls: [{ id: 'approval-tool', type: 'function', function: { name: 'Bash', arguments: '{"command":"rm"}' } }] })
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Bash: 'allow' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    const executed = vi.fn().mockResolvedValue('ran')
+    registerTool({ name: 'Bash', description: 'shell', parameters: {}, execute: executed })
+    const openai = makeFakeOpenAI([
+      { choices: [{ delta: { content: 'continued' } }] },
+      { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+    ])
+    await runAgentLoop('', profile, session, {
+      profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [],
+    } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+    }, openai as any, undefined, {
+      appendUser: false,
+      resumeApproval: { toolCallId: 'approval-tool', approved: true, name: 'Bash', input: { command: 'rm' }, isMcp: false },
+    })
+    expect(executed).toHaveBeenCalledWith({ command: 'rm' }, expect.anything())
+    expect((session.messages as any[]).find(message => message.role === 'tool')?.content).toBe('ran')
   })
 })

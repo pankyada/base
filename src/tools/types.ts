@@ -7,6 +7,7 @@ import type { Stage, Intensity, Tier } from '../workflow/types.js'
 import type { ExecutionResult } from '../executor/interface.js'
 import type OpenAI from 'openai'
 import type { ChannelRuntime } from '../channels/runtime.js'
+import type { PendingStore } from '../runs/pending.js'
 
 export interface AgentLoopEvents {
   onToken(token: string): void
@@ -47,6 +48,10 @@ export interface ToolContext {
   wasmSupported?: boolean
   approvalMode?: ApprovalMode
   channels?: ChannelRuntime
+  pendingInputs?: PendingStore
+  runId?: string
+  currentToolCallId?: string
+  unattended?: boolean
 }
 
 export interface ToolDefinition {

@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { randomUUID } from 'crypto'
 import { Profile } from '../profiles/schema.js'
 import { Session } from '../session/types.js'
 import { ToolContext, AgentLoopEvents } from '../tools/types.js'
@@ -14,6 +15,7 @@ import { calibrate, estimateTokens, rawTokens } from '../context/estimator.js'
 import { withRetry } from './retry.js'
 import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
 import type { StageTag } from '../workflow/types.js'
+import { isParkSignal, ParkSignal } from '../runs/park.js'
 
 export { estimateCost }
 
@@ -42,7 +44,12 @@ export async function runAgentLoop(
   events: AgentLoopEvents,
   openai: OpenAI,
   signal?: AbortSignal,
-  opts?: { modelId?: string; stage?: StageTag; appendUser?: boolean }
+  opts?: {
+    modelId?: string
+    stage?: StageTag
+    appendUser?: boolean
+    resumeApproval?: { toolCallId: string; approved: boolean; name: string; input: Record<string, unknown>; isMcp: boolean }
+  }
 ): Promise<void> {
   const modelId = opts?.modelId ?? profile.model.id
   if (opts?.appendUser !== false) session.messages.push({ role: 'user', content: userMessage })
@@ -53,9 +60,57 @@ export async function runAgentLoop(
     ...(context.agentTools ?? []),
   ]
   const openaiTools = toOpenAITools(allTools)
+  let resumeApproval = opts?.resumeApproval
+
+  const executeOneTool = async (
+    tc: { id: string; name: string; args: string },
+    input: Record<string, unknown>,
+    isMcp: boolean,
+  ): Promise<ToolResult> => {
+    await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
+
+    const toolDef = allTools.find(t => t.name === tc.name)
+    const toolStart = Date.now()
+    let result: string
+    let ok = true
+    try {
+      if (!toolDef) throw new Error(`Tool "${tc.name}" not found in registry`)
+      result = await toolDef.execute(input, { ...context, currentToolCallId: tc.id })
+    } catch (e: any) {
+      if (isParkSignal(e)) throw e
+      result = `Error: ${e.message}`
+      ok = false
+    }
+    const duration_ms = Date.now() - toolStart
+
+    logEvent({
+      session: session.id, profile: profile.name,
+      kind: isMcp ? 'mcp' : 'tool',
+      name: tc.name, duration_ms, ok,
+    })
+    await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
+
+    return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp }
+  }
 
   while (true) {
     if (signal?.aborted) return
+
+    if (resumeApproval) {
+      const approval = resumeApproval
+      resumeApproval = undefined
+      if (approval.approved) {
+        events.onToolStart(approval.name, approval.input)
+        const result = await executeOneTool({ id: approval.toolCallId, name: approval.name, args: JSON.stringify(approval.input) }, approval.input, approval.isMcp)
+        events.onToolEnd(result.name, result.content)
+        session.messages.push({ role: 'tool', tool_call_id: result.tool_call_id, content: result.content } as any)
+        session.tool_calls.push({ id: result.tool_call_id, name: result.name, input: result.input, result: result.content, ok: result.ok, ts: new Date().toISOString() })
+      } else {
+        const content = `User denied tool "${approval.name}".`
+        session.messages.push({ role: 'tool', tool_call_id: approval.toolCallId, content } as any)
+        session.tool_calls.push({ id: approval.toolCallId, name: approval.name, input: approval.input, result: content, ok: false, ts: new Date().toISOString() })
+      }
+    }
 
     const projectedMessages = await project(
       session,
@@ -179,36 +234,6 @@ export async function runAgentLoop(
     // --- Parallel tool execution (Strategy C) ---
     // allow tools batch in parallel; prompt/deny tools flush batch first then run serially
 
-    const executeOneTool = async (
-      tc: { id: string; name: string; args: string },
-      input: Record<string, unknown>,
-      isMcp: boolean
-    ): Promise<ToolResult> => {
-      await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
-
-      const toolDef = allTools.find(t => t.name === tc.name)
-      const toolStart = Date.now()
-      let result: string
-      let ok = true
-      try {
-        if (!toolDef) throw new Error(`Tool "${tc.name}" not found in registry`)
-        result = await toolDef.execute(input, context)
-      } catch (e: any) {
-        result = `Error: ${e.message}`
-        ok = false
-      }
-      const duration_ms = Date.now() - toolStart
-
-      logEvent({
-        session: session.id, profile: profile.name,
-        kind: isMcp ? 'mcp' : 'tool',
-        name: tc.name, duration_ms, ok,
-      })
-      await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
-
-      return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp }
-    }
-
     const toolResults: ToolResult[] = new Array(toolCalls.length)
     let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number }> = []
 
@@ -277,6 +302,33 @@ export async function runAgentLoop(
         }
       } else if (acl === 'prompt') {
         await flushBatch()
+        if (context.unattended && context.pendingInputs && context.runId && context.channels?.enabled) {
+          const created = new Date()
+          const pending = context.pendingInputs.create({
+            id: randomUUID().replace(/-/g, '').slice(0, 12),
+            run_id: context.runId,
+            session_id: session.id,
+            user: session.user,
+            profile: profile.name,
+            prompt: `Approve ${tc.name}?${risk ? ` Risk: ${risk}.` : ''}${reason ? ` ${reason}` : ''}\n${JSON.stringify(input).slice(0, 500)}`,
+            kind: 'select',
+            options: ['Allow', 'Deny', 'Always'],
+            tool_call_id: tc.id,
+            purpose: 'approval',
+            tool_name: tc.name,
+            tool_input: input,
+            is_mcp: isMcp,
+            created_at: created.toISOString(),
+            expires_at: new Date(created.getTime() + 15 * 60 * 1000).toISOString(),
+          })
+          const delivered = await context.channels.send(session.user, undefined, {
+            text: pending.prompt,
+            buttons: [{ id: 'allow', label: 'Allow' }, { id: 'deny', label: 'Deny' }, { id: 'always', label: 'Always' }],
+            correlation_id: pending.id,
+          })
+          if (delivered.ok) throw new ParkSignal(pending.id)
+          context.pendingInputs.cancel(pending.id)
+        }
         const approved = await events.onToolPrompt(tc.id, tc.name, input, risk, reason)
         if (!approved) {
           toolResults[i] = {

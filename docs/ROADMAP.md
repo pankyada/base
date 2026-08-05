@@ -365,7 +365,13 @@ stdout/webhook reference adapters, and conditional `Notify` registration.
 
 ---
 
-### ❌ 18. Deferred asks — durable human-in-loop
+### 🔄 18. Deferred asks — durable human-in-loop
+
+**In progress on `feat/17-channels`:** durable pending records, `waiting_input`
+run state, park/resume across REST, channels, and WebSocket, TTL expiry
+sentinels, cancellation, and unattended approval reuse are implemented. Final
+client inbox rendering and end-to-end restart acceptance remain before marking
+this item shipped.
 
 `AskUser` awaits an in-memory promise held by a live connection, so an
 unattended run cannot ask, and a restart destroys the question. Makes a question

@@ -1,5 +1,6 @@
 import { Project } from './projects/types.js'
 import { SessionSummary } from './session/types.js'
+import type { PendingInput } from './runs/pending.js'
 import type { Stage, Intensity, Tier, Reversibility } from './workflow/types.js'
 
 export type AclValue = 'allow' | 'prompt' | 'deny'
@@ -131,6 +132,8 @@ export type ClientMessage =
   | { type: 'skill_discard'; name: string }
   | { type: 'skills_mine' }
   | { type: 'compact' }
+  | { type: 'pending_list' }
+  | { type: 'pending_answer'; pending_id: string; value: string }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -157,6 +160,7 @@ export type ServerMessage =
   | { type: 'skill_result'; action: 'saved' | 'promoted' | 'discarded'; name: string; path?: string }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }
   | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number }
+  | { type: 'pending'; pending: PendingInput[] }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 

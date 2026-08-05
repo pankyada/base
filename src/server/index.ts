@@ -1,4 +1,5 @@
 import { createServer } from 'http'
+import { randomUUID } from 'crypto'
 import { createRestHandler } from './rest.js'
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
@@ -7,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { recordUsage } from '../usage/ledger.js'
 import { RunStore } from '../runs/store.js'
+import { PendingStore } from '../runs/pending.js'
 import { CronScheduler } from '../scheduler/cron.js'
 import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
@@ -34,6 +36,8 @@ import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
+import { isParkSignal } from '../runs/park.js'
+import { resumeExpiredInput, resumePendingInput } from '../runs/resume.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -42,6 +46,10 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
 }
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
+
+function randomRunId(): string {
+  return randomUUID().replace(/-/g, '').slice(0, 8)
+}
 
 function readSessionCount(artifactDir: string): number {
   const path = `${artifactDir}/session-count.json`
@@ -64,8 +72,33 @@ async function main() {
 
   const profile = loadProfile(profilePath)
   const channels = new ChannelRuntime(profile)
+  const runStore = new RunStore()
+  const pendingStore = new PendingStore()
+  const abortRegistry = new Map<string, AbortController>()
   channels.onInbound(async route => {
     if (route.binding.profile !== profile.name) return
+    if (route.message.correlation_id) {
+      const pending = pendingStore.get(route.message.correlation_id)
+      if (pending && pending.user === route.binding.user) {
+        const answer = route.message.button_id ?? route.message.text
+        const result = await resumePendingInput(route.message.correlation_id, answer, 'channel', {
+          pendingStore, runStore, abortRegistry,
+          resolveProfile: name => name === profile.name ? profile : null,
+          channels,
+        })
+        if (result.status === 'completed' && result.finalText) {
+          await channels.send(route.binding.user, route.channel, { text: result.finalText })
+        }
+        return
+      }
+    }
+    const runId = randomRunId()
+    const abort = new AbortController()
+    abortRegistry.set(runId, abort)
+    runStore.create({
+      id: runId, profile: profile.name, user: route.binding.user, trigger: 'webhook',
+      input: route.message.text, status: 'running', started_at: new Date().toISOString(),
+    })
     const events: AgentLoopEvents = {
       onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {},
       onToolPrompt: (id, name, input, risk, reason) => channels.requestApproval(route.binding.user, name, input, risk, reason),
@@ -73,20 +106,37 @@ async function main() {
       onSessionEnd: () => {}, onStats: () => {},
     }
     try {
-      const result = await runProfileOnce({ profile, userId: route.binding.user, userMessage: route.message.text, events, channels })
+      const result = await runProfileOnce({ profile, userId: route.binding.user, userMessage: route.message.text, events, channels, runId, pendingInputs: pendingStore, signal: abort.signal, unattended: true })
+      abortRegistry.delete(runId)
+      runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
       if (result.finalText) await channels.send(route.binding.user, route.channel, { text: result.finalText })
     } catch (error: any) {
+      abortRegistry.delete(runId)
+      if (isParkSignal(error)) {
+        runStore.update(runId, { status: 'waiting_input', session_id: error.sessionId })
+        return
+      }
+      runStore.update(runId, { status: 'failed', error: error.message, finished_at: new Date().toISOString() })
       await channels.send(route.binding.user, route.channel, { text: `run failed: ${error.message}`, urgency: 'high' })
     }
   })
   await channels.init()
+  const sweepPending = async () => {
+    for (const expired of pendingStore.sweep()) {
+      await resumeExpiredInput(expired.id, {
+        pendingStore, runStore, abortRegistry,
+        resolveProfile: name => name === profile.name ? profile : null,
+        channels,
+      })
+    }
+  }
+  void sweepPending()
+  const pendingSweepTimer = setInterval(() => { void sweepPending() }, 60_000)
+  pendingSweepTimer.unref()
   // One-time sweep of the legacy profile-scoped label bucket (pre-dates
   // per-user/per-project scoping below). Per-session sweeps below are what
   // actually keep deferred labels current across a long-running server.
   void sweepDeferredLabels(profile).catch(() => {})
-
-  const runStore = new RunStore()
-  const abortRegistry = new Map<string, AbortController>()
 
   // Crash recovery: re-queue any runs left in 'running' state from a prior crash
   const stalledRuns = runStore.scanRunning()
@@ -109,6 +159,8 @@ async function main() {
       userMessage: typeof run.input === 'string' ? run.input : JSON.stringify(run.input),
       events: { onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {}, onToolPrompt: async () => false, onSessionEnd: () => {}, onStats: () => {} },
       channels,
+      pendingInputs: pendingStore,
+      unattended: true,
     })
       .then(r => runStore.update(run.id, { status: 'completed', session_id: r.session.id, finished_at: new Date().toISOString() }))
       .catch(e => runStore.update(run.id, { status: 'failed', error: e.message, finished_at: new Date().toISOString() }))
@@ -141,13 +193,13 @@ async function main() {
     console.warn('[auth] HARNESS_API_KEY is set but empty — ignoring, server is unauthenticated')
   }
 
-  const scheduler = new CronScheduler(profile, runStore, abortRegistry, channels)
+  const scheduler = new CronScheduler(profile, runStore, abortRegistry, channels, pendingStore)
   scheduler.init()
   if (profile.triggers?.cron) {
     console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
   }
 
-  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills, channels })
+  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills, channels, pendingStore })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({
     server: httpServer,
@@ -208,6 +260,10 @@ async function main() {
     }
 
     const sendSkills = () => send({ type: 'skills', proposed: listProposed(connectionProfile), installed: listInstalled() })
+    const sendPending = () => send({
+      type: 'pending',
+      pending: pendingStore.list({ user: userId, state: 'open' }).map(({ path: _path, ...record }) => record),
+    })
 
     ws.on('message', async (raw) => {
       let msg: ClientMessage
@@ -241,6 +297,40 @@ async function main() {
         }
         send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false })
         send({ type: 'approval_mode_changed', mode: approvalMode })
+        sendPending()
+        return
+      }
+
+      if (msg.type === 'pending_list') {
+        sendPending()
+        return
+      }
+
+      if (msg.type === 'pending_answer') {
+        const result = await resumePendingInput(msg.pending_id, msg.value, 'ws', {
+          pendingStore, runStore, abortRegistry,
+          resolveProfile: name => name === connectionProfile.name ? connectionProfile : null,
+          channels,
+          events: {
+            onToken: t => send({ type: 'token', content: t }),
+            onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
+            onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
+            onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(resolve => {
+              pendingApprovals.set(id, resolve)
+              send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
+            }),
+            onSessionEnd: id => send({ type: 'session_end', sessionId: id }),
+            onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
+            onInputRequest: (id, prompt, kind, options) => new Promise<string>(resolve => {
+              pendingInputRequests.set(id, resolve)
+              send({ type: 'input_request', id, prompt, kind, options })
+            }),
+          },
+        })
+        if (result.status === 'failed' || result.status === 'ignored') {
+          send({ type: 'error', message: result.status === 'failed' ? result.error : result.reason })
+        }
+        sendPending()
         return
       }
 
@@ -419,6 +509,11 @@ async function main() {
       if (projectReply) { send(projectReply); return }
 
       if (msg.type === 'message') {
+        const runId = randomRunId()
+        runStore.create({
+          id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream',
+          input: msg.content, status: 'running', started_at: new Date().toISOString(),
+        })
         // Build system prompt with memory on first turn
         if (session.messages.length === 0) {
           const memSection = await memory.buildSystemPromptSection()
@@ -474,6 +569,8 @@ async function main() {
           wasmSupported,
           approvalMode,
           channels,
+          runId,
+          pendingInputs: pendingStore,
         }
 
         const runSignal = abortController.signal
@@ -483,11 +580,18 @@ async function main() {
           } else {
             await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, runSignal)
           }
+          runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
           if (runSignal.aborted) {
             saveSession(session)
             send({ type: 'session_end', sessionId: session.id })
           }
         } catch (e: any) {
+          if (isParkSignal(e)) {
+            runStore.update(runId, { status: 'waiting_input', session_id: e.sessionId })
+            sendPending()
+            return
+          }
+          runStore.update(runId, { status: 'failed', error: e.message, finished_at: new Date().toISOString() })
           if (e.name !== 'AbortError') {
             send({ type: 'error', message: e.message })
           }

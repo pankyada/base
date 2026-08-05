@@ -55,6 +55,8 @@ export type ClientMessage =
   | { type: 'project_list' }
   | { type: 'project_assign'; sessionId: string; projectId: string }
   | { type: 'session_list'; projectId?: string }
+  | { type: 'pending_list' }
+  | { type: 'pending_answer'; pending_id: string; value: string }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -73,6 +75,7 @@ export type ServerMessage =
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
+  | { type: 'pending'; pending: Array<Record<string, unknown>> }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 

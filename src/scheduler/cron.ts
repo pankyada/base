@@ -7,6 +7,8 @@ import { runProfileOnce } from '../server/run-profile.js'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { compileContract, validateAndBuildInput } from '../server/contract.js'
 import type { ChannelRuntime } from '../channels/runtime.js'
+import type { PendingStore } from '../runs/pending.js'
+import { isParkSignal } from '../runs/park.js'
 
 function makeRunId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 8)
@@ -20,6 +22,7 @@ export class CronScheduler {
     private runStore: RunStore,
     private abortRegistry: Map<string, AbortController>,
     private channels?: ChannelRuntime,
+    private pendingStore?: PendingStore,
   ) {}
 
   init(): void {
@@ -69,6 +72,8 @@ export class CronScheduler {
           },
           signal: abort.signal,
           channels: this.channels,
+          runId, pendingInputs: this.pendingStore,
+          unattended: true,
         })
         this.abortRegistry.delete(runId)
         this.runStore.update(runId, {
@@ -81,9 +86,10 @@ export class CronScheduler {
         const existing = this.runStore.get(runId)
         if (existing?.status === 'running') {
           this.runStore.update(runId, {
-            status: 'failed',
+            status: isParkSignal(e) ? 'waiting_input' : 'failed',
+            session_id: isParkSignal(e) ? e.sessionId : undefined,
             error: e.message,
-            finished_at: new Date().toISOString(),
+            ...(isParkSignal(e) ? {} : { finished_at: new Date().toISOString() }),
           })
         }
         console.error(`[cron] run failed for profile ${this.profile.name}:`, e.message)
