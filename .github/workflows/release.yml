@@ -4,15 +4,57 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 
 jobs:
+  bump:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Bump version, commit, and tag
+        id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          NEW_VERSION=$(npm version "${{ inputs.bump }}" -m "chore(release): v%s")
+          git push origin main
+          git push origin "$NEW_VERSION"
+          echo "tag=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: [bump]
+    if: always() && !failure() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag || github.ref_name }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -37,7 +79,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
+          TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
+          gh release create "$TAG" \
             bin/harness-macos-arm64 \
             bin/harness-macos-x64 \
             bin/harness-linux-x64 \
@@ -47,5 +90,5 @@ jobs:
             bin/harness-tui-darwin-arm64 \
             bin/harness-tui-darwin-amd64 \
             bin/harness-tui-linux-amd64 \
-            --title "${{ github.ref_name }}" \
+            --title "$TAG" \
             --generate-notes
