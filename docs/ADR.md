@@ -513,10 +513,11 @@ table-tested rather than inherited.
 
 *Context:* "9am standup" means 9am somewhere; normalizing to bare UTC breaks for
 anyone who travels.
-*Decision:* Store ISO-8601 with offset; compute recurrences in the fact's own
-zone, then convert.
-*Consequences:* Correct across DST and travel, at the cost of never being able to
-compare naive timestamps directly.
+*Decision:* Store ISO-8601 with offset. An optional IANA `timezone` preserves
+wall-clock recurrence across DST; an offset-only recurrence is deliberately
+fixed-offset rather than guessing a zone.
+*Consequences:* Correct across DST and travel when a zone is supplied, without
+inventing a timezone from an ambiguous offset. Naive timestamps remain invalid.
 
 ---
 

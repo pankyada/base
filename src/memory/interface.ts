@@ -4,16 +4,47 @@ export interface MemoryLink {
   relation?: string
 }
 
+export type MemoryScope = 'session' | 'profile' | 'user' | 'project'
+
+export interface TemporalMeta {
+  valid_from?: string
+  valid_until?: string
+  recur?: string
+  /** IANA zone for wall-clock recurrence. Offset-only facts use a fixed offset. */
+  timezone?: string
+  entity?: string
+  confidence?: number
+  supersedes?: string
+}
+
+export interface RecallQuery {
+  at?: string
+  window?: string
+  entity?: string
+  relation?: string
+  text?: string
+  limit?: number
+}
+
+export interface MemoryRecord {
+  content: string
+  links?: MemoryLink[]
+  temporal?: TemporalMeta
+}
+
 export interface MemoryEntry {
   key: string
   preview: string
+  content?: string
   links?: MemoryLink[]
+  temporal?: TemporalMeta
 }
 
 export interface MemoryProvider {
-  read(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<{content: string, links?: MemoryLink[]} | null>
-  write(scope: 'session' | 'profile' | 'user' | 'project', key: string, content: string, links?: MemoryLink[]): Promise<void>
-  delete(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<void>
-  list(scope: 'session' | 'profile' | 'user' | 'project'): Promise<MemoryEntry[]>
+  read(scope: MemoryScope, key: string): Promise<MemoryRecord | null>
+  write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta): Promise<void>
+  delete(scope: MemoryScope, key: string): Promise<void>
+  list(scope: MemoryScope): Promise<MemoryEntry[]>
+  query(scope: MemoryScope, query: RecallQuery): Promise<MemoryEntry[]>
   buildSystemPromptSection(): Promise<string>
 }

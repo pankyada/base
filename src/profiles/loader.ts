@@ -36,7 +36,7 @@ export function applyModeDefaults(profile: Profile): Profile {
   if (profile.mode === 'production') {
     const allKnownTools = [
       'Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill', 'Stats',
-      'Delegate', 'AskUser', 'MemoryRead', 'MemoryWrite', 'MemoryList', 'MemoryDelete',
+      'Delegate', 'AskUser', 'MemoryRead', 'MemoryWrite', 'MemoryList', 'MemoryDelete', 'Recall',
       'TodoWrite', 'TodoRead', 'ExecuteCode',
     ]
     for (const tool of allKnownTools) {

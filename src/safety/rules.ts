@@ -8,7 +8,7 @@ export interface StaticVerdict {
 }
 
 const SAFE_TOOLS = new Set([
-  'Read', 'Grep', 'Glob', 'Skill', 'Stats', 'MemoryRead', 'MemoryList', 'TodoRead', 'TodoWrite',
+  'Read', 'Grep', 'Glob', 'Skill', 'Stats', 'MemoryRead', 'MemoryList', 'Recall', 'TodoRead', 'TodoWrite',
 ])
 
 const DANGER_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [

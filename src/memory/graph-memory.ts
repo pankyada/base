@@ -1,13 +1,15 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { MemoryProvider, MemoryEntry, MemoryLink } from './interface.js'
+import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths, projectPaths } from '../session/user-paths.js'
+import { imminentEntries, queryEntries, validateTemporal } from './query.js'
 
 interface GraphNode {
   key: string
   content: string
   links?: MemoryLink[]
+  temporal?: TemporalMeta
 }
 
 interface GraphData {
@@ -61,13 +63,13 @@ export class GraphMemoryProvider implements MemoryProvider {
     writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8')
   }
 
-  async read(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<{content: string, links?: MemoryLink[]} | null> {
+  async read(scope: MemoryScope, key: string): Promise<MemoryRecord | null> {
     if (scope === 'session') {
       const val = this.session.session_memory[key]
       if (!val) return null
       try {
         const parsed = JSON.parse(val)
-        return { content: parsed.content, links: parsed.links }
+        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal }
       } catch {
         return { content: val }
       }
@@ -75,21 +77,22 @@ export class GraphMemoryProvider implements MemoryProvider {
     const graph = this.loadGraph(scope)
     const node = graph.nodes[key]
     if (!node) return null
-    return { content: node.content, links: node.links }
+    return { content: node.content, links: node.links, temporal: node.temporal }
   }
 
-  async write(scope: 'session' | 'profile' | 'user' | 'project', key: string, content: string, links?: MemoryLink[]): Promise<void> {
+  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta): Promise<void> {
+    validateTemporal(temporal)
     if (scope === 'session') {
-      this.session.session_memory[key] = JSON.stringify({ content, links })
+      this.session.session_memory[key] = JSON.stringify({ content, links, temporal })
       return
     }
     const graph = this.loadGraph(scope)
-    graph.nodes[key] = { key, content, links }
+    graph.nodes[key] = { key, content, links, temporal }
     this.saveGraph(scope, graph)
     await this.rebuildIndex(scope)
   }
 
-  async delete(scope: 'session' | 'profile' | 'user' | 'project', key: string): Promise<void> {
+  async delete(scope: MemoryScope, key: string): Promise<void> {
     if (scope === 'session') {
       delete this.session.session_memory[key]
       return
@@ -102,7 +105,7 @@ export class GraphMemoryProvider implements MemoryProvider {
     }
   }
 
-  async list(scope: 'session' | 'profile' | 'user' | 'project'): Promise<MemoryEntry[]> {
+  async list(scope: MemoryScope): Promise<MemoryEntry[]> {
     if (scope === 'session') {
       return Object.entries(this.session.session_memory).map(([key, val]) => {
         let preview = val.slice(0, 100)
@@ -111,37 +114,43 @@ export class GraphMemoryProvider implements MemoryProvider {
           const parsed = JSON.parse(val)
           preview = (parsed.content as string).slice(0, 100)
           links = parsed.links
+          return { key, preview, content: parsed.content, links, temporal: parsed.temporal }
         } catch { /* ignore */ }
-        return { key, preview, links }
+        return { key, preview, content: preview, links }
       })
     }
     const graph = this.loadGraph(scope)
     return Object.values(graph.nodes).map(node => ({
       key: node.key,
       preview: node.content.slice(0, 100),
-      links: node.links
+      content: node.content,
+      links: node.links,
+      temporal: node.temporal,
     }))
+  }
+
+  async query(scope: MemoryScope, query: RecallQuery): Promise<MemoryEntry[]> {
+    return queryEntries(await this.list(scope), query)
   }
 
   async buildSystemPromptSection(): Promise<string> {
     const parts: string[] = []
 
-    const sharedIndex = join(this.sharedMemDir, 'MEMORY.md')
-    if (existsSync(sharedIndex)) {
-      parts.push(`## Memory (shared)\n${readFileSync(sharedIndex, 'utf-8')}`)
-    }
-
-    const privateIndex = join(this.privateMemDir, 'MEMORY.md')
-    if (existsSync(privateIndex)) {
-      parts.push(`## Memory (yours)\n${readFileSync(privateIndex, 'utf-8')}`)
-    }
-
-    if ((this.session.project ?? 'inbox') !== 'inbox') {
-      const projectIndex = join(this.projectMemDir, 'MEMORY.md')
-      if (existsSync(projectIndex)) {
-        parts.push(`## Memory (project)\n${readFileSync(projectIndex, 'utf-8')}`)
-      }
-    }
+    const render = (entries: MemoryEntry[]) => entries.map(entry => `- **${entry.key}**: ${entry.preview.replace(/\n/g, ' ')}`).join('\n')
+    const now = new Date()
+    const at = now.toISOString()
+    const shared = await this.query('profile', { at })
+    const personal = await this.query('user', { at })
+    const project = (this.session.project ?? 'inbox') === 'inbox' ? [] : await this.query('project', { at })
+    const imminent = [
+      ...imminentEntries(await this.list('profile'), now),
+      ...imminentEntries(await this.list('user'), now),
+      ...((this.session.project ?? 'inbox') === 'inbox' ? [] : imminentEntries(await this.list('project'), now)),
+    ]
+    if (shared.length) parts.push(`## Memory (shared)\n${render(shared)}`)
+    if (personal.length) parts.push(`## Memory (yours)\n${render(personal)}`)
+    if (project.length) parts.push(`## Memory (project)\n${render(project)}`)
+    if (imminent.length) parts.push(`## Memory (imminent)\n${render(imminent)}`)
 
     return parts.length > 0 ? '\n\n' + parts.join('\n\n') : ''
   }

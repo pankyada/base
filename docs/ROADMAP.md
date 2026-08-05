@@ -389,7 +389,7 @@ later, resumable across restarts.
 
 ---
 
-### ❌ 19. Temporal memory
+### 🔄 19. Temporal memory
 
 Every memory fact is currently implicitly eternal and implicitly current, which
 produces confidently stale answers. Adds validity intervals, bounded recurrence,

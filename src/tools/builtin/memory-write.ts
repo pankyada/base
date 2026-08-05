@@ -24,14 +24,22 @@ export const memoryWriteTool: ToolDefinition = {
           },
           required: ['target']
         }
-      }
+      },
+      valid_from: { type: 'string', description: 'ISO-8601 validity start with offset' },
+      valid_until: { type: 'string', description: 'ISO-8601 validity end with offset' },
+      recur: { type: 'string', description: 'Bounded RRULE subset' },
+      timezone: { type: 'string', description: 'IANA timezone for DST-safe wall-clock recurrence' },
+      entity: { type: 'string', description: 'Stable entity identifier for supersession' },
+      confidence: { type: 'number', description: 'Confidence from 0 to 1' },
+      supersedes: { type: 'string', description: 'Key of superseded memory' },
     },
     required: ['key', 'content'],
   },
   async execute(input, ctx: ToolContext) {
-    const { key, content, links } = input as { key: string; content: string; links?: { target: string, relation?: string }[] }
+    const { key, content, links, valid_from, valid_until, recur, timezone, entity, confidence, supersedes } = input as { key: string; content: string; links?: { target: string, relation?: string }[]; valid_from?: string; valid_until?: string; recur?: string; timezone?: string; entity?: string; confidence?: number; supersedes?: string }
     const scope = ((input as any).scope ?? 'user') as 'session' | 'profile' | 'user' | 'project'
-    await ctx.memory.write(scope, key, content, links)
+    const temporal = { valid_from, valid_until, recur, timezone, entity, confidence, supersedes }
+    await ctx.memory.write(scope, key, content, links, Object.values(temporal).some(value => value !== undefined) ? temporal : undefined)
     return `Memory written: ${scope}/${key}${links?.length ? ` (with ${links.length} links)` : ''}`
   },
 }

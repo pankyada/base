@@ -52,6 +52,7 @@ links:
     relation: manager
 valid_from: 2026-08-14T00:00:00+05:30
 valid_until: 2026-08-21T00:00:00+05:30
+timezone: Asia/Kolkata
 entity: travel/delhi-trip
 confidence: 0.9
 supersedes: travel-delhi-trip-v1
@@ -64,6 +65,7 @@ Flight AI-812 to Delhi, 14th, 09:40 IST. Return on the 21st.
 | `valid_from` | fact begins holding | beginning of time |
 | `valid_until` | fact stops holding | end of time |
 | `recur` | RRULE subset; fact holds on each occurrence | non-recurring |
+| `timezone` | IANA zone for wall-clock recurrence | fixed offset from `valid_from` |
 | `entity` | what this fact is *about* | ungrouped |
 | `confidence` | 0–1, source-dependent | 1.0 |
 | `supersedes` | key of the fact this replaces | replaces nothing |
@@ -135,8 +137,9 @@ real-world bug in shipped assistants:
 
 1. **Month-end.** `BYMONTHDAY=31` in a 30-day month → skipped, not clamped to the
    30th. `-1` is the way to say "last day".
-2. **DST.** A 9am local recurrence stays 9am local across a transition; the UTC
-   instant shifts. Computation happens in the fact's stored zone, then converts.
+2. **DST.** A 9am local recurrence with an IANA `timezone` stays 9am local
+   across a transition; the UTC instant shifts. An offset alone is ambiguous,
+   so offset-only recurrence is intentionally fixed-offset.
 3. **Leap day.** `YEARLY` on Feb 29 occurs only in leap years.
 
 ---
@@ -148,6 +151,7 @@ export interface TemporalMeta {
   valid_from?: string
   valid_until?: string
   recur?: string
+  timezone?: string
   entity?: string
   confidence?: number
   supersedes?: string
