@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { ToolDefinition } from '../types.js'
+import { recordHarnessWrite } from '../../triggers/suppression.js'
 
 export const editTool: ToolDefinition = {
   name: 'Edit',
@@ -26,6 +27,7 @@ export const editTool: ToolDefinition = {
       ? content.split(old_string).join(new_string)
       : content.replace(old_string, new_string)
     writeFileSync(file_path, updated, 'utf-8')
+    recordHarnessWrite(file_path)
     return `Replaced ${count} occurrence(s) in ${file_path}`
   },
 }

@@ -406,7 +406,7 @@ entity grouping, and supersession-instead-of-overwrite.
 
 ---
 
-### ❌ 20. Watch & poll triggers
+### 🔄 20. Watch & poll triggers
 
 Generalizes `triggers` beyond a clock. The critical property is that the
 no-change path is **free**: a poll's cursor probe runs one tool call and no model

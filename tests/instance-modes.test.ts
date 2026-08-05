@@ -173,6 +173,17 @@ describe('validateMode', () => {
     )
   })
 
+  it('developer + poll trigger throws hard error', () => {
+    const profile = ProfileSchema.parse({
+      ...BASE,
+      mode: 'developer',
+      triggers: { poll: [{ name: 'mail', every: '5m', probe: { tool: 'mail__list' }, cursor_path: 'messages[0].id' }] },
+    })
+    expect(() => validateMode(applyModeDefaults(profile))).toThrow(
+      /developer mode with cron\/webhook triggers/
+    )
+  })
+
   it('no mode: no warnings, no errors', () => {
     const profile = ProfileSchema.parse(BASE)
     expect(() => validateMode(applyModeDefaults(profile))).not.toThrow()

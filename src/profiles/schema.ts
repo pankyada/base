@@ -141,6 +141,25 @@ const ExecutorSchema = z.object({
   allowed_packages: z.array(z.string()).default([]),
 })
 
+const TriggerModeSchema = z.enum(['skip', 'queue', 'parallel']).default('skip')
+const WatchTriggerSchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+  events: z.array(z.enum(['add', 'change', 'unlink'])).default(['add', 'change', 'unlink']),
+  debounce_ms: z.number().int().positive().default(2000),
+  ignore: z.array(z.string()).default([]),
+  max_batch: z.number().int().positive().default(50),
+  mode: TriggerModeSchema,
+})
+const PollTriggerSchema = z.object({
+  name: z.string().min(1),
+  every: z.string().regex(/^\d+(s|m|h|d)$/, 'must be a number followed by s, m, h, or d'),
+  probe: z.object({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()).default({}) }),
+  cursor_path: z.string().min(1),
+  jitter_pct: z.number().min(0).max(100).default(0),
+  mode: TriggerModeSchema,
+})
+
 export type ExecutorConfig = z.infer<typeof ExecutorSchema>
 
 const SafetySchema = z.object({
@@ -261,6 +280,9 @@ export const ProfileSchema = z.object({
     cron: z.string().optional(),
     webhook: z.boolean().default(false),
     cron_input: z.record(z.string(), z.unknown()).optional(),
+    watch: z.array(WatchTriggerSchema).default([]),
+    poll: z.array(PollTriggerSchema).default([]),
+    max_concurrent_runs: z.number().int().positive().default(3),
   }).optional(),
   description: z.string().optional(),
   interop: z.object({

@@ -42,7 +42,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger'
   name?: string
   server?: string
   model?: string
@@ -84,6 +84,10 @@ export interface TelemetryEvent {
   digest_calls?: number
   restore_calls?: number
   cache_read_tokens?: number
+  fired?: boolean
+  skip_reason?: 'cursor_unchanged' | 'overlap' | 'budget' | 'probe_error'
+  probe_ms?: number
+  coalesced_events?: number
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {

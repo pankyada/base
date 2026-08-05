@@ -9,7 +9,7 @@ import { sanitizeUserId } from '../session/user-paths.js'
 import { recordUsage } from '../usage/ledger.js'
 import { RunStore } from '../runs/store.js'
 import { PendingStore } from '../runs/pending.js'
-import { CronScheduler } from '../scheduler/cron.js'
+import { TriggerManager } from '../triggers/manager.js'
 import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
@@ -193,7 +193,23 @@ async function main() {
     console.warn('[auth] HARNESS_API_KEY is set but empty — ignoring, server is unauthenticated')
   }
 
-  const scheduler = new CronScheduler(profile, runStore, abortRegistry, channels, pendingStore)
+  const scheduler = new TriggerManager({
+    profile, runStore, abortRegistry, channels, pendingStore,
+    probe: async (tool, args) => {
+      const [serverName, toolName] = tool.split('__', 2)
+      const entries = await createMcpClients(profile)
+      try {
+        const entry = entries.find(candidate => candidate.serverName === serverName && candidate.tools.some(candidateTool => candidateTool.name === toolName))
+        if (!entry || !toolName) throw new Error(`poll probe tool "${tool}" is unavailable`)
+        const result = await entry.client.callTool({ name: toolName, arguments: args })
+        const content = result.content as Array<{ type: string; text?: string }>
+        const text = content.map(item => item.text ?? '').join('\n')
+        try { return JSON.parse(text) } catch { return { text } }
+      } finally {
+        await destroyMcpClients(entries)
+      }
+    },
+  })
   scheduler.init()
   if (profile.triggers?.cron) {
     console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
@@ -643,7 +659,7 @@ async function main() {
 
   process.on('SIGINT', () => {
     console.log('\nShutting down...')
-    scheduler.stop()
+    void scheduler.stop()
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
     httpServer.close()

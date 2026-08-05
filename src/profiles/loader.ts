@@ -59,9 +59,9 @@ export function validateMode(profile: Profile): void {
   if (!profile.mode) return
 
   // Hard errors
-  if (profile.mode === 'developer' && (profile.triggers?.cron || profile.triggers?.webhook)) {
+  if (profile.mode === 'developer' && (profile.triggers?.cron || profile.triggers?.webhook || profile.triggers?.watch?.length || profile.triggers?.poll?.length)) {
     throw new Error(
-      '[mode] developer mode with cron/webhook triggers is not allowed — ' +
+      '[mode] developer mode with cron/webhook triggers or watch/poll triggers is not allowed — ' +
       'autonomous developer agents have unrestricted tool access. ' +
       'Use analyst or production mode for autonomous deployments.'
     )
