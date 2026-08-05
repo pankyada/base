@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -61,21 +62,33 @@ func BuildTimeline(sections []*Section, expanded map[string]bool) []TimelineEntr
 	return timeline
 }
 
-func categoryColor(category string) lipgloss.Color {
-	switch category {
-	case "files":
-		return ColPurple
-	case "exec":
-		return ColAccent
-	case "memory":
-		return ColInfo
-	case "agents":
-		return ColTeal
-	case "mcp":
-		return ColRose
-	default:
-		return ColFaint
+// Activities hang off the turn header in two steps: the category header sits
+// one step in, its rows another, joined by a guide line so a long run of tool
+// calls reads as one indented block instead of a wall of left-aligned rows.
+const (
+	groupIndent = "  "
+	itemIndent  = "  │  "
+)
+
+// itemGuide is the styled guide column drawn beside every line of a row,
+// including the lines of an expanded body, so the block keeps one spine.
+func itemGuide() string { return StFaint.Render(itemIndent) }
+
+// groupItemWidth is the width a row gets once the guide column is taken out.
+// The transcript's hit map sizes rows the same way, so header heights and click
+// targets stay in step.
+func groupItemWidth(width int) int {
+	return maxInt(0, width-len([]rune(itemIndent)))
+}
+
+// indentLines prefixes every line of a block, keeping multi-line bodies inside
+// the column their header hangs off.
+func indentLines(prefix, block string) string {
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
 	}
+	return strings.Join(lines, "\n")
 }
 
 // Render draws a group header and its indented items. Group expansion forces
@@ -86,11 +99,12 @@ func (g *ActivityGroup) Render(width, frame int, allExpanded bool) string {
 	if open {
 		chevron = "▾"
 	}
-	header := lipgloss.NewStyle().Foreground(categoryColor(g.Category)).Render(chevron+" "+g.Label) +
-		StDim.Render(fmt.Sprintf(" · %d ops", len(g.Items)))
+	header := groupIndent +
+		lipgloss.NewStyle().Foreground(categorySoftColor(g.Category)).Render(chevron+" "+g.Label) +
+		StFaint.Render(fmt.Sprintf(" · %s", plural(len(g.Items), "op")))
 	lines := []string{header}
 	for _, item := range g.Items {
-		lines = append(lines, "  "+item.Render(maxInt(0, width-2), frame, open))
+		lines = append(lines, indentLines(itemGuide(), item.Render(groupItemWidth(width), frame, open)))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

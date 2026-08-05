@@ -99,13 +99,18 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 				forceOpen := entry.Group.Expanded || tr.AllExpanded
 				for _, item := range entry.Group.Items {
 					hits = append(hits, HitRow{Y: itemRow, TurnIndex: turnIndex, Item: item})
-					itemRow += lipgloss.Height(item.Render(maxInt(0, width-2), frame, forceOpen))
+					itemRow += lipgloss.Height(item.Render(groupItemWidth(width), frame, forceOpen))
 				}
 				parts = append(parts, rendered)
 				row += lipgloss.Height(rendered)
 				continue
 			}
-			rendered := entry.Standalone.Render(width, frame, true)
+			// Errors and pending approvals sit at the group headers' indent —
+			// out of the guide column, so they read as interruptions rather
+			// than as one more row of routine work.
+			hits = append(hits, HitRow{Y: row, TurnIndex: turnIndex, Item: entry.Standalone})
+			rendered := indentLines(groupIndent,
+				entry.Standalone.Render(maxInt(0, width-len([]rune(groupIndent))), frame, tr.AllExpanded))
 			parts = append(parts, rendered)
 			row += lipgloss.Height(rendered)
 		}

@@ -63,6 +63,41 @@ func ApplyTheme(name string) string {
 	return theme.Name
 }
 
+// categorySoftness is how far an activity color is pulled toward the
+// background. Tool rows are the densest thing on screen, so they carry the
+// category at reading strength, not at alert strength.
+const categorySoftness = 0.4
+
+// categoryHex is the active theme's hex for an activity category. It reads
+// currentTheme rather than the Col* vars so a soft shade can be blended against
+// the theme's own background.
+func categoryHex(category string) string {
+	switch category {
+	case "files":
+		return currentTheme.Purple
+	case "exec":
+		return currentTheme.Accent
+	case "memory":
+		return currentTheme.Info
+	case "agents":
+		return currentTheme.Teal
+	case "mcp":
+		return currentTheme.Rose
+	default:
+		return currentTheme.Faint
+	}
+}
+
+func categoryColor(category string) lipgloss.Color {
+	return lipgloss.Color(categoryHex(category))
+}
+
+// categorySoftColor is the muted shade used for activity rows — enough color to
+// tell files from exec at a glance, not enough to pull the eye off the prose.
+func categorySoftColor(category string) lipgloss.Color {
+	return lipgloss.Color(blendHex(categoryHex(category), currentTheme.Bg, categorySoftness))
+}
+
 // blendHex linearly interpolates two "#RRGGBB" colors; t=0 returns a, t=1
 // returns b. Used to derive a dimmed shade of a theme's accent color for the
 // running-status pulse, without hand-picking a matching hex per theme.

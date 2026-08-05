@@ -137,6 +137,103 @@ func TestToggleGroupFromHitMapExpandsItems(t *testing.T) {
 	}
 }
 
+// Activities are indented under the turn header so the agent's words and the
+// agent's actions read as two different things.
+func TestTranscriptIndentsActivityUnderTurnHeader(t *testing.T) {
+	tr := Transcript{Turns: []Turn{{
+		Role: "agent",
+		Time: "12:00",
+		Text: "done",
+		Sections: []Section{
+			{Name: "Read", Arg: "src/a.go", Category: "files", State: SectionDone},
+		},
+	}}}
+	lines := strings.Split(stripANSI(tr.Render(80, 0)), "\n")
+	var header, item string
+	for _, line := range lines {
+		if strings.Contains(line, "FILES") {
+			header = line
+		}
+		if strings.Contains(line, "src/a.go") {
+			item = line
+		}
+	}
+	if !strings.HasPrefix(header, groupIndent+"▸") {
+		t.Fatalf("group header should be indented under the turn header, got %q", header)
+	}
+	if !strings.HasPrefix(item, itemIndent) {
+		t.Fatalf("item should hang off the group's guide column, got %q", item)
+	}
+	if strings.HasPrefix(lines[0], " ") {
+		t.Fatalf("turn header should stay at the left margin, got %q", lines[0])
+	}
+}
+
+// The hit map sizes rows independently of the group renderer, so the two have
+// to agree or every click after a multi-line row lands on the wrong section.
+func TestRenderWithHitMapRowsMatchRenderedLines(t *testing.T) {
+	tr := Transcript{Turns: []Turn{{
+		Role: "agent",
+		Sections: []Section{
+			{Name: "Read", Arg: "first.go", Category: "files", State: SectionDone, Body: "a\nb\nc", Expanded: true},
+			{Name: "Write", Arg: "second.go", Category: "files", State: SectionDone},
+		},
+	}}}
+	content, hits := tr.RenderWithHitMap(80, 0)
+	lines := strings.Split(stripANSI(content), "\n")
+	for _, hit := range hits {
+		if hit.Item == nil {
+			continue
+		}
+		if hit.Y >= len(lines) {
+			t.Fatalf("hit row %d out of range (%d lines)", hit.Y, len(lines))
+		}
+		if !strings.Contains(lines[hit.Y], hit.Item.Arg) {
+			t.Fatalf("hit row %d = %q, expected the row for %q", hit.Y, lines[hit.Y], hit.Item.Arg)
+		}
+	}
+}
+
+// A failure has to say what broke without the whole tail of output coming with
+// it — the rest stays behind the chevron like any other body.
+func TestTranscriptErrorShowsCappedPreview(t *testing.T) {
+	body := "line-1\nline-2\nline-3\nline-4\nline-5\nline-6\nline-7"
+	tr := Transcript{Turns: []Turn{{
+		Role:     "agent",
+		Sections: []Section{{Name: "Bash", Arg: "pnpm build", Category: "exec", State: SectionError, Body: body}},
+	}}}
+	out := stripANSI(tr.Render(80, 0))
+	if !strings.Contains(out, "line-1") {
+		t.Fatalf("error preview should show the head of the output, got %q", out)
+	}
+	if strings.Contains(out, "line-7") {
+		t.Fatalf("error preview should stop short of the whole body, got %q", out)
+	}
+	if !strings.Contains(out, "3 more lines") {
+		t.Fatalf("error preview should say how much is hidden, got %q", out)
+	}
+	tr.AllExpanded = true
+	if !strings.Contains(stripANSI(tr.Render(80, 0)), "line-7") {
+		t.Fatal("expanding should reveal the rest of the error body")
+	}
+}
+
+// Standalone rows are the ones a user most wants to open, so they need a click
+// target of their own — they are not part of any group's item list.
+func TestRenderWithHitMapIncludesStandaloneRows(t *testing.T) {
+	tr := Transcript{Turns: []Turn{{
+		Role:     "agent",
+		Sections: []Section{{Name: "Bash", Arg: "pnpm build", Category: "exec", State: SectionError, Body: "boom"}},
+	}}}
+	_, hits := tr.RenderWithHitMap(80, 0)
+	for _, hit := range hits {
+		if hit.Item != nil && hit.Item.Name == "Bash" {
+			return
+		}
+	}
+	t.Fatal("expected a hit row for the standalone error section")
+}
+
 // stripANSI removes escape sequences so assertions match on plain text.
 func stripANSI(s string) string {
 	var b strings.Builder

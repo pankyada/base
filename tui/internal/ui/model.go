@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -1568,13 +1567,14 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.activeToolStarted = time.Now()
 		agent := m.currentAgent()
 		category, _ := categorize(msg.Name)
-		agent.Sections = append(agent.Sections, Section{Name: msg.Name, Arg: summarizeInput(msg.Input), State: SectionRunning, Motion: m.transcript.Motion, RevealAt: -1, Category: category})
+		agent.Sections = append(agent.Sections, Section{Name: msg.Name, Arg: summarizeInput(msg.Name, msg.Input, m.workingDir), State: SectionRunning, Motion: m.transcript.Motion, RevealAt: -1, Category: category})
 	case "tool_end":
 		agent := m.currentAgent()
 		for i := len(agent.Sections) - 1; i >= 0; i-- {
 			section := &agent.Sections[i]
 			if section.Name == msg.Name && section.State == SectionRunning {
 				section.Body = truncateToolResult(msg.Result)
+				section.Metric = summarizeResult(msg.Name, msg.Result)
 				section.State = SectionDone
 				if strings.HasPrefix(msg.Result, "Error:") {
 					section.State = SectionError
@@ -1664,23 +1664,12 @@ func (m *Model) addServerError(message string) {
 	m.notices.Add(NoticeError, message, "", suggestion)
 }
 
-func summarizeInput(input map[string]interface{}) string {
-	if len(input) == 0 {
-		return ""
-	}
-	b, err := json.Marshal(input)
-	if err != nil {
-		return "input"
-	}
-	return truncate(string(b), 48)
-}
+// toolBodyMaxLines caps what a rolled-up tool result keeps in memory; only the
+// error preview and an explicit expansion ever put any of it on screen.
+const toolBodyMaxLines = 40
 
 func truncateToolResult(result string) string {
-	lines := strings.Split(result, "\n")
-	if len(lines) <= 40 {
-		return result
-	}
-	return strings.Join(lines[:40], "\n") + fmt.Sprintf("\n… %d more lines", len(lines)-40)
+	return firstLines(result, toolBodyMaxLines)
 }
 
 func (m *Model) reflow() {

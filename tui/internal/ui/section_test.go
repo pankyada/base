@@ -54,8 +54,12 @@ func TestCategorize(t *testing.T) {
 
 func TestSectionColorUsesCategoryUnlessStateOverrides(t *testing.T) {
 	section := Section{Name: "Read", Category: "files", State: SectionDone}
-	if got := section.color().GetForeground(); got != ColPurple {
-		t.Fatalf("done section color = %v, want files color %v", got, ColPurple)
+	soft := categorySoftColor("files")
+	if got := section.color().GetForeground(); got != soft {
+		t.Fatalf("done section color = %v, want soft files color %v", got, soft)
+	}
+	if soft == ColPurple {
+		t.Fatal("soft category color should be muted against the full category color")
 	}
 	section.State = SectionRunning
 	if got := section.color().GetForeground(); got != ColAccent {
@@ -65,13 +69,31 @@ func TestSectionColorUsesCategoryUnlessStateOverrides(t *testing.T) {
 	if got := section.color().GetForeground(); got != ColDel {
 		t.Fatalf("error section color = %v, want error %v", got, ColDel)
 	}
-	section.State = SectionDone
-	if got := section.nameStyle().GetForeground(); got != ColPurple {
-		t.Fatalf("done section name color = %v, want files color %v", got, ColPurple)
+}
+
+// The tool name is background information — the target beside it is the point —
+// so it never outranks the arg except while a call is live or has failed.
+func TestSectionNameStaysBehindItsTarget(t *testing.T) {
+	section := Section{Name: "Read", Category: "files", State: SectionDone}
+	if got := section.nameStyle().GetForeground(); got != ColFaint {
+		t.Fatalf("done section name color = %v, want faint %v", got, ColFaint)
 	}
 	section.State = SectionRunning
-	if got := section.nameStyle().GetForeground(); got != ColText {
-		t.Fatalf("running section name color = %v, want text color %v", got, ColText)
+	if got := section.nameStyle().GetForeground(); got != ColDim {
+		t.Fatalf("running section name color = %v, want dim %v", got, ColDim)
+	}
+	section.State = SectionError
+	if got := section.nameStyle().GetForeground(); got != ColDel {
+		t.Fatalf("error section name color = %v, want error %v", got, ColDel)
+	}
+}
+
+func TestSectionDisplayNameDropsMCPServerPrefix(t *testing.T) {
+	if got := (Section{Name: "chrome__navigate"}).displayName(); got != "navigate" {
+		t.Fatalf("displayName = %q, want %q", got, "navigate")
+	}
+	if got := (Section{Name: "Read"}).displayName(); got != "Read" {
+		t.Fatalf("displayName = %q, want %q", got, "Read")
 	}
 }
 
@@ -129,5 +151,43 @@ func TestSectionRenderUnicodeArg(t *testing.T) {
 	out := s.Render(30, 0, false)
 	if !utf8.ValidString(out) {
 		t.Fatal("rendered output contains invalid UTF-8 (likely a mid-rune truncation)")
+	}
+}
+
+// Padding the arg column by rune count would push a double-width arg past the
+// row's edge and wrap it.
+func TestSectionRenderWideRuneArgStaysInBudget(t *testing.T) {
+	s := Section{Name: "Read", Arg: "文档/报告.md", Metric: "3 lines", State: SectionDone}
+	if width := lipgloss.Width(s.Render(60, 0, false)); width > 60 {
+		t.Fatalf("rendered width %d exceeds requested width 60", width)
+	}
+}
+
+// Truncating a path from the right would cut off the filename, which is the one
+// part of the row the user is reading it for.
+func TestFitArgKeepsPathBasename(t *testing.T) {
+	got := fitArg("src/channels/adapters/http-transport.ts", 20)
+	if !strings.HasSuffix(got, "http-transport.ts") {
+		t.Fatalf("fitArg dropped the basename: %q", got)
+	}
+	if len([]rune(got)) > 20 {
+		t.Fatalf("fitArg returned %d runes, want <= 20", len([]rune(got)))
+	}
+	// A command reads left to right even when it contains a path.
+	if got := fitArg("grep -rn pattern src/", 12); !strings.HasPrefix(got, "grep") {
+		t.Fatalf("command should keep its head: %q", got)
+	}
+	if got := fitArg("src/a.go", 40); got != "src/a.go" {
+		t.Fatalf("short arg should pass through unchanged: %q", got)
+	}
+}
+
+func TestFirstLinesCapsAndCounts(t *testing.T) {
+	if got := firstLines("a\nb", 4); got != "a\nb" {
+		t.Fatalf("short block should pass through: %q", got)
+	}
+	got := firstLines("a\nb\nc\nd\ne", 2)
+	if got != "a\nb\n… 3 more lines" {
+		t.Fatalf("firstLines = %q", got)
 	}
 }
