@@ -19,6 +19,11 @@ describe('FsMemoryProvider', () => {
     expect((await provider.read('session', 'foo'))?.content).toBe('bar')
   })
 
+  it('preserves taint metadata across memory writes and reads', async () => {
+    await provider.write('user', 'unsafe', 'copied content', undefined, undefined, { tainted: true, source: 'MCP inbox' })
+    await expect(provider.read('user', 'unsafe')).resolves.toMatchObject({ provenance: 'untrusted', source: 'MCP inbox' })
+  })
+
   it('returns null for missing session key', async () => {
     expect(await provider.read('session', 'missing')).toBeNull()
   })

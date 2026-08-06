@@ -42,6 +42,7 @@ export interface RunProfileOptions {
   unattended?: boolean
   resumeApproval?: { toolCallId: string; approved: boolean; name: string; input: Record<string, unknown>; isMcp: boolean }
   budget?: RunBudget
+  initialTaintSources?: string[]
 }
 
 /** One-shot root run of a profile: build context, run the loop, extract final text + usage. */
@@ -77,7 +78,7 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
     const context: ToolContext = {
       profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
       events, openai, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2, channels,
-      pendingInputs: opts.pendingInputs, runId: opts.runId, unattended: opts.unattended, budget: opts.budget,
+      pendingInputs: opts.pendingInputs, runId: opts.runId, unattended: opts.unattended, budget: opts.budget, taintSources: opts.initialTaintSources,
     }
 
     if (profile.workflow?.enabled) {

@@ -30,6 +30,8 @@ export interface MemoryRecord {
   content: string
   links?: MemoryLink[]
   temporal?: TemporalMeta
+  provenance?: 'trusted' | 'untrusted'
+  source?: string
 }
 
 export interface MemoryEntry {
@@ -42,7 +44,7 @@ export interface MemoryEntry {
 
 export interface MemoryProvider {
   read(scope: MemoryScope, key: string): Promise<MemoryRecord | null>
-  write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta): Promise<void>
+  write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }): Promise<void>
   delete(scope: MemoryScope, key: string): Promise<void>
   list(scope: MemoryScope): Promise<MemoryEntry[]>
   query(scope: MemoryScope, query: RecallQuery): Promise<MemoryEntry[]>

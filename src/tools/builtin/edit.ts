@@ -20,6 +20,7 @@ export const editTool: ToolDefinition = {
       file_path: string; old_string: string; new_string: string; replace_all?: boolean
     }
     const content = readFileSync(file_path, 'utf-8')
+    const before = Buffer.from(content).toString('base64')
     const count = content.split(old_string).length - 1
     if (count === 0) throw new Error(`old_string not found in ${file_path}`)
     if (!replace_all && count > 1) throw new Error(`old_string found ${count} times — must be unique or use replace_all: true`)
@@ -28,6 +29,6 @@ export const editTool: ToolDefinition = {
       : content.replace(old_string, new_string)
     writeFileSync(file_path, updated, 'utf-8')
     recordHarnessWrite(file_path)
-    return `Replaced ${count} occurrence(s) in ${file_path}`
+    return { content: `Replaced ${count} occurrence(s) in ${file_path}`, undo: { kind: 'file_restore', payload: { path: file_path, existed: true, before } } }
   },
 }

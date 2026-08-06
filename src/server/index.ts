@@ -106,7 +106,7 @@ async function main() {
       onSessionEnd: () => {}, onStats: () => {},
     }
     try {
-      const result = await runProfileOnce({ profile, userId: route.binding.user, userMessage: route.message.text, events, channels, runId, pendingInputs: pendingStore, signal: abort.signal, unattended: true })
+      const result = await runProfileOnce({ profile, userId: route.binding.user, userMessage: route.message.text, events, channels, runId, pendingInputs: pendingStore, signal: abort.signal, unattended: true, initialTaintSources: route.trusted ? undefined : [`unpaired channel: ${route.channel}`] })
       abortRegistry.delete(runId)
       runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
       if (result.finalText) await channels.send(route.binding.user, route.channel, { text: result.finalText })

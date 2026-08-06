@@ -1,6 +1,7 @@
 import { AclValue, ApprovalMode } from '../types.js'
 import { Profile } from '../profiles/schema.js'
 import { matchesPredicate, type Predicate } from './predicates.js'
+import type { MemoryProvider, MemoryScope } from '../memory/interface.js'
 
 type ConditionalAcl = { default: AclValue; allow_if?: Predicate[]; deny_if?: Predicate[] }
 type AclConfig = AclValue | ConditionalAcl
@@ -41,10 +42,39 @@ export function getMcpAcl(serverName: string, toolName: string, profile: Profile
 }
 
 export function resolveAclDecision(toolName: string, input: Record<string, unknown>, profile: Profile, mode: ApprovalMode = 'danger', serverName?: string): AclDecision {
-  const lists = (profile.lists ?? {}) as Record<string, unknown[]>
+  const lists = Object.fromEntries(Object.entries(profile.lists ?? {}).filter(([, value]) => Array.isArray(value))) as Record<string, unknown[]>
   const raw = serverName
-    ? (profile.tools.mcp_servers.find(server => server.name === serverName)?.acl as Record<string, AclConfig> | undefined)?.[toolName]
+    ? ((profile.tools.mcp_servers.find(server => server.name === serverName)?.acl as Record<string, AclConfig> | undefined)?.[toolName] ?? (profile.tools.mcp_servers.find(server => server.name === serverName)?.acl as Record<string, AclConfig> | undefined)?.['*'])
     : ((profile.tools.builtin as Record<string, AclConfig>)[toolName] ?? (profile.tools.builtin as Record<string, AclConfig>)['*'] ?? (profile.tools.custom as Record<string, AclConfig>)[toolName] ?? (profile.tools.custom as Record<string, AclConfig>)['*'])
+  const decision = configuredValue(raw, input, lists)
+  if (decision.value === 'deny') return decision
+  if (mode === 'yolo') return { value: 'allow', decided_by: 'mode', reason: 'yolo mode' }
+  if (mode === 'strict') return { value: serverName ? 'prompt' : MUTATING_TOOLS.has(toolName) ? 'prompt' : 'allow', decided_by: 'mode', reason: 'strict mode' }
+  if (mode === 'bash') return { value: toolName === 'Bash' || toolName === 'ExecuteCode' ? 'prompt' : 'allow', decided_by: 'mode', reason: 'bash mode' }
+  return decision
+}
+
+/** Resolve ACL lists stored in memory. Any read or parse failure is an explicit deny. */
+export async function resolveAclDecisionWithMemory(toolName: string, input: Record<string, unknown>, profile: Profile, memory: MemoryProvider, mode: ApprovalMode = 'danger', serverName?: string): Promise<AclDecision> {
+  const lists: Record<string, unknown[]> = {}
+  const unavailable = new Set<string>()
+  for (const [name, value] of Object.entries(profile.lists ?? {})) {
+    if (Array.isArray(value)) { lists[name] = value; continue }
+    const match = /^memory:(session|profile|user|project)\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(value)
+    if (!match) { unavailable.add(name); continue }
+    try {
+      const record = await memory.read(match[1] as MemoryScope, match[2])
+      const parsed = record ? JSON.parse(record.content) : null
+      if (!Array.isArray(parsed)) throw new Error('memory list is not a JSON array')
+      lists[name] = parsed
+    } catch { unavailable.add(name) }
+  }
+  const raw = serverName
+    ? ((profile.tools.mcp_servers.find(server => server.name === serverName)?.acl as Record<string, AclConfig> | undefined)?.[toolName] ?? (profile.tools.mcp_servers.find(server => server.name === serverName)?.acl as Record<string, AclConfig> | undefined)?.['*'])
+    : ((profile.tools.builtin as Record<string, AclConfig>)[toolName] ?? (profile.tools.builtin as Record<string, AclConfig>)['*'] ?? (profile.tools.custom as Record<string, AclConfig>)[toolName] ?? (profile.tools.custom as Record<string, AclConfig>)['*'])
+  if (typeof raw !== 'string' && raw && [...(raw.allow_if ?? []), ...(raw.deny_if ?? [])].some(rule => rule.in_list && unavailable.has(rule.in_list))) {
+    return { value: 'deny', decided_by: 'predicate', reason: 'memory list unavailable' }
+  }
   const decision = configuredValue(raw, input, lists)
   if (decision.value === 'deny') return decision
   if (mode === 'yolo') return { value: 'allow', decided_by: 'mode', reason: 'yolo mode' }

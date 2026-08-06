@@ -10,6 +10,11 @@ import type { ChannelRuntime } from '../channels/runtime.js'
 import type { PendingStore } from '../runs/pending.js'
 import type { RunBudget } from '../runs/budget.js'
 
+export type ToolEffect = 'read' | 'write' | 'outbound' | 'destructive'
+export type ToolProvenance = 'trusted' | 'untrusted'
+export interface UndoDescriptor { kind: string; payload: Record<string, unknown>; expires_at?: string }
+export type ToolReturn = string | { content: string; provenance?: ToolProvenance; source?: string; effect?: ToolEffect; undo?: UndoDescriptor }
+
 export interface AgentLoopEvents {
   onToken(token: string): void
   onToolStart(name: string, input: Record<string, unknown>): void
@@ -54,11 +59,12 @@ export interface ToolContext {
   currentToolCallId?: string
   budget?: RunBudget
   unattended?: boolean
+  taintSources?: string[]
 }
 
 export interface ToolDefinition {
   name: string
   description: string
   parameters: Record<string, unknown>
-  execute(input: Record<string, unknown>, context: ToolContext): Promise<string>
+  execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolReturn>
 }

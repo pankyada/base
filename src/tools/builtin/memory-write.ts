@@ -39,7 +39,14 @@ export const memoryWriteTool: ToolDefinition = {
     const { key, content, links, valid_from, valid_until, recur, timezone, entity, confidence, supersedes } = input as { key: string; content: string; links?: { target: string, relation?: string }[]; valid_from?: string; valid_until?: string; recur?: string; timezone?: string; entity?: string; confidence?: number; supersedes?: string }
     const scope = ((input as any).scope ?? 'user') as 'session' | 'profile' | 'user' | 'project'
     const temporal = { valid_from, valid_until, recur, timezone, entity, confidence, supersedes }
-    await ctx.memory.write(scope, key, content, links, Object.values(temporal).some(value => value !== undefined) ? temporal : undefined)
-    return `Memory written: ${scope}/${key}${links?.length ? ` (with ${links.length} links)` : ''}`
+    const before = typeof ctx.memory.read === 'function' ? await ctx.memory.read(scope, key) : null
+    await ctx.memory.write(scope, key, content, links, Object.values(temporal).some(value => value !== undefined) ? temporal : undefined, {
+      tainted: (ctx.taintSources?.length ?? 0) > 0,
+      source: ctx.taintSources?.[0],
+    })
+    return {
+      content: `Memory written: ${scope}/${key}${links?.length ? ` (with ${links.length} links)` : ''}`,
+      undo: { kind: 'memory_restore', payload: { scope, key, before, project: ctx.session?.project } },
+    }
   },
 }

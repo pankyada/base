@@ -31,7 +31,8 @@ export function matchesPredicate(predicate: Predicate, input: Record<string, unk
   if (predicate.under_path) {
     if (typeof value !== 'string') return false
     try {
-      const target = realpathSync(resolve(value)); const root = realpathSync(resolve(predicate.under_path))
+      const rootValue = predicate.under_path.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_match, key) => process.env[key] ?? '')
+      const target = realpathSync(resolve(value)); const root = realpathSync(resolve(rootValue))
       return target === root || target.startsWith(root.endsWith(sep) ? root : root + sep)
     } catch { return false }
   }

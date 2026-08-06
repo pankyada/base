@@ -9,6 +9,7 @@ const PredicateSchema = z.object({
   if (count !== 1) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'predicate requires exactly one operation' })
 })
 const AclEntry = z.union([AclValue, z.object({ default: AclValue, allow_if: z.array(PredicateSchema).default([]), deny_if: z.array(PredicateSchema).default([]) })])
+const ListSourceSchema = z.union([z.array(z.unknown()), z.string().regex(/^memory:(session|profile|user|project)\/[A-Za-z0-9][A-Za-z0-9._-]*$/, 'must be an inline list or memory:<scope>/<key>')])
 
 const ChannelSchema = z.object({
   name: z.string().min(1),
@@ -174,6 +175,8 @@ const SafetySchema = z.object({
   timeout_ms: z.number().default(3000),
   cache_ttl_hours: z.number().default(168),
   enabled: z.boolean().default(true),
+  gate_untrusted_actions: z.boolean().default(false),
+  gate_writes: z.boolean().default(false),
 })
 
 const IntensityValue = z.number().int().min(0).max(3) as z.ZodType<Intensity>
@@ -264,7 +267,7 @@ export const ProfileSchema = z.object({
   ),
   safety: z.preprocess(
     (val) => val ?? {},
-    SafetySchema.default(() => ({ enabled: true, timeout_ms: 3000, cache_ttl_hours: 168 }))
+    SafetySchema.default(() => ({ enabled: true, timeout_ms: 3000, cache_ttl_hours: 168, gate_untrusted_actions: false, gate_writes: false }))
   ),
   context_window: z.object({
     max_tokens: z.number().default(100000),
@@ -292,7 +295,7 @@ export const ProfileSchema = z.object({
     max_concurrent_runs: z.number().int().positive().default(3),
     budget: z.object({ max_cost_usd: z.number().nonnegative(), max_tools: z.number().int().nonnegative(), max_wall_s: z.number().nonnegative() }).optional(),
   }).optional(),
-  lists: z.record(z.string(), z.array(z.unknown())).default({}),
+  lists: z.record(z.string(), ListSourceSchema).default({}),
   description: z.string().optional(),
   interop: z.object({
     a2a: z.boolean().default(false),
@@ -317,7 +320,7 @@ export const ProfileSchema = z.object({
 type ParsedProfile = z.infer<typeof ProfileSchema>
 // Keep hand-built test/embedding profiles source-compatible while parsed YAML
 // always receives the safe classifier defaults above.
-export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists'> & { safety?: SafetyConfig; context?: ContextConfig; lists?: Record<string, unknown[]> }
+export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists'> & { safety?: SafetyConfig; context?: ContextConfig; lists?: Record<string, unknown[] | string> }
 
 export function resolveRole(profile: Profile, role: Tier): string {
   return profile.models?.roles?.[role] ?? profile.model.id

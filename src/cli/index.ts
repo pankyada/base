@@ -1,10 +1,13 @@
 import WebSocket from 'ws'
 import * as readline from 'readline'
-import { userInfo } from 'os'
+import { homedir, userInfo } from 'os'
+import { existsSync } from 'fs'
+import { resolve } from 'path'
 import { ClientMessage, ServerMessage } from '../types.js'
 import pkg from '../../package.json' with { type: 'json' }
 import { routingStats } from '../analysis/cli.js'
-import { listAudit } from '../audit/query.js'
+import { findAuditEntry, listAudit } from '../audit/query.js'
+import { undoAuditEntry } from '../audit/undo.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(`harness ${pkg.version}`)
@@ -28,9 +31,27 @@ if (process.argv[2] === 'stats' && process.argv[3] === 'routing') {
 if (process.argv[2] === 'audit') {
   const toolIndex = process.argv.indexOf('--tool')
   const tool = toolIndex >= 0 ? process.argv[toolIndex + 1] : undefined
-  if (process.argv.includes('--undo')) {
-    console.error('audit undo unavailable: selected entry has no registered inverse')
-    process.exitCode = 1
+  const undoIndex = process.argv.indexOf('--undo')
+  if (undoIndex >= 0) {
+    const id = process.argv[undoIndex + 1]
+    const user = process.env.HARNESS_USER ?? userInfo().username
+    const entry = id ? findAuditEntry(user, id) : null
+    if (!entry) {
+      console.error(id ? `audit entry not found: ${id}` : 'usage: harness audit --undo <entry-id>')
+      process.exitCode = 1
+    } else if (!entry.undo) {
+      console.error(`audit entry ${id} is not undoable`)
+      process.exitCode = 1
+    } else {
+      const candidates = [resolve(process.cwd(), 'profiles', `${entry.profile}.yaml`), resolve(homedir(), '.harness', 'profiles', `${entry.profile}.yaml`)]
+      const profilePath = candidates.find(existsSync)
+      if (entry.undo.kind === 'memory_restore' && !profilePath) {
+        console.error(`cannot undo memory entry: profile "${entry.profile}" is unavailable`)
+        process.exitCode = 1
+      } else {
+        console.log(await undoAuditEntry(entry, profilePath ?? ''))
+      }
+    }
   } else {
     for (const entry of listAudit(undefined, tool)) console.log(JSON.stringify(entry))
   }

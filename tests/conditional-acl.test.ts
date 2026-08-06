@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { resolveAclDecision } from '../src/tools/acl.js'
+import { resolveAclDecisionWithMemory } from '../src/tools/acl.js'
 import { matchesPredicate } from '../src/tools/predicates.js'
 
 const profile: any = {
@@ -20,5 +21,12 @@ describe('conditional ACL', () => {
   it('fails closed on malformed predicate and missing arguments', () => {
     expect(() => matchesPredicate({ arg: 'x' } as any, {}, {})).toThrow('exactly one')
     expect(matchesPredicate({ arg: 'missing', equals: 'yes' }, {}, {})).toBe(false)
+  })
+
+  it('uses a JSON array from memory and denies when the source cannot be read', async () => {
+    const fromMemory: any = { ...profile, lists: { trusted: 'memory:user/contacts' } }
+    const memory: any = { read: async () => ({ content: '["phone"]' }) }
+    await expect(resolveAclDecisionWithMemory('Notify', { channel: 'phone' }, fromMemory, memory)).resolves.toMatchObject({ value: 'allow' })
+    await expect(resolveAclDecisionWithMemory('Notify', { channel: 'phone' }, fromMemory, { read: async () => { throw new Error('offline') } } as any)).resolves.toMatchObject({ value: 'deny' })
   })
 })

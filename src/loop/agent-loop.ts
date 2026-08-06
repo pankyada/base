@@ -5,8 +5,10 @@ import { Session } from '../session/types.js'
 import { ToolContext, AgentLoopEvents } from '../tools/types.js'
 import { getAllTools, toOpenAITools } from '../tools/registry.js'
 import { getMcpToolDefinitions } from '../mcp/client.js'
-import { resolveAcl, resolveAclDecision } from '../tools/acl.js'
+import { resolveAcl, resolveAclDecisionWithMemory } from '../tools/acl.js'
 import { audit } from '../audit/journal.js'
+import { effectFor, isGatedEffect } from '../tools/effects.js'
+import { defaultProvenance } from '../safety/provenance.js'
 import { classify } from '../safety/classifier.js'
 import { classifyStatic } from '../safety/rules.js'
 import { logEvent } from '../telemetry/logger.js'
@@ -35,6 +37,8 @@ interface ToolResult {
   input: Record<string, unknown>
   ok: boolean
   isMcp: boolean
+  provenance: 'trusted' | 'untrusted'
+  source?: string
 }
 
 export async function runAgentLoop(
@@ -53,7 +57,10 @@ export async function runAgentLoop(
   }
 ): Promise<void> {
   const modelId = opts?.modelId ?? profile.model.id
-  if (opts?.appendUser !== false) session.messages.push({ role: 'user', content: userMessage })
+  if (opts?.appendUser !== false) {
+    session.taint_sources = [...(context.taintSources ?? [])]
+    session.messages.push({ role: 'user', content: userMessage })
+  }
 
   const allTools = [
     ...getAllTools(),
@@ -67,7 +74,7 @@ export async function runAgentLoop(
     tc: { id: string; name: string; args: string },
     input: Record<string, unknown>,
     isMcp: boolean,
-    auditDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human'; reason: string } = { decision: 'allow', decided_by: 'default', reason: 'tool executed' },
+    auditDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } = { decision: 'allow', decided_by: 'default', reason: 'tool executed' },
   ): Promise<ToolResult> => {
     context.budget?.checkTool()
     await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
@@ -75,14 +82,28 @@ export async function runAgentLoop(
     const toolDef = allTools.find(t => t.name === tc.name)
     const toolStart = Date.now()
     let result: string
+    let provenance: 'trusted' | 'untrusted'
+    let source: string | undefined
+    let effect = effectFor(tc.name, isMcp)
+    let undo: ReturnType<typeof audit>['undo']
     let ok = true
     try {
       if (!toolDef) throw new Error(`Tool "${tc.name}" not found in registry`)
-      result = await toolDef.execute(input, { ...context, currentToolCallId: tc.id })
+      const returned = await toolDef.execute(input, { ...context, currentToolCallId: tc.id, taintSources: session.taint_sources })
+      const structured = typeof returned === 'string' ? { content: returned } : returned
+      result = structured.content
+      const fallback = defaultProvenance(tc.name, input, context, isMcp)
+      provenance = structured.provenance ?? fallback.provenance
+      source = structured.source ?? fallback.source
+      effect = effectFor(tc.name, isMcp, structured.effect)
+      undo = structured.undo
     } catch (e: any) {
       if (isParkSignal(e)) throw e
       result = `Error: ${e.message}`
       ok = false
+      const fallback = defaultProvenance(tc.name, input, context, isMcp)
+      provenance = fallback.provenance
+      source = fallback.source
     }
     const duration_ms = Date.now() - toolStart
 
@@ -92,11 +113,10 @@ export async function runAgentLoop(
       name: tc.name, duration_ms, ok,
     })
     await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
-    if (['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'].includes(tc.name)) {
-      audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect: tc.name === 'Notify' ? 'outbound' : tc.name === 'Bash' ? 'destructive' : 'write', decision: auditDecision.decision, decided_by: auditDecision.decided_by, decided_reason: auditDecision.reason, tainted: false, ok })
-    }
+    if (effect !== 'read') audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect, decision: auditDecision.decision, decided_by: auditDecision.decided_by, decided_reason: auditDecision.reason, tainted: (session.taint_sources?.length ?? 0) > 0, ok, ...(undo ? { undo } : {}) })
+    if (provenance === 'untrusted') session.taint_sources = [...new Set([...(session.taint_sources ?? []), source ?? tc.name])].slice(0, 8)
 
-    return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp }
+    return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp, provenance, source }
   }
 
   while (true) {
@@ -108,7 +128,7 @@ export async function runAgentLoop(
       resumeApproval = undefined
       if (approval.approved) {
         events.onToolStart(approval.name, approval.input)
-        const result = await executeOneTool({ id: approval.toolCallId, name: approval.name, args: JSON.stringify(approval.input) }, approval.input, approval.isMcp)
+        const result = await executeOneTool({ id: approval.toolCallId, name: approval.name, args: JSON.stringify(approval.input) }, approval.input, approval.isMcp, { decision: 'prompt', decided_by: 'human', reason: 'human approved prompt' })
         events.onToolEnd(result.name, result.content)
         session.messages.push({ role: 'tool', tool_call_id: result.tool_call_id, content: result.content } as any)
         session.tool_calls.push({ id: result.tool_call_id, name: result.name, input: result.input, result: result.content, ok: result.ok, ts: new Date().toISOString() })
@@ -242,7 +262,7 @@ export async function runAgentLoop(
     // allow tools batch in parallel; prompt/deny tools flush batch first then run serially
 
     const toolResults: ToolResult[] = new Array(toolCalls.length)
-    let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number; decision: { decision: 'allow'; decided_by: 'default' | 'predicate' | 'mode'; reason: string } }> = []
+    let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number; decision: { decision: 'allow'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } }> = []
 
     const parsedInputs: Record<string, unknown>[] = toolCalls.map(tc => {
       try { return JSON.parse(tc.args || '{}') } catch { return {} }
@@ -290,7 +310,7 @@ export async function runAgentLoop(
       const isMcp = tc.name.includes('__')
       const serverName = isMcp ? tc.name.split('__', 2)[0] : undefined
       const baseName = isMcp ? tc.name.split('__', 2)[1] : tc.name
-      const decision = resolveAclDecision(baseName, input, profile, context.approvalMode ?? 'danger', serverName)
+      const decision = await resolveAclDecisionWithMemory(baseName, input, profile, context.memory, context.approvalMode ?? 'danger', serverName)
       let acl = decision.value
       let risk: 'safe' | 'caution' | 'danger' | undefined
       let reason: string | undefined
@@ -301,14 +321,22 @@ export async function runAgentLoop(
         reason = verdict.reason
         acl = verdict.risk === 'danger' ? 'prompt' : 'allow'
       }
+      const effect = effectFor(baseName, isMcp)
+      let finalDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } = { decision: acl === 'prompt' ? 'prompt' : 'allow', decided_by: decision.decided_by, reason: decision.reason }
+      if (acl !== 'deny' && profile.safety?.gate_untrusted_actions && (session.taint_sources?.length ?? 0) > 0 && isGatedEffect(effect, profile.safety?.gate_writes)) {
+        acl = 'prompt'
+        const sources = session.taint_sources!.join('; ')
+        reason = `untrusted content: ${sources}`
+        finalDecision = { decision: 'prompt', decided_by: 'gate', reason }
+      }
 
       if (acl === 'deny') {
         await flushBatch()
-        if (['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'].includes(tc.name)) audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect: tc.name === 'Notify' ? 'outbound' : tc.name === 'Bash' ? 'destructive' : 'write', decision: 'deny', decided_by: decision.decided_by, decided_reason: decision.reason, tainted: false, ok: false })
+        if (effect !== 'read') audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect, decision: 'deny', decided_by: decision.decided_by, decided_reason: decision.reason, tainted: (session.taint_sources?.length ?? 0) > 0, ok: false })
         toolResults[i] = {
           tool_call_id: tc.id,
           content: `Tool "${tc.name}" is denied by profile ACL.`,
-          name: tc.name, input, ok: false, isMcp,
+          name: tc.name, input, ok: false, isMcp, provenance: 'trusted',
         }
       } else if (acl === 'prompt') {
         await flushBatch()
@@ -341,21 +369,29 @@ export async function runAgentLoop(
         }
         const approved = await events.onToolPrompt(tc.id, tc.name, input, risk, reason)
         if (!approved) {
-          if (['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'].includes(tc.name)) audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect: tc.name === 'Notify' ? 'outbound' : tc.name === 'Bash' ? 'destructive' : 'write', decision: 'deny', decided_by: 'human', decided_reason: 'human denied prompt', tainted: false, ok: false })
+          if (effect !== 'read') audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect, decision: 'deny', decided_by: finalDecision.decided_by === 'gate' ? 'gate' : 'human', decided_reason: finalDecision.decided_by === 'gate' ? finalDecision.reason : 'human denied prompt', tainted: (session.taint_sources?.length ?? 0) > 0, ok: false })
           toolResults[i] = {
             tool_call_id: tc.id,
             content: `User denied tool "${tc.name}".`,
-            name: tc.name, input, ok: false, isMcp,
+            name: tc.name, input, ok: false, isMcp, provenance: 'trusted',
           }
         } else {
           events.onToolStart(tc.name, input)
-          const r = await executeOneTool(tc, input, isMcp, { decision: 'prompt', decided_by: 'human', reason: 'human approved prompt' })
+          const r = await executeOneTool(tc, input, isMcp, finalDecision.decided_by === 'gate' ? finalDecision : { decision: 'prompt', decided_by: 'human', reason: 'human approved prompt' })
           events.onToolEnd(r.name, r.content)
           toolResults[i] = r
         }
       } else {
         // allow — add to pending batch
-        pendingBatch.push({ tc, input, isMcp, idx: i, decision: { decision: 'allow', decided_by: decision.decided_by, reason: decision.reason } })
+        if (isMcp || ['Bash', 'ExecuteCode', 'Read', 'MemoryRead', 'Delegate', 'DelegateFanout'].includes(baseName)) {
+          await flushBatch()
+          events.onToolStart(tc.name, input)
+          const r = await executeOneTool(tc, input, isMcp, finalDecision)
+          events.onToolEnd(r.name, r.content)
+          toolResults[i] = r
+        } else {
+          pendingBatch.push({ tc, input, isMcp, idx: i, decision: { ...finalDecision, decision: 'allow' } })
+        }
       }
     }
     await flushBatch()

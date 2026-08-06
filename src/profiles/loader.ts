@@ -48,6 +48,15 @@ export function applyModeDefaults(profile: Profile): Profile {
 
   return {
     ...profile,
+    safety: {
+      enabled: profile.safety?.enabled ?? true,
+      timeout_ms: profile.safety?.timeout_ms ?? 3000,
+      cache_ttl_hours: profile.safety?.cache_ttl_hours ?? 168,
+      gate_untrusted_actions: profile.safety?.gate_untrusted_actions ?? false,
+      gate_writes: profile.safety?.gate_writes ?? false,
+      ...profile.safety,
+      ...(profile.mode === 'assistant' || profile.mode === 'production' ? { gate_untrusted_actions: true } : {}),
+    },
     tools: {
       ...profile.tools,
       builtin: merged as typeof profile.tools.builtin,

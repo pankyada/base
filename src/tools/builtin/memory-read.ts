@@ -21,6 +21,8 @@ export const memoryReadTool: ToolDefinition = {
       output += '\n\nLinked Memories:\n'
       output += val.links.map(l => `- ${l.target}${l.relation ? ` (${l.relation})` : ''}`).join('\n')
     }
-    return output
+    return val.provenance === 'untrusted'
+      ? { content: output, provenance: 'untrusted', source: val.source ?? `memory ${scope}/${key}` }
+      : output
   },
 }

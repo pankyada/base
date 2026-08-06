@@ -95,6 +95,8 @@ export const delegateTool: ToolDefinition = {
           openai: subOpenai,
           signal: context.signal,
           delegateDepth: 1,
+          budget: context.budget,
+          taintSources: context.taintSources,
         }
 
         await runAgentLoop(task, subProfile, subSession, subContext, subEvents, subOpenai, context.signal)
@@ -113,7 +115,9 @@ export const delegateTool: ToolDefinition = {
           ? 'Tools used: (none)'
           : 'Tools used: ' + [...toolCounts.entries()].map(([n, c]) => `${n} ×${c}`).join(', ')
 
-        return `[Delegate: ${profileName}]\n${finalText}\n\n${toolSummary}`
+        return (subSession.taint_sources?.length ?? 0) > 0
+          ? { content: `[Delegate: ${profileName}]\n${finalText}\n\n${toolSummary}`, provenance: 'untrusted' as const, source: subSession.taint_sources!.join('; ') }
+          : `[Delegate: ${profileName}]\n${finalText}\n\n${toolSummary}`
       } finally {
         await destroyMcpClients(subMcpEntries).catch(() => {})
       }

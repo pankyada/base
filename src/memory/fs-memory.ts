@@ -36,7 +36,7 @@ export class FsMemoryProvider implements MemoryProvider {
       if (!val) return null
       try {
         const parsed = JSON.parse(val)
-        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal }
+        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source }
       } catch {
         return { content: val }
       }
@@ -48,19 +48,19 @@ export class FsMemoryProvider implements MemoryProvider {
     return {
       content: parsed.content.trim(),
       links: parsed.data.links as MemoryLink[] | undefined,
-      temporal: temporalFrom(parsed.data),
+      temporal: temporalFrom(parsed.data), provenance: parsed.data.tainted ? 'untrusted' : 'trusted', source: typeof parsed.data.taint_source === 'string' ? parsed.data.taint_source : undefined,
     }
   }
 
-  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta): Promise<void> {
+  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }): Promise<void> {
     validateTemporal(temporal)
     if (scope === 'session') {
-      this.session.session_memory[key] = JSON.stringify({ content, links, temporal })
+      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source })
       return
     }
     const dir = this.dirFor(scope)
     mkdirSync(dir, { recursive: true })
-    const data = { ...(links?.length ? { links } : {}), ...(temporal ?? {}) }
+    const data = { ...(links?.length ? { links } : {}), ...(temporal ?? {}), ...(provenance?.tainted ? { tainted: true, taint_source: provenance.source } : {}) }
     const fileContent = Object.keys(data).length > 0 ? matter.stringify(content, data) : content
     writeFileSync(join(dir, `${key}.md`), fileContent, 'utf-8')
     await this.rebuildIndex(scope)

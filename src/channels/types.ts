@@ -40,6 +40,8 @@ export interface ChannelBinding {
   profile: string
   bound_at: string
   label?: string
+  /** Open inbound bindings are never treated as a human trust signal. */
+  untrusted?: boolean
 }
 
 export type ChannelInboundAcl = 'paired' | 'open' | 'off'
@@ -64,5 +66,5 @@ export interface ChannelInboundRoute {
   channel: string
   binding: ChannelBinding
   message: InboundMessage
+  trusted: boolean
 }
-

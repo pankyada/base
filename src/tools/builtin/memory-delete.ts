@@ -16,6 +16,6 @@ export const memoryDeleteTool: ToolDefinition = {
     const existing = await ctx.memory.read(scope, key)
     if (existing === null) return `No memory entry found for key: ${key} (scope: ${scope})`
     await ctx.memory.delete(scope, key)
-    return `Memory deleted: ${scope}/${key}`
+    return { content: `Memory deleted: ${scope}/${key}`, undo: { kind: 'memory_restore', payload: { scope, key, before: existing, project: ctx.session.project } } }
   },
 }

@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { buildDelegateFanoutTool } from '../src/tools/builtin/delegate-fanout.js'
 import type { ToolContext } from '../src/tools/types.js'
 
+function content(result: Awaited<ReturnType<ReturnType<typeof buildDelegateFanoutTool>['execute']>>) { return typeof result === 'string' ? result : result.content }
+
 function makeContext(): ToolContext {
   return {
     profile: {} as any,
@@ -31,7 +33,7 @@ describe('buildDelegateFanoutTool', () => {
       { tasks: [{ agent: 'unknown', input: {} }] },
       makeContext()
     )
-    const parsed = JSON.parse(result)
+    const parsed = JSON.parse(content(result))
     expect(parsed.results[0].agent).toBe('unknown')
     expect(parsed.results[0].error).toContain('Unknown agent')
   })
@@ -60,7 +62,7 @@ describe('buildDelegateFanoutTool', () => {
       makeContext()
     )
 
-    const parsed = JSON.parse(result)
+    const parsed = JSON.parse(content(result))
     expect(parsed.results).toHaveLength(2)
     expect(parsed.results.find((r: any) => r.agent === 'researcher').output).toEqual({ findings: 'found: climate' })
     expect(parsed.results.find((r: any) => r.agent === 'writer').output).toEqual({ content: 'wrote: climate report' })
@@ -79,7 +81,7 @@ describe('buildDelegateFanoutTool', () => {
       makeContext()
     )
 
-    const parsed = JSON.parse(result)
+    const parsed = JSON.parse(content(result))
     expect(parsed.results.find((r: any) => r.agent === 'good').output).toEqual({ ok: true })
     expect(parsed.results.find((r: any) => r.agent === 'bad').error).toContain('something broke')
   })

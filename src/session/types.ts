@@ -29,6 +29,8 @@ export interface Session {
   usage: { input: number; output: number; cost_usd: number }
   session_memory: Record<string, string>
   todos: TodoItem[]
+  /** Monotonic within a turn. Reset only when a genuine human message starts one. */
+  taint_sources?: string[]
 }
 
 export function ensureContextState(session: Session): ContextState {

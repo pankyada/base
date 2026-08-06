@@ -16,6 +16,6 @@ describe('safety profile block', () => {
       system_prompt: '/tmp/prompt', artifact_dir: '/tmp/art',
       safety: { enabled: false, timeout_ms: 900, cache_ttl_hours: 2, classifier_model_id: 'cheap' },
     })
-    expect(profile.safety).toEqual({ enabled: false, timeout_ms: 900, cache_ttl_hours: 2, classifier_model_id: 'cheap' })
+    expect(profile.safety).toEqual({ enabled: false, timeout_ms: 900, cache_ttl_hours: 2, classifier_model_id: 'cheap', gate_untrusted_actions: false, gate_writes: false })
   })
 })

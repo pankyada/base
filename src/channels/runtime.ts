@@ -146,7 +146,7 @@ export class ChannelRuntime {
     let binding = this.bindings.get(config.transport, message.identity)
     if (!binding) {
       if (config.acl.inbound === 'open') {
-        binding = { user: String(config.config.default_user ?? process.env.HARNESS_USER ?? 'default'), profile: this.profile.name, bound_at: new Date(this.now()).toISOString(), label: config.name }
+        binding = { user: String(config.config.default_user ?? process.env.HARNESS_USER ?? 'default'), profile: this.profile.name, bound_at: new Date(this.now()).toISOString(), label: config.name, untrusted: true }
         this.bindings.bind(config.transport, message.identity, binding)
       } else if (config.acl.inbound === 'paired' && this.bindings.markPairingNotice(config.transport, message.identity)) {
         await this.sendDirect(config, message.identity, { text: 'Pairing required before inbound messages can run.' })
@@ -155,7 +155,7 @@ export class ChannelRuntime {
         return
       }
     }
-    await this.inboundHandler?.({ channel, binding, message })
+    await this.inboundHandler?.({ channel, binding, message, trusted: !binding.untrusted })
   }
 
   private async request(user: string, message: ChannelMessage, timeoutMs: number): Promise<string | null> {
