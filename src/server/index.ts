@@ -383,7 +383,10 @@ async function main() {
           voiceOutput?.cancel(); voiceOutput = null
           send({ type: 'audio_out_end', reason: 'interrupted' })
         })
-        voiceInput = new VoiceInput(provider.stt, { codec: msg.codec, sample_rate: msg.sample_rate }, part => send({ type: 'transcript_partial', ...part }))
+        voiceInput = new VoiceInput(provider.stt, { codec: msg.codec, sample_rate: msg.sample_rate }, part => {
+          send({ type: 'transcript_partial', ...part })
+          if (part.final && part.text.trim()) queueMicrotask(() => ws.emit('message', Buffer.from(JSON.stringify({ type: 'message', content: part.text })), false))
+        })
         voiceInput.start()
         return
       }
