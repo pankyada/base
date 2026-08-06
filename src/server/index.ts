@@ -4,7 +4,7 @@ import { createRestHandler } from './rest.js'
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir, userInfo } from 'os'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { recordUsage } from '../usage/ledger.js'
 import { RunStore } from '../runs/store.js'
@@ -14,6 +14,7 @@ import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
 import { loadProfile, applyModeDefaults } from '../profiles/loader.js'
+import { loadProfileDirectory } from '../profiles/registry.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
@@ -65,12 +66,26 @@ function writeSessionCount(artifactDir: string, count: number): void {
 }
 
 async function main() {
-  const profileArg = process.argv[2]
-  const profilePath = profileArg
-    ? resolve(profileArg)
-    : resolve(homedir(), '.harness', 'profiles', 'coding.yaml')
-
-  const profile = loadProfile(profilePath)
+  const profileFlag = process.argv.indexOf('--profile')
+  const profilesFlag = process.argv.indexOf('--profiles')
+  const defaultFlag = process.argv.indexOf('--default-profile')
+  const configuredPath = profilesFlag >= 0
+    ? process.argv[profilesFlag + 1]
+    : profileFlag >= 0
+      ? process.argv[profileFlag + 1]
+      : process.argv[2]
+  const profilePath = configuredPath ? resolve(configuredPath) : resolve(homedir(), '.harness', 'profiles', 'coding.yaml')
+  const defaultName = defaultFlag >= 0 ? process.argv[defaultFlag + 1] : undefined
+  const loadedProfiles = existsSync(profilePath) && statSync(profilePath).isDirectory()
+    ? loadProfileDirectory(profilePath, defaultName)
+    : (() => {
+        const single = loadProfile(profilePath)
+        return { profiles: new Map([[single.name, single]]), defaultProfile: single, errors: [] as Array<{ path: string; error: string }> }
+      })()
+  const profiles = loadedProfiles.profiles
+  const profile = loadedProfiles.defaultProfile
+  for (const failed of loadedProfiles.errors) console.warn(`[profiles] skipped ${failed.path}: ${failed.error}`)
+  if (profiles.size > 1 && !defaultName) console.warn(`[profiles] no --default-profile supplied; using ${profile.name}`)
   const channels = new ChannelRuntime(profile)
   const runStore = new RunStore()
   const pendingStore = new PendingStore()
@@ -215,7 +230,7 @@ async function main() {
     console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
   }
 
-  const restHandler = createRestHandler({ defaultProfile: profile, apiKey, runStore, abortRegistry, skills, channels, pendingStore })
+  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, pendingStore })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({
     server: httpServer,
@@ -256,14 +271,37 @@ async function main() {
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     let mcpEntries: McpEntry[] = []
     let wasmSupported = false
+    let baseProfile = profile
     let connectionProfile = profile  // may be overridden to developer mode via yolo
+    let connectionOpenai = openai
+    let connectionImprover = improver
     let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let connectionModel = profile.model.id
     let miningSkills = false
     let safetyDisclosed = false
 
     const rebuildConnectionProfile = () => {
-      connectionProfile = { ...profile, model: { ...profile.model, id: connectionModel } }
+      connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
+    }
+
+    const activateProfile = async (name: string | undefined, yolo = false): Promise<string | null> => {
+      const selected = name ? profiles.get(name) : profile
+      if (!selected) return `unknown profile "${name}"; available: ${[...profiles.keys()].sort().join(', ')}`
+      baseProfile = selected
+      connectionProfile = yolo ? applyModeDefaults({ ...selected, mode: 'developer' }) : selected
+      approvalMode = yolo ? 'yolo' : 'danger'
+      connectionModel = connectionProfile.model.id
+      connectionOpenai = createProviderClient(connectionProfile)
+      connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
+      session = createSession(connectionProfile.name, userId)
+      memory = connectionProfile.memory?.provider === 'graph'
+        ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
+        : new FsMemoryProvider(connectionProfile.artifact_dir, session)
+      usageAtConnectionStart = { ...session.usage }
+      await destroyMcpClients(mcpEntries).catch(() => {})
+      mcpEntries = await createMcpClients(connectionProfile)
+      void sweepDeferredLabels(session.user, session.project).catch(() => {})
+      return null
     }
 
     // Init MCP clients async — handlers below work with [] until ready
@@ -295,23 +333,19 @@ async function main() {
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
           wasmSupported = msg.wasm_supported ?? false
-          // YOLO mode: apply developer ACL preset (all tools = allow) for this connection
-          connectionProfile = msg.yolo
-            ? applyModeDefaults({ ...profile, mode: 'developer' })
-            : profile
-          approvalMode = msg.yolo ? 'yolo' : 'danger'
-          connectionModel = connectionProfile.model.id
-          session = createSession(connectionProfile.name, userId)
-          memory = connectionProfile.memory?.provider === 'graph'
-            ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
-            : new FsMemoryProvider(connectionProfile.artifact_dir, session)
-          usageAtConnectionStart = { ...session.usage }
-          // Runs per hello, not just once at process boot — the server is
-          // long-running and stays up across many sessions, so this is what
-          // actually keeps deferred (human-edit-churn) labels current.
-          void sweepDeferredLabels(session.user, session.project).catch(() => {})
+          const error = await activateProfile(msg.profile, msg.yolo ?? false)
+          if (error) { send({ type: 'error', message: error }); return }
         }
         send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false })
+        send({ type: 'approval_mode_changed', mode: approvalMode })
+        sendPending()
+        return
+      }
+
+      if (msg.type === 'set_profile') {
+        const error = await activateProfile(msg.profile)
+        if (error) { send({ type: 'error', message: error }); return }
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: false })
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -325,7 +359,7 @@ async function main() {
       if (msg.type === 'pending_answer') {
         const result = await resumePendingInput(msg.pending_id, msg.value, 'ws', {
           pendingStore, runStore, abortRegistry,
-          resolveProfile: name => name === connectionProfile.name ? connectionProfile : null,
+          resolveProfile: name => profiles.get(name) ?? null,
           channels,
           events: {
             onToken: t => send({ type: 'token', content: t }),
@@ -361,13 +395,13 @@ async function main() {
       }
 
       if (msg.type === 'models_list') {
-        const activeProfile = { ...profile, model: { ...profile.model, id: connectionModel } }
+        const activeProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
         send({ type: 'models', models: listModels(activeProfile), current: connectionModel })
         return
       }
 
       if (msg.type === 'set_model') {
-        const candidate = listModels(profile).find(model => model.id === msg.model)
+        const candidate = listModels(baseProfile).find(model => model.id === msg.model)
         if (candidate && !candidate.available) {
           send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason })
           return
@@ -443,7 +477,7 @@ async function main() {
         miningSkills = true
         send({ type: 'notice', level: 'info', message: 'mining skills…' })
         try {
-          await improver.mineSkills([session])
+          await connectionImprover.mineSkills([session])
           sendSkills()
         } catch (error: any) {
           send({ type: 'notice', level: 'error', message: 'skills mining failed', detail: error.message })
@@ -454,7 +488,7 @@ async function main() {
       }
 
       if (msg.type === 'compact') {
-        const before = estimateTokens(await project(session, connectionProfile, openai, memory))
+        const before = estimateTokens(await project(session, connectionProfile, connectionOpenai, memory))
         const compactProfile = {
           ...connectionProfile,
           context: {
@@ -467,7 +501,7 @@ async function main() {
             cache: connectionProfile.context?.cache ?? false,
           },
         }
-        const afterProjection = await project(session, compactProfile, openai, memory)
+        const afterProjection = await project(session, compactProfile, connectionOpenai, memory)
         const after = estimateTokens(afterProjection, session)
         saveSession(session)
         send({ type: 'stats', tokens_in: session.usage.input, tokens_out: session.usage.output, cost_usd: session.usage.cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens: after })
@@ -510,9 +544,13 @@ async function main() {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
           session = loaded
-          memory = profile.memory?.provider === 'graph'
-            ? new GraphMemoryProvider(profile.artifact_dir, session)
-            : new FsMemoryProvider(profile.artifact_dir, session)
+          baseProfile = profiles.get(loaded.profile) ?? baseProfile
+          connectionProfile = baseProfile
+          connectionOpenai = createProviderClient(connectionProfile)
+          connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
+          memory = connectionProfile.memory?.provider === 'graph'
+            ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
+            : new FsMemoryProvider(connectionProfile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
           send({ type: 'session_resumed', sessionId: session.id })
         } else {
@@ -535,7 +573,7 @@ async function main() {
           const memSection = await memory.buildSystemPromptSection()
           session.messages.push({
             role: 'system',
-            content: systemPromptBase + skillIndex + memSection,
+            content: readFileSync(connectionProfile.system_prompt, 'utf-8') + skillIndex + memSection,
           })
         }
 
@@ -579,7 +617,7 @@ async function main() {
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
           profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
-          events, openai, signal: abortController.signal, delegateDepth: 0,
+          events, openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0,
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
@@ -592,9 +630,9 @@ async function main() {
         const runSignal = abortController.signal
         try {
           if (connectionProfile.workflow?.enabled) {
-            await runWorkflow(msg.content, connectionProfile, session, context, events, openai, runSignal)
+            await runWorkflow(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal)
           } else {
-            await runAgentLoop(msg.content, connectionProfile, session, context, events, openai, runSignal)
+            await runAgentLoop(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal)
           }
           runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
           if (runSignal.aborted) {
@@ -633,25 +671,25 @@ async function main() {
       void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
 
       // on_stop hooks (fire-and-forget — close handler cannot be async)
-      void runHooks('on_stop', profile, { SESSION_ID: session.id, PROFILE: profile.name })
+      void runHooks('on_stop', connectionProfile, { SESSION_ID: session.id, PROFILE: connectionProfile.name })
         .catch(e => console.error('[on_stop hook] error:', e.message))
 
       // self-improvement (fire-and-forget)
       const userTurns = (session.messages as any[]).filter(m => m.role === 'user').length
-      if (userTurns >= 2 && profile.improvement?.enabled) {
-        void improver.reflect(session, memory).catch(e =>
+      if (userTurns >= 2 && connectionProfile.improvement?.enabled) {
+        void connectionImprover.reflect(session, memory).catch(e =>
           console.error('[improver] reflect failed:', e.message)
         )
 
-        const mineEvery = profile.improvement?.mine_skills_every_n_sessions ?? 10
-        let count = readSessionCount(profile.artifact_dir) + 1
+        const mineEvery = connectionProfile.improvement?.mine_skills_every_n_sessions ?? 10
+        let count = readSessionCount(connectionProfile.artifact_dir) + 1
         if (count >= mineEvery) {
           count = 0
-          void improver.mineSkills([session]).catch(e =>
+          void connectionImprover.mineSkills([session]).catch(e =>
             console.error('[improver] mineSkills failed:', e.message)
           )
         }
-        writeSessionCount(profile.artifact_dir, count)
+        writeSessionCount(connectionProfile.artifact_dir, count)
       }
     })
     ws.on('error', (e) => console.error('ws error:', e.message))
