@@ -445,7 +445,8 @@ record of *why* an action was permitted.
 
 **In progress on `feat/17-channels`:** typed provenance, monotonic taint,
 untrusted inbound-channel handling, action gates, audit attribution, and core
-undo are implemented. Red-team corpus expansion and main-branch merge remain.
+undo, and the permanent red-team corpus are implemented. Main-branch merge
+remains.
 
 **The security keystone of this track.** Once an agent reads content other people
 wrote, its context contains instructions from strangers that are
