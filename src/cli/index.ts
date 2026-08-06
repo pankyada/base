@@ -4,6 +4,7 @@ import { userInfo } from 'os'
 import { ClientMessage, ServerMessage } from '../types.js'
 import pkg from '../../package.json' with { type: 'json' }
 import { routingStats } from '../analysis/cli.js'
+import { listAudit } from '../audit/query.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(`harness ${pkg.version}`)
@@ -22,6 +23,18 @@ if (process.argv[2] === 'stats' && process.argv[3] === 'routing') {
     process.exitCode = 1
   }
   process.exit(0)
+}
+
+if (process.argv[2] === 'audit') {
+  const toolIndex = process.argv.indexOf('--tool')
+  const tool = toolIndex >= 0 ? process.argv[toolIndex + 1] : undefined
+  if (process.argv.includes('--undo')) {
+    console.error('audit undo unavailable: selected entry has no registered inverse')
+    process.exitCode = 1
+  } else {
+    for (const entry of listAudit(undefined, tool)) console.log(JSON.stringify(entry))
+  }
+  process.exit()
 }
 
 const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')

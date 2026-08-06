@@ -423,7 +423,7 @@ call, turning ~288 wasted turns/day per watched source into a handful of real ru
 
 ---
 
-### ❌ 21. Autonomy budget & conditional ACL
+### 🔄 21. Autonomy budget & conditional ACL
 
 ACL cannot currently express "allow when the arguments look like this, ask
 otherwise", so unattended profiles must choose between over-permission and

@@ -10,6 +10,7 @@ import type { PendingStore } from '../runs/pending.js'
 import { isParkSignal } from '../runs/park.js'
 import { compileContract, validateAndBuildInput } from '../server/contract.js'
 import { logEvent } from '../telemetry/logger.js'
+import { RunBudget, BudgetExceeded } from '../runs/budget.js'
 import { CursorStore } from './cursors.js'
 import { PollTrigger, type PollConfig, type PollProbe } from './poll.js'
 import { WatchTrigger, type WatchConfig } from './watch.js'
@@ -105,12 +106,13 @@ export class TriggerManager {
           onInputRequest: this.options.channels ? (_id, prompt, kind, choices) => this.options.channels!.requestInput(this.user, prompt, kind, choices).then(value => value ?? '') : undefined,
           onSessionEnd: () => {}, onStats: () => {},
         }, signal: abort.signal, channels: this.options.channels, runId: id, pendingInputs: this.options.pendingStore, unattended: true,
+        budget: this.options.profile.triggers?.budget ? new RunBudget(this.options.profile.triggers.budget) : undefined,
       })
       this.options.runStore.update(id, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
     } catch (error: any) {
       const existing = this.options.runStore.get(id)
       if (existing?.status === 'running') this.options.runStore.update(id, {
-        status: isParkSignal(error) ? 'waiting_input' : 'failed', session_id: isParkSignal(error) ? error.sessionId : undefined,
+        status: isParkSignal(error) ? 'waiting_input' : error instanceof BudgetExceeded ? 'budget_exceeded' : 'failed', session_id: isParkSignal(error) ? error.sessionId : undefined,
         error: error.message, ...(isParkSignal(error) ? {} : { finished_at: new Date().toISOString() }),
       })
       console.error(`[trigger] ${source} run failed for profile ${this.options.profile.name}:`, error.message)

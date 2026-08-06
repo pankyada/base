@@ -5,7 +5,8 @@ import { Session } from '../session/types.js'
 import { ToolContext, AgentLoopEvents } from '../tools/types.js'
 import { getAllTools, toOpenAITools } from '../tools/registry.js'
 import { getMcpToolDefinitions } from '../mcp/client.js'
-import { resolveAcl } from '../tools/acl.js'
+import { resolveAcl, resolveAclDecision } from '../tools/acl.js'
+import { audit } from '../audit/journal.js'
 import { classify } from '../safety/classifier.js'
 import { classifyStatic } from '../safety/rules.js'
 import { logEvent } from '../telemetry/logger.js'
@@ -66,7 +67,9 @@ export async function runAgentLoop(
     tc: { id: string; name: string; args: string },
     input: Record<string, unknown>,
     isMcp: boolean,
+    auditDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human'; reason: string } = { decision: 'allow', decided_by: 'default', reason: 'tool executed' },
   ): Promise<ToolResult> => {
+    context.budget?.checkTool()
     await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
 
     const toolDef = allTools.find(t => t.name === tc.name)
@@ -89,12 +92,16 @@ export async function runAgentLoop(
       name: tc.name, duration_ms, ok,
     })
     await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
+    if (['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'].includes(tc.name)) {
+      audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect: tc.name === 'Notify' ? 'outbound' : tc.name === 'Bash' ? 'destructive' : 'write', decision: auditDecision.decision, decided_by: auditDecision.decided_by, decided_reason: auditDecision.reason, tainted: false, ok })
+    }
 
     return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp }
   }
 
   while (true) {
     if (signal?.aborted) return
+    context.budget?.checkModel(session.usage.cost_usd)
 
     if (resumeApproval) {
       const approval = resumeApproval
@@ -235,7 +242,7 @@ export async function runAgentLoop(
     // allow tools batch in parallel; prompt/deny tools flush batch first then run serially
 
     const toolResults: ToolResult[] = new Array(toolCalls.length)
-    let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number }> = []
+    let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number; decision: { decision: 'allow'; decided_by: 'default' | 'predicate' | 'mode'; reason: string } }> = []
 
     const parsedInputs: Record<string, unknown>[] = toolCalls.map(tc => {
       try { return JSON.parse(tc.args || '{}') } catch { return {} }
@@ -265,7 +272,7 @@ export async function runAgentLoop(
         events.onToolStart(tc.name, input)
       }
       const batchResults = await Promise.all(
-        pendingBatch.map(({ tc, input, isMcp }) => executeOneTool(tc, input, isMcp))
+        pendingBatch.map(({ tc, input, isMcp, decision }) => executeOneTool(tc, input, isMcp, decision))
       )
       // Fire onToolEnd in LLM-specified order after all complete
       for (const r of batchResults) {
@@ -282,7 +289,9 @@ export async function runAgentLoop(
       const input = parsedInputs[i]
       const isMcp = tc.name.includes('__')
       const serverName = isMcp ? tc.name.split('__', 2)[0] : undefined
-      let acl = resolveAcl(isMcp ? tc.name.split('__', 2)[1] : tc.name, profile, context.approvalMode ?? 'danger', serverName)
+      const baseName = isMcp ? tc.name.split('__', 2)[1] : tc.name
+      const decision = resolveAclDecision(baseName, input, profile, context.approvalMode ?? 'danger', serverName)
+      let acl = decision.value
       let risk: 'safe' | 'caution' | 'danger' | undefined
       let reason: string | undefined
       if ((context.approvalMode ?? 'danger') === 'danger' && acl !== 'deny') {
@@ -295,6 +304,7 @@ export async function runAgentLoop(
 
       if (acl === 'deny') {
         await flushBatch()
+        if (['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'].includes(tc.name)) audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect: tc.name === 'Notify' ? 'outbound' : tc.name === 'Bash' ? 'destructive' : 'write', decision: 'deny', decided_by: decision.decided_by, decided_reason: decision.reason, tainted: false, ok: false })
         toolResults[i] = {
           tool_call_id: tc.id,
           content: `Tool "${tc.name}" is denied by profile ACL.`,
@@ -331,6 +341,7 @@ export async function runAgentLoop(
         }
         const approved = await events.onToolPrompt(tc.id, tc.name, input, risk, reason)
         if (!approved) {
+          if (['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'].includes(tc.name)) audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect: tc.name === 'Notify' ? 'outbound' : tc.name === 'Bash' ? 'destructive' : 'write', decision: 'deny', decided_by: 'human', decided_reason: 'human denied prompt', tainted: false, ok: false })
           toolResults[i] = {
             tool_call_id: tc.id,
             content: `User denied tool "${tc.name}".`,
@@ -338,13 +349,13 @@ export async function runAgentLoop(
           }
         } else {
           events.onToolStart(tc.name, input)
-          const r = await executeOneTool(tc, input, isMcp)
+          const r = await executeOneTool(tc, input, isMcp, { decision: 'prompt', decided_by: 'human', reason: 'human approved prompt' })
           events.onToolEnd(r.name, r.content)
           toolResults[i] = r
         }
       } else {
         // allow — add to pending batch
-        pendingBatch.push({ tc, input, isMcp, idx: i })
+        pendingBatch.push({ tc, input, isMcp, idx: i, decision: { decision: 'allow', decided_by: decision.decided_by, reason: decision.reason } })
       }
     }
     await flushBatch()

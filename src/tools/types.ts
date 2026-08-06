@@ -8,6 +8,7 @@ import type { ExecutionResult } from '../executor/interface.js'
 import type OpenAI from 'openai'
 import type { ChannelRuntime } from '../channels/runtime.js'
 import type { PendingStore } from '../runs/pending.js'
+import type { RunBudget } from '../runs/budget.js'
 
 export interface AgentLoopEvents {
   onToken(token: string): void
@@ -51,6 +52,7 @@ export interface ToolContext {
   pendingInputs?: PendingStore
   runId?: string
   currentToolCallId?: string
+  budget?: RunBudget
   unattended?: boolean
 }
 

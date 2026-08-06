@@ -2,6 +2,13 @@ import { z } from 'zod'
 import type { Tier, Intensity } from '../workflow/types.js'
 
 export const AclValue = z.enum(['allow', 'prompt', 'deny'])
+const PredicateSchema = z.object({
+  arg: z.string().min(1), equals: z.unknown().optional(), in_list: z.string().optional(), matches: z.string().optional(), under_path: z.string().optional(), lt: z.number().optional(), gt: z.number().optional(), absent: z.boolean().optional(), present: z.boolean().optional(),
+}).superRefine((value, ctx) => {
+  const count = ['equals', 'in_list', 'matches', 'under_path', 'lt', 'gt', 'absent', 'present'].filter(key => (value as any)[key] !== undefined).length
+  if (count !== 1) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'predicate requires exactly one operation' })
+})
+const AclEntry = z.union([AclValue, z.object({ default: AclValue, allow_if: z.array(PredicateSchema).default([]), deny_if: z.array(PredicateSchema).default([]) })])
 
 const ChannelSchema = z.object({
   name: z.string().min(1),
@@ -22,26 +29,26 @@ const ChannelSchema = z.object({
 export type ChannelConfig = z.infer<typeof ChannelSchema>
 
 const BuiltinToolsSchema = z.object({
-  Read: AclValue.default('allow'),
-  Write: AclValue.default('allow'),
-  Edit: AclValue.default('allow'),
-  Bash: AclValue.default('prompt'),
-  Grep: AclValue.default('allow'),
-  Glob: AclValue.default('allow'),
-  Skill: AclValue.default('allow'),
-  MemoryRead: AclValue.default('allow'),
-  MemoryWrite: AclValue.default('allow'),
-  MemoryList: AclValue.default('allow'),
-  MemoryDelete: AclValue.default('allow'),
-  Recall: AclValue.default('allow'),
-  Stats: AclValue.default('allow'),
-  Delegate: AclValue.default('prompt'),
-  ExecuteCode: AclValue.default('allow'),
-  ContextRestore: AclValue.default('allow'),
-  Notify: AclValue.default('allow'),
+  Read: AclEntry.default('allow'),
+  Write: AclEntry.default('allow'),
+  Edit: AclEntry.default('allow'),
+  Bash: AclEntry.default('prompt'),
+  Grep: AclEntry.default('allow'),
+  Glob: AclEntry.default('allow'),
+  Skill: AclEntry.default('allow'),
+  MemoryRead: AclEntry.default('allow'),
+  MemoryWrite: AclEntry.default('allow'),
+  MemoryList: AclEntry.default('allow'),
+  MemoryDelete: AclEntry.default('allow'),
+  Recall: AclEntry.default('allow'),
+  Stats: AclEntry.default('allow'),
+  Delegate: AclEntry.default('prompt'),
+  ExecuteCode: AclEntry.default('allow'),
+  ContextRestore: AclEntry.default('allow'),
+  Notify: AclEntry.default('allow'),
 }).passthrough()
 
-const McpAcl = z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const }))
+const McpAcl = z.record(z.string(), AclEntry).default(() => ({ '*': 'prompt' as const }))
 
 const StdioMcpServerSchema = z.object({
   name: z.string(),
@@ -234,7 +241,7 @@ export const ProfileSchema = z.object({
     (val) => val ?? {},
     z.object({
       builtin: z.preprocess((val) => val ?? {}, BuiltinToolsSchema),
-      custom: z.record(z.string(), AclValue).default(() => ({ '*': 'prompt' as const })),
+      custom: z.record(z.string(), AclEntry).default(() => ({ '*': 'prompt' as const })),
       mcp_servers: z.array(McpServerSchema).default([]),
     })
   ),
@@ -283,7 +290,9 @@ export const ProfileSchema = z.object({
     watch: z.array(WatchTriggerSchema).default([]),
     poll: z.array(PollTriggerSchema).default([]),
     max_concurrent_runs: z.number().int().positive().default(3),
+    budget: z.object({ max_cost_usd: z.number().nonnegative(), max_tools: z.number().int().nonnegative(), max_wall_s: z.number().nonnegative() }).optional(),
   }).optional(),
+  lists: z.record(z.string(), z.array(z.unknown())).default({}),
   description: z.string().optional(),
   interop: z.object({
     a2a: z.boolean().default(false),
@@ -308,7 +317,7 @@ export const ProfileSchema = z.object({
 type ParsedProfile = z.infer<typeof ProfileSchema>
 // Keep hand-built test/embedding profiles source-compatible while parsed YAML
 // always receives the safe classifier defaults above.
-export type Profile = Omit<ParsedProfile, 'safety' | 'context'> & { safety?: SafetyConfig; context?: ContextConfig }
+export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists'> & { safety?: SafetyConfig; context?: ContextConfig; lists?: Record<string, unknown[]> }
 
 export function resolveRole(profile: Profile, role: Tier): string {
   return profile.models?.roles?.[role] ?? profile.model.id
