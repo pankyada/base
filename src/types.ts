@@ -114,7 +114,11 @@ export interface OutcomeEvent extends Omit<TelemetryEvent, 'kind'> {
 }
 
 export type ClientMessage =
-  | { type: 'hello'; user_id: string; wasm_supported?: boolean; yolo?: boolean }
+  | { type: 'hello'; user_id: string; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean }
+  | { type: 'set_profile'; profile: string }
+  | { type: 'audio_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
+  | { type: 'audio_end' }
+  | { type: 'barge_in' }
   | { type: 'message'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
@@ -165,6 +169,9 @@ export type ServerMessage =
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }
   | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number }
   | { type: 'pending'; pending: PendingInput[] }
+  | { type: 'transcript_partial'; text: string; final: boolean }
+  | { type: 'audio_out_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
+  | { type: 'audio_out_end'; reason: 'complete' | 'interrupted' | 'error' }
 
 export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 

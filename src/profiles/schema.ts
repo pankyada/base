@@ -179,6 +179,15 @@ const SafetySchema = z.object({
   gate_writes: z.boolean().default(false),
 })
 
+const VoiceProviderSchema = z.object({ provider: z.string().min(1), config: z.record(z.string(), z.unknown()).default({}) })
+const VoiceSchema = z.object({
+  stt: VoiceProviderSchema.optional(),
+  tts: VoiceProviderSchema.optional(),
+  fallback: z.object({ stt: z.string().optional(), tts: z.string().optional() }).default({}),
+  endpointing: z.object({ silence_ms: z.number().int().positive().default(700), max_utterance_s: z.number().positive().default(60) }).default({ silence_ms: 700, max_utterance_s: 60 }),
+  barge_in: z.boolean().default(true),
+}).optional()
+
 const IntensityValue = z.number().int().min(0).max(3) as z.ZodType<Intensity>
 const RoleModelsSchema = z.object({
   cheap: z.string().optional(),
@@ -304,6 +313,7 @@ export const ProfileSchema = z.object({
   executor: ExecutorSchema.optional(),
   mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
   channels: z.array(ChannelSchema).optional(),
+  voice: VoiceSchema,
 }).transform(profile => {
   const channelNames = new Set<string>()
   for (const channel of profile.channels ?? []) {
