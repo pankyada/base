@@ -39,6 +39,10 @@ import { handleProjectMessage } from './project-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
 import { isParkSignal } from '../runs/park.js'
 import { resumeExpiredInput, resumePendingInput } from '../runs/resume.js'
+import { loadVoiceProviders } from '../voice/loader.js'
+import { registerVoiceProvider, resolveVoiceProvider } from '../voice/registry.js'
+import { VoiceInput } from '../voice/input.js'
+import { VoiceTurn } from '../voice/session.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -199,6 +203,7 @@ async function main() {
   for (const tool of customTools) {
     registerTool(tool)
   }
+  for (const provider of await loadVoiceProviders()) registerVoiceProvider(provider)
 
   const openai = createProviderClient(profile)
   const improver = new DefaultImprover(profile, openai)
@@ -272,6 +277,9 @@ async function main() {
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     let mcpEntries: McpEntry[] = []
     let wasmSupported = false
+    let audioSupported = false
+    let voiceInput: VoiceInput | null = null
+    let voiceTurn: VoiceTurn | null = null
     let baseProfile = profile
     let connectionProfile = profile  // may be overridden to developer mode via yolo
     let connectionChannels = channels
@@ -322,7 +330,12 @@ async function main() {
       pending: pendingStore.list({ user: userId, state: 'open' }).map(({ path: _path, ...record }) => record),
     })
 
-    ws.on('message', async (raw) => {
+    ws.on('message', async (raw, isBinary) => {
+      if (isBinary) {
+        if (!audioSupported || !voiceInput) { send({ type: 'error', message: 'audio chunk received without an active audio session' }); return }
+        voiceInput.push(new Uint8Array(raw as Buffer))
+        return
+      }
       let msg: ClientMessage
       try {
         msg = JSON.parse(raw.toString()) as ClientMessage
@@ -336,6 +349,7 @@ async function main() {
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
           wasmSupported = msg.wasm_supported ?? false
+          audioSupported = msg.audio_supported ?? false
           const error = await activateProfile(msg.profile, msg.yolo ?? false)
           if (error) { send({ type: 'error', message: error }); return }
         }
@@ -351,6 +365,29 @@ async function main() {
         send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: false })
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
+        return
+      }
+
+      if (msg.type === 'audio_start') {
+        if (!audioSupported) { send({ type: 'error', message: 'client did not negotiate audio support' }); return }
+        const configured = connectionProfile.voice?.stt
+        const provider = configured ? resolveVoiceProvider(configured.provider) : undefined
+        if (!provider?.stt) { send({ type: 'error', message: 'voice STT provider is not configured or unavailable' }); return }
+        voiceInput?.cancel()
+        voiceTurn = new VoiceTurn(() => abortController.abort(), () => {
+          voiceInput?.cancel(); voiceInput = null
+          send({ type: 'audio_out_end', reason: 'interrupted' })
+        })
+        voiceInput = new VoiceInput(provider.stt, { codec: msg.codec, sample_rate: msg.sample_rate }, part => send({ type: 'transcript_partial', ...part }))
+        voiceInput.start()
+        return
+      }
+
+      if (msg.type === 'audio_end') { voiceInput?.end(); return }
+
+      if (msg.type === 'barge_in') {
+        voiceTurn?.bargeIn(); voiceTurn = null
+        abortController = new AbortController()
         return
       }
 
