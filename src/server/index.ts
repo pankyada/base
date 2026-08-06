@@ -43,6 +43,7 @@ import { loadVoiceProviders } from '../voice/loader.js'
 import { registerVoiceProvider, resolveVoiceProvider } from '../voice/registry.js'
 import { VoiceInput } from '../voice/input.js'
 import { VoiceTurn } from '../voice/session.js'
+import { VoiceOutput } from '../voice/output.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -280,6 +281,7 @@ async function main() {
     let audioSupported = false
     let voiceInput: VoiceInput | null = null
     let voiceTurn: VoiceTurn | null = null
+    let voiceOutput: VoiceOutput | null = null
     let baseProfile = profile
     let connectionProfile = profile  // may be overridden to developer mode via yolo
     let connectionChannels = channels
@@ -304,6 +306,8 @@ async function main() {
       connectionOpenai = createProviderClient(connectionProfile)
       connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
       connectionChannels = channelsByProfile.get(selected.name)!
+      voiceInput?.cancel(); voiceInput = null
+      voiceOutput?.cancel(); voiceOutput = null
       session = createSession(connectionProfile.name, userId)
       memory = connectionProfile.memory?.provider === 'graph'
         ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
@@ -376,6 +380,7 @@ async function main() {
         voiceInput?.cancel()
         voiceTurn = new VoiceTurn(() => abortController.abort(), () => {
           voiceInput?.cancel(); voiceInput = null
+          voiceOutput?.cancel(); voiceOutput = null
           send({ type: 'audio_out_end', reason: 'interrupted' })
         })
         voiceInput = new VoiceInput(provider.stt, { codec: msg.codec, sample_rate: msg.sample_rate }, part => send({ type: 'transcript_partial', ...part }))
@@ -617,8 +622,20 @@ async function main() {
           })
         }
 
+        const configuredTts = audioSupported && connectionProfile.voice?.tts
+          ? resolveVoiceProvider(connectionProfile.voice.tts.provider)?.tts
+          : undefined
+        voiceOutput?.cancel()
+        voiceOutput = configuredTts
+          ? new VoiceOutput(configuredTts, { sample_rate: Number(connectionProfile.voice?.tts?.config.sample_rate) || 24_000 }, {
+              start: () => send({ type: 'audio_out_start', codec: 'pcm16', sample_rate: Number(connectionProfile.voice?.tts?.config.sample_rate) || 24_000 }),
+              chunk: data => { if (ws.readyState === ws.OPEN) ws.send(data, { binary: true }) },
+              end: reason => send({ type: 'audio_out_end', reason }),
+            })
+          : null
+        voiceOutput?.start()
         const events: AgentLoopEvents = {
-          onToken: t => send({ type: 'token', content: t }),
+          onToken: t => { send({ type: 'token', content: t }); voiceOutput?.push(t) },
           onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
           onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
           onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(res => {
@@ -626,6 +643,7 @@ async function main() {
             send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
           }),
           onSessionEnd: (id) => {
+            voiceOutput?.end()
             saveSession(session)
             send({ type: 'session_end', sessionId: id })
           },
@@ -680,6 +698,7 @@ async function main() {
             send({ type: 'session_end', sessionId: session.id })
           }
         } catch (e: any) {
+          voiceOutput?.end()
           if (isParkSignal(e)) {
             runStore.update(runId, { status: 'waiting_input', session_id: e.sessionId })
             sendPending()
