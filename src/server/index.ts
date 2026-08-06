@@ -86,23 +86,25 @@ async function main() {
   const profile = loadedProfiles.defaultProfile
   for (const failed of loadedProfiles.errors) console.warn(`[profiles] skipped ${failed.path}: ${failed.error}`)
   if (profiles.size > 1 && !defaultName) console.warn(`[profiles] no --default-profile supplied; using ${profile.name}`)
-  const channels = new ChannelRuntime(profile)
+  const channelsByProfile = new Map([...profiles.values()].map(item => [item.name, new ChannelRuntime(item)]))
+  const channels = channelsByProfile.get(profile.name)!
   const runStore = new RunStore()
   const pendingStore = new PendingStore()
   const abortRegistry = new Map<string, AbortController>()
-  channels.onInbound(async route => {
-    if (route.binding.profile !== profile.name) return
+  const wireInbound = (runtime: ChannelRuntime) => runtime.onInbound(async route => {
+    const routeProfile = profiles.get(route.binding.profile)
+    if (!routeProfile) return
     if (route.message.correlation_id) {
       const pending = pendingStore.get(route.message.correlation_id)
       if (pending && pending.user === route.binding.user) {
         const answer = route.message.button_id ?? route.message.text
         const result = await resumePendingInput(route.message.correlation_id, answer, 'channel', {
           pendingStore, runStore, abortRegistry,
-          resolveProfile: name => name === profile.name ? profile : null,
-          channels,
+          resolveProfile: name => profiles.get(name) ?? null,
+          channels: runtime,
         })
         if (result.status === 'completed' && result.finalText) {
-          await channels.send(route.binding.user, route.channel, { text: result.finalText })
+          await runtime.send(route.binding.user, route.channel, { text: result.finalText })
         }
         return
       }
@@ -111,20 +113,20 @@ async function main() {
     const abort = new AbortController()
     abortRegistry.set(runId, abort)
     runStore.create({
-      id: runId, profile: profile.name, user: route.binding.user, trigger: 'webhook',
+      id: runId, profile: routeProfile.name, user: route.binding.user, trigger: 'webhook',
       input: route.message.text, status: 'running', started_at: new Date().toISOString(),
     })
     const events: AgentLoopEvents = {
       onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {},
-      onToolPrompt: (id, name, input, risk, reason) => channels.requestApproval(route.binding.user, name, input, risk, reason),
-      onInputRequest: (_id, prompt, kind, options) => channels.requestInput(route.binding.user, prompt, kind, options).then(value => value ?? ''),
+      onToolPrompt: (id, name, input, risk, reason) => runtime.requestApproval(route.binding.user, name, input, risk, reason),
+      onInputRequest: (_id, prompt, kind, options) => runtime.requestInput(route.binding.user, prompt, kind, options).then(value => value ?? ''),
       onSessionEnd: () => {}, onStats: () => {},
     }
     try {
-      const result = await runProfileOnce({ profile, userId: route.binding.user, userMessage: route.message.text, events, channels, runId, pendingInputs: pendingStore, signal: abort.signal, unattended: true, initialTaintSources: route.trusted ? undefined : [`unpaired channel: ${route.channel}`] })
+      const result = await runProfileOnce({ profile: routeProfile, userId: route.binding.user, userMessage: route.message.text, events, channels: runtime, runId, pendingInputs: pendingStore, signal: abort.signal, unattended: true, initialTaintSources: route.trusted ? undefined : [`unpaired channel: ${route.channel}`] })
       abortRegistry.delete(runId)
       runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
-      if (result.finalText) await channels.send(route.binding.user, route.channel, { text: result.finalText })
+      if (result.finalText) await runtime.send(route.binding.user, route.channel, { text: result.finalText })
     } catch (error: any) {
       abortRegistry.delete(runId)
       if (isParkSignal(error)) {
@@ -132,16 +134,17 @@ async function main() {
         return
       }
       runStore.update(runId, { status: 'failed', error: error.message, finished_at: new Date().toISOString() })
-      await channels.send(route.binding.user, route.channel, { text: `run failed: ${error.message}`, urgency: 'high' })
+      await runtime.send(route.binding.user, route.channel, { text: `run failed: ${error.message}`, urgency: 'high' })
     }
   })
-  await channels.init()
+  for (const runtime of channelsByProfile.values()) wireInbound(runtime)
+  await Promise.all([...channelsByProfile.values()].map(runtime => runtime.init()))
   const sweepPending = async () => {
     for (const expired of pendingStore.sweep()) {
       await resumeExpiredInput(expired.id, {
         pendingStore, runStore, abortRegistry,
-        resolveProfile: name => name === profile.name ? profile : null,
-        channels,
+        resolveProfile: name => profiles.get(name) ?? null,
+        channels: channelsByProfile.get(expired.profile),
       })
     }
   }
@@ -208,11 +211,11 @@ async function main() {
     console.warn('[auth] HARNESS_API_KEY is set but empty — ignoring, server is unauthenticated')
   }
 
-  const scheduler = new TriggerManager({
-    profile, runStore, abortRegistry, channels, pendingStore,
+  const schedulers = [...profiles.values()].map(owner => new TriggerManager({
+    profile: owner, runStore, abortRegistry, channels: channelsByProfile.get(owner.name), pendingStore,
     probe: async (tool, args) => {
       const [serverName, toolName] = tool.split('__', 2)
-      const entries = await createMcpClients(profile)
+      const entries = await createMcpClients(owner)
       try {
         const entry = entries.find(candidate => candidate.serverName === serverName && candidate.tools.some(candidateTool => candidateTool.name === toolName))
         if (!entry || !toolName) throw new Error(`poll probe tool "${tool}" is unavailable`)
@@ -224,11 +227,9 @@ async function main() {
         await destroyMcpClients(entries)
       }
     },
-  })
-  scheduler.init()
-  if (profile.triggers?.cron) {
-    console.log(`[cron] registered schedule '${profile.triggers.cron}' for profile '${profile.name}'`)
-  }
+  }))
+  for (const scheduler of schedulers) scheduler.init()
+  for (const owner of profiles.values()) if (owner.triggers?.cron) console.log(`[cron] registered schedule '${owner.triggers.cron}' for profile '${owner.name}'`)
 
   const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, pendingStore })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
@@ -273,6 +274,7 @@ async function main() {
     let wasmSupported = false
     let baseProfile = profile
     let connectionProfile = profile  // may be overridden to developer mode via yolo
+    let connectionChannels = channels
     let connectionOpenai = openai
     let connectionImprover = improver
     let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
@@ -293,6 +295,7 @@ async function main() {
       connectionModel = connectionProfile.model.id
       connectionOpenai = createProviderClient(connectionProfile)
       connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
+      connectionChannels = channelsByProfile.get(selected.name)!
       session = createSession(connectionProfile.name, userId)
       memory = connectionProfile.memory?.provider === 'graph'
         ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
@@ -360,7 +363,7 @@ async function main() {
         const result = await resumePendingInput(msg.pending_id, msg.value, 'ws', {
           pendingStore, runStore, abortRegistry,
           resolveProfile: name => profiles.get(name) ?? null,
-          channels,
+          channels: connectionChannels,
           events: {
             onToken: t => send({ type: 'token', content: t }),
             onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
@@ -622,7 +625,7 @@ async function main() {
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
           approvalMode,
-          channels,
+          channels: connectionChannels,
           runId,
           pendingInputs: pendingStore,
         }
@@ -695,13 +698,13 @@ async function main() {
     ws.on('error', (e) => console.error('ws error:', e.message))
   })
 
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     console.log('\nShutting down...')
-    void scheduler.stop()
+    await Promise.all(schedulers.map(scheduler => scheduler.stop()))
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
     httpServer.close()
-    void channels.stop()
+    await Promise.all([...channelsByProfile.values()].map(runtime => runtime.stop()))
     process.exit(0)
   })
 }
