@@ -182,6 +182,37 @@ func TestFitArgKeepsPathBasename(t *testing.T) {
 	}
 }
 
+// truncate is regularly called on strings that already carry ANSI color
+// codes (e.g. a modal row assembled from several StXxx.Render() spans). A
+// rune-counting truncate treats escape-code bytes as visible width, so it
+// either doesn't truncate at all (row looks wider than it visually is) or
+// cuts mid-escape-sequence and corrupts the rest of the render — this is
+// what produced the misaligned model-picker seen in production.
+func TestTruncateIsAnsiAware(t *testing.T) {
+	styled := lipgloss.NewStyle().Bold(true).Render("hello world")
+	got := truncate(styled, 5)
+	if w := lipgloss.Width(got); w > 5 {
+		t.Fatalf("truncate(%q, 5) has visible width %d, want <= 5", got, w)
+	}
+	if !strings.Contains(got, "hell") {
+		t.Fatalf("truncate should preserve visible text within budget: %q", got)
+	}
+
+	long := lipgloss.NewStyle().Bold(true).Render("a") + lipgloss.NewStyle().Faint(true).Render("bcdefghijklmnop")
+	got2 := truncate(long, 6)
+	if w := lipgloss.Width(got2); w > 6 {
+		t.Fatalf("truncate on multi-span styled string has visible width %d, want <= 6", w)
+	}
+}
+
+func TestPadMeasuresVisibleWidthNotRuneCount(t *testing.T) {
+	styled := lipgloss.NewStyle().Bold(true).Render("hi")
+	got := pad(styled, 6)
+	if w := lipgloss.Width(got); w != 6 {
+		t.Fatalf("pad(%q, 6) has visible width %d, want 6", got, w)
+	}
+}
+
 func TestFirstLinesCapsAndCounts(t *testing.T) {
 	if got := firstLines("a\nb", 4); got != "a\nb" {
 		t.Fatalf("short block should pass through: %q", got)

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"harness-tui/internal/prefs"
 	"harness-tui/internal/server"
+	"harness-tui/internal/setup"
 	"harness-tui/internal/ui"
 	"harness-tui/internal/ws"
 )
@@ -23,6 +25,7 @@ func main() {
 	noSplash := flag.Bool("no-splash", false, "disable boot splash")
 	noMotion := flag.Bool("no-motion", false, "disable motion")
 	noNotify := flag.Bool("no-notify", false, "disable terminal notifications")
+	reconfigure := flag.Bool("reconfigure", false, "re-run first-run setup, backing up the existing profile")
 	flag.Parse()
 
 	if *showVersion {
@@ -30,7 +33,33 @@ func main() {
 		return
 	}
 
-	serverResult, err := server.EnsureServer(*port, *profile)
+	profilePath, err := resolveProfilePath(*profile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if *reconfigure {
+		backup, err := setup.Reconfigure(profilePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if backup != "" {
+			fmt.Printf("Backed up existing profile to %s\n", backup)
+		}
+	}
+	if _, err := setup.EnsureProfile(profilePath, os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := setup.EnsurePromptFile(filepath.Join(home, ".harness", "prompts", "coding.md")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
+	serverResult, err := server.EnsureServer(*port, profilePath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -52,6 +81,25 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// resolveProfilePath mirrors src/server/index.ts's default-path logic so the
+// TUI checks (and, if needed, provisions) the exact file the server will
+// load — an empty flag means "~/.harness/profiles/coding.yaml", anything
+// else resolves relative to the launch directory, same as Node's resolve().
+func resolveProfilePath(profileArg string) (string, error) {
+	if profileArg == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to determine home directory: %w", err)
+		}
+		return filepath.Join(home, ".harness", "profiles", "coding.yaml"), nil
+	}
+	abs, err := filepath.Abs(profileArg)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve profile path %q: %w", profileArg, err)
+	}
+	return abs, nil
 }
 
 func envOr(name, fallback string) string {

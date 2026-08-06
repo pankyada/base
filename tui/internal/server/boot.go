@@ -90,9 +90,19 @@ func EnsureServer(port string, profiles ...string) (Result, error) {
 	if len(profiles) > 0 {
 		profile = profiles[0]
 	}
-	cmdName, args, root := serverCommand(profile)
+	// root locates the harness checkout (for picking tsx-dev vs. the bundled
+	// binary, and finding the dev entrypoint) — it is NOT where the spawned
+	// server should run. The server's cwd drives $CWD-relative profile paths
+	// (working_dir, artifact_dir) and skill discovery, so it must be the
+	// directory the user actually launched harness-tui from, not the repo
+	// root or the installed binary's directory.
+	cmdName, args, _ := serverCommand(profile)
+	wd, err := os.Getwd()
+	if err != nil {
+		return Result{}, fmt.Errorf("failed to determine working directory: %w", err)
+	}
 	cmd := exec.Command(cmdName, args...)
-	cmd.Dir = root
+	cmd.Dir = wd
 	cmd.Env = append(os.Environ(), "HARNESS_PORT="+port)
 	cmd.Stdout = nil
 	cmd.Stderr = nil

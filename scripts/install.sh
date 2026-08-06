@@ -12,10 +12,12 @@ case "${OS}" in
   Darwin)
     case "${ARCH}" in
       arm64)
-        SUFFIX="darwin-arm64"
+        SUFFIX="macos-arm64"
+        TUI_SUFFIX="darwin-arm64"
         ;;
       x86_64)
-        SUFFIX="darwin-amd64"
+        SUFFIX="macos-x64"
+        TUI_SUFFIX="darwin-amd64"
         ;;
       *)
         echo "Unsupported macOS architecture: ${ARCH}"
@@ -26,7 +28,8 @@ case "${OS}" in
   Linux)
     case "${ARCH}" in
       x86_64)
-        SUFFIX="linux-amd64"
+        SUFFIX="linux-x64"
+        TUI_SUFFIX="linux-amd64"
         ;;
       *)
         echo "Unsupported Linux architecture: ${ARCH}"
@@ -46,10 +49,10 @@ echo "Installing harness to ${INSTALL_DIR}..."
 
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   echo "Using gh CLI to download release assets..."
-  gh release download -R "${REPO}" -p "harness-${SUFFIX}" -p "harness-server-${SUFFIX}" -p "harness-tui-${SUFFIX}" --dir "${INSTALL_DIR}" --clobber
+  gh release download -R "${REPO}" -p "harness-${SUFFIX}" -p "harness-server-${SUFFIX}" -p "harness-tui-${TUI_SUFFIX}" --dir "${INSTALL_DIR}" --clobber
   mv "${INSTALL_DIR}/harness-${SUFFIX}" "${INSTALL_DIR}/harness"
   mv "${INSTALL_DIR}/harness-server-${SUFFIX}" "${INSTALL_DIR}/harness-server"
-  mv "${INSTALL_DIR}/harness-tui-${SUFFIX}" "${INSTALL_DIR}/harness-tui"
+  mv "${INSTALL_DIR}/harness-tui-${TUI_SUFFIX}" "${INSTALL_DIR}/harness-tui"
 else
   echo "Using curl to download release assets..."
   CURL_OPTS="-fsSL"
@@ -63,7 +66,7 @@ else
   
   eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-${SUFFIX}\" -o \"${INSTALL_DIR}/harness\""
   eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-server-${SUFFIX}\" -o \"${INSTALL_DIR}/harness-server\""
-  eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-tui-${SUFFIX}\" -o \"${INSTALL_DIR}/harness-tui\""
+  eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-tui-${TUI_SUFFIX}\" -o \"${INSTALL_DIR}/harness-tui\""
 fi
 
 chmod +x "${INSTALL_DIR}/harness" "${INSTALL_DIR}/harness-server" "${INSTALL_DIR}/harness-tui"

@@ -31,6 +31,23 @@ artifact_dir: ${tmp}/artifacts
     expect(() => loadProfile(join(tmp, 'bad.yaml'))).toThrow()
   })
 
+  it('resolves relative system_prompt against the profile file dir, not cwd', () => {
+    const subdir = mkdtempSync(join(tmpdir(), 'harness-profiledir-'))
+    const yaml = `
+name: test
+model:
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  id: gpt-4o
+system_prompt: ./prompt.md
+artifact_dir: ${subdir}/artifacts
+`
+    writeFileSync(join(subdir, 'profile.yaml'), yaml)
+    writeFileSync(join(subdir, 'prompt.md'), '# prompt')
+    const profile = loadProfile(join(subdir, 'profile.yaml'))
+    expect(profile.system_prompt).toBe(join(subdir, 'prompt.md'))
+  })
+
   it('defaults hooks.timeout_ms to 5000', () => {
     const yaml = `
 name: test
