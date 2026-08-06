@@ -151,6 +151,28 @@ describe('runAgentLoop', () => {
     expect(session.usage.output).toBe(5)
   })
 
+  it('keeps a marked partial assistant message when a voice turn interrupts streaming', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: {}, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    const controller = new AbortController()
+    async function* interrupted(signal: AbortSignal) {
+      yield { choices: [{ delta: { content: 'Half spoken' } }] }
+      if (signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    }
+    const openai = { chat: { completions: { create: vi.fn((_params, opts) => interrupted(opts.signal)) } } }
+    const end = vi.fn()
+
+    await runAgentLoop('hi', profile, session, { profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [] } as any, {
+      onToken: () => controller.abort(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: end,
+    }, openai as any, controller.signal)
+
+    expect((session.messages as any[]).at(-1)).toMatchObject({ role: 'assistant', content: 'Half spoken', interrupted: true })
+    expect(end).toHaveBeenCalledWith(session.id)
+  })
+
   it('executes multiple allow-ACL tool calls in parallel and preserves order', async () => {
     const session = createSession('test', 'testuser')
     const profile: any = {

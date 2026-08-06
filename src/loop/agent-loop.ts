@@ -154,55 +154,64 @@ export async function runAgentLoop(
     // see requiresReasoningEffortNone for the affected models.
     const needsReasoningEffortNone = openaiTools.length > 0 && requiresReasoningEffortNone(modelId)
 
-    const stream = await withRetry<any>(
-      () => (openai.chat.completions as any).create({
-        model: modelId,
-        messages: projectedMessages as OpenAI.ChatCompletionMessageParam[],
-        tools: openaiTools.length > 0 ? openaiTools : undefined,
-        ...(needsReasoningEffortNone ? { reasoning_effort: 'none' } : {}),
-        stream: true,
-        stream_options: { include_usage: true },
-      }, { signal }),
-      3,
-      1000,
-      (_attempt, _delay) => { events.onToken?.('\n[retrying...]\n') }
-    )
-
     let assistantContent = ''
     const toolCallMap = new Map<number, { id: string; name: string; args: string }>()
     let tokensIn = 0
     let tokensOut = 0
     let cacheReadTokens: number | undefined
+    try {
+      const stream = await withRetry<any>(
+        () => (openai.chat.completions as any).create({
+          model: modelId,
+          messages: projectedMessages as OpenAI.ChatCompletionMessageParam[],
+          tools: openaiTools.length > 0 ? openaiTools : undefined,
+          ...(needsReasoningEffortNone ? { reasoning_effort: 'none' } : {}),
+          stream: true,
+          stream_options: { include_usage: true },
+        }, { signal }),
+        3,
+        1000,
+        (_attempt, _delay) => { events.onToken?.('\n[retrying...]\n') }
+      )
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta
-      if (delta?.content) {
-        assistantContent += delta.content
-        events.onToken(delta.content)
-      }
-      if (delta?.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const existing = toolCallMap.get(tc.index)
-          if (!existing) {
-            toolCallMap.set(tc.index, {
-              id: tc.id ?? '',
-              name: tc.function?.name ?? '',
-              args: tc.function?.arguments ?? '',
-            })
-          } else {
-            existing.args += tc.function?.arguments ?? ''
-            if (tc.id) existing.id = tc.id
-            if (tc.function?.name) existing.name = tc.function.name
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta
+        if (delta?.content) {
+          assistantContent += delta.content
+          events.onToken(delta.content)
+        }
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const existing = toolCallMap.get(tc.index)
+            if (!existing) {
+              toolCallMap.set(tc.index, {
+                id: tc.id ?? '',
+                name: tc.function?.name ?? '',
+                args: tc.function?.arguments ?? '',
+              })
+            } else {
+              existing.args += tc.function?.arguments ?? ''
+              if (tc.id) existing.id = tc.id
+              if (tc.function?.name) existing.name = tc.function.name
+            }
           }
         }
+        if (chunk.usage) {
+          tokensIn = chunk.usage.prompt_tokens ?? 0
+          tokensOut = chunk.usage.completion_tokens ?? 0
+          const usage = chunk.usage as any
+          cacheReadTokens = usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens
+          calibrate(session, tokensIn, sentRaw)
+        }
       }
-      if (chunk.usage) {
-        tokensIn = chunk.usage.prompt_tokens ?? 0
-        tokensOut = chunk.usage.completion_tokens ?? 0
-        const usage = chunk.usage as any
-        cacheReadTokens = usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens
-        calibrate(session, tokensIn, sentRaw)
-      }
+    } catch (error) {
+      if (!signal?.aborted) throw error
+    }
+
+    if (signal?.aborted) {
+      if (assistantContent) session.messages.push({ role: 'assistant', content: assistantContent, interrupted: true } as any)
+      events.onSessionEnd(session.id)
+      return
     }
 
     const cost = estimateCost(modelId, tokensIn, tokensOut)

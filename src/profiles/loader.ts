@@ -130,6 +130,12 @@ export function loadProfile(profilePath: string): Profile {
     artifact_dir: expandPath(validated.artifact_dir, cwd),
     system_prompt: expandPath(validated.system_prompt, cwd, profileDir),
     ...(validated.system_prompt_voice ? { system_prompt_voice: expandPath(validated.system_prompt_voice, cwd, profileDir) } : {}),
+    ...(validated.agents ? {
+      agents: validated.agents.map(agent => ({
+        ...agent,
+        profile: expandPath(agent.profile, cwd, profileDir),
+      })),
+    } : {}),
   }
 
   const withMode = applyModeDefaults(profile)

@@ -18,4 +18,11 @@ describe('VoiceInput', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(transcript).not.toHaveBeenCalled()
   })
+
+  it('ends a stuck-open stream after configured silence', async () => {
+    const stt = { name: 'fixture', async *transcribe(stream: AsyncIterable<Uint8Array>) { for await (const _chunk of stream) {} yield { text: 'endpointed', final: true } } }
+    const transcript = vi.fn(); const input = new VoiceInput(stt, { codec: 'pcm16', sample_rate: 16_000, silence_ms: 1 }, transcript)
+    input.start(); input.push(new Uint8Array([1]))
+    await vi.waitFor(() => expect(transcript).toHaveBeenCalledWith({ text: 'endpointed', final: true }))
+  })
 })

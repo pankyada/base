@@ -441,7 +441,11 @@ record of *why* an action was permitted.
 
 ---
 
-### ❌ 22. Provenance gating
+### 🔄 22. Provenance gating
+
+**In progress on `feat/17-channels`:** typed provenance, monotonic taint,
+untrusted inbound-channel handling, action gates, audit attribution, and core
+undo are implemented. Red-team corpus expansion and main-branch merge remain.
 
 **The security keystone of this track.** Once an agent reads content other people
 wrote, its context contains instructions from strangers that are
@@ -465,7 +469,13 @@ Default `false` in the harness; `true` under `mode: assistant` / `production`.
 
 ---
 
-### ❌ 23. Multi-profile server & audio transport
+### 🔄 23. Multi-profile server & audio transport
+
+**In progress on `feat/17-channels`:** profile directories, per-entry routing
+and isolation, lazy/idle MCP clients, pooled provider clients, voice plugin
+interfaces, binary audio transport, endpointing, voice prompts, sentence TTS,
+and interrupted-ledger handling are implemented. Full multi-profile server
+acceptance and main-branch merge remain.
 
 One process serves one profile today, so a multi-agent deployment means N ports
 and N MCP subprocess sets with no shared session view. Separately, the protocol

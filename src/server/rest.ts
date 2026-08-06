@@ -30,6 +30,8 @@ export interface RestDeps {
   abortRegistry: Map<string, AbortController>
   skills: Skill[]
   channels?: ChannelRuntime
+  /** Resolve channel ownership after the request profile has been selected. */
+  channelsForProfile?: (profile: Profile) => ChannelRuntime | undefined
   pendingStore?: PendingStore
 }
 
@@ -97,6 +99,10 @@ function resolveProfile(name: string | undefined, deps: RestDeps): Profile | nul
   return path ? loadProfile(path) : null
 }
 
+function channelsFor(deps: RestDeps, profile: Profile | null | undefined): ChannelRuntime | undefined {
+  return profile ? deps.channelsForProfile?.(profile) ?? deps.channels : deps.channels
+}
+
 function headlessEvents(): AgentLoopEvents {
   return {
     onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {},
@@ -159,7 +165,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
       profile: prepared.profile, userId: prepared.userId,
       userMessage: prepared.userMessage, events: headlessEvents(),
       signal: abort.signal,
-      channels: deps.channels,
+      channels: channelsFor(deps, prepared.profile),
       runId, pendingInputs: pendingStore(deps), unattended: true,
     })
   } catch (e: any) {
@@ -212,7 +218,7 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
     const result = await runProfileOnce({
       profile: prepared.profile, userId: prepared.userId,
       userMessage: prepared.userMessage, events, signal: abort.signal,
-      channels: deps.channels,
+      channels: channelsFor(deps, prepared.profile),
       runId, pendingInputs: pendingStore(deps),
       unattended: true,
     })
@@ -281,7 +287,7 @@ async function handleAnswerPending(req: IncomingMessage, res: ServerResponse, de
     runStore: deps.runStore,
     abortRegistry: deps.abortRegistry,
     resolveProfile: name => resolveProfile(name, deps),
-    channels: deps.channels,
+    channels: channelsFor(deps, resolveProfile(deps.runStore.get(pending.run_id)?.profile, deps)),
   })
   if (result.status === 'ignored') return sendJson(res, 409, { error: result.reason })
   if (result.status === 'failed') return sendJson(res, 500, result)
@@ -302,7 +308,7 @@ async function handleCancelPending(req: IncomingMessage, res: ServerResponse, de
     runStore: deps.runStore,
     abortRegistry: deps.abortRegistry,
     resolveProfile: name => resolveProfile(name, deps),
-    channels: deps.channels,
+    channels: channelsFor(deps, resolveProfile(deps.runStore.get(pending.run_id)?.profile, deps)),
   })
   if (result.status === 'ignored') return sendJson(res, 409, { error: result.reason })
   return sendJson(res, result.status === 'failed' ? 500 : result.status === 'completed' ? 200 : 202, result)
@@ -403,7 +409,7 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
 
   try {
     const result = await runProfileOnce({
-      profile, userId, userMessage: inputCheck.userMessage, events: headlessEvents(), signal: abort.signal, channels: deps.channels,
+      profile, userId, userMessage: inputCheck.userMessage, events: headlessEvents(), signal: abort.signal, channels: channelsFor(deps, profile),
       runId, pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
@@ -494,7 +500,7 @@ async function handleAcpMessages(
       userMessage: run.input as string,
       events,
       signal: abort.signal,
-      channels: deps.channels,
+      channels: channelsFor(deps, deps.defaultProfile),
       runId, pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
@@ -580,7 +586,7 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
       userMessage,
       events: headlessEvents(),
       signal: abort.signal,
-      channels: deps.channels,
+      channels: channelsFor(deps, deps.defaultProfile),
       runId, pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)

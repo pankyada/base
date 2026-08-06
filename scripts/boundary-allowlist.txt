@@ -8,3 +8,15 @@ src/profiles/loader.ts|assistant
 src/server/run-profile.ts|assistant
 src/tools/builtin/delegate.ts|assistant
 src/workflow/runner.ts|assistant
+# Generic audio transport/extension interfaces (ADR-55); vendor SDKs remain
+# forbidden by the dependency scan in check-boundary.sh.
+src/profiles/loader.ts|voice
+src/profiles/schema.ts|voice
+src/server/index.ts|voice
+src/voice/fixture.ts|voice
+src/voice/input.ts|voice
+src/voice/loader.ts|voice
+src/voice/output.ts|voice
+src/voice/registry.ts|voice
+src/voice/session.ts|voice
+src/voice/types.ts|voice

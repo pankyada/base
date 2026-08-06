@@ -188,6 +188,10 @@ const VoiceSchema = z.object({
   barge_in: z.boolean().default(true),
 }).optional()
 
+const McpRuntimeSchema = z.object({
+  idle_timeout_s: z.number().positive().default(900),
+}).optional()
+
 const IntensityValue = z.number().int().min(0).max(3) as z.ZodType<Intensity>
 const RoleModelsSchema = z.object({
   cheap: z.string().optional(),
@@ -315,6 +319,7 @@ export const ProfileSchema = z.object({
   mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
   channels: z.array(ChannelSchema).optional(),
   voice: VoiceSchema,
+  mcp: McpRuntimeSchema,
 }).transform(profile => {
   const channelNames = new Set<string>()
   for (const channel of profile.channels ?? []) {

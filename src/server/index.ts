@@ -166,22 +166,23 @@ async function main() {
   const stalledFailed = new Map<string, number>() // profile → count
   const stalledRequeued: string[] = []
   for (const run of stalledRuns) {
+    const registeredProfile = profiles.get(run.profile)
     const candidates = [
       resolve(process.cwd(), 'profiles', `${run.profile}.yaml`),
       resolve(homedir(), '.harness', 'profiles', `${run.profile}.yaml`),
     ]
-    const runProfilePath = candidates.find(p => existsSync(p))
-    if (!runProfilePath) {
+    const runProfilePath = registeredProfile ? undefined : candidates.find(p => existsSync(p))
+    if (!registeredProfile && !runProfilePath) {
       runStore.update(run.id, { status: 'failed', error: 'profile not found on restart', finished_at: new Date().toISOString() })
       stalledFailed.set(run.profile, (stalledFailed.get(run.profile) ?? 0) + 1)
       continue
     }
-    const stalledProfile = loadProfile(runProfilePath)
+    const stalledProfile = registeredProfile ?? loadProfile(runProfilePath!)
     void runProfileOnce({
       profile: stalledProfile, userId: run.user,
       userMessage: typeof run.input === 'string' ? run.input : JSON.stringify(run.input),
       events: { onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {}, onToolPrompt: async () => false, onSessionEnd: () => {}, onStats: () => {} },
-      channels,
+      channels: channelsByProfile.get(stalledProfile.name),
       pendingInputs: pendingStore,
       unattended: true,
     })
@@ -197,7 +198,9 @@ async function main() {
   }
 
   clearRegistry()
-  registerAll(channels)
+  // Built-ins are process-wide; Notify gets its per-profile runtime through
+  // ToolContext, so register it whenever any loaded profile has channels.
+  registerAll([...channelsByProfile.values()].some(runtime => runtime.enabled) ? { enabled: true } as ChannelRuntime : undefined)
 
   const customToolsDirs = resolveToolsDirs()
   const customTools = await loadAllCustomTools(customToolsDirs)
@@ -237,7 +240,7 @@ async function main() {
   for (const scheduler of schedulers) scheduler.init()
   for (const owner of profiles.values()) if (owner.triggers?.cron) console.log(`[cron] registered schedule '${owner.triggers.cron}' for profile '${owner.name}'`)
 
-  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, pendingStore })
+  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({
     server: httpServer,
@@ -277,6 +280,8 @@ async function main() {
     const pendingInputRequests = new Map<string, (value: string) => void>()
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     let mcpEntries: McpEntry[] = []
+    let mcpLoaded = false
+    let mcpIdleTimer: ReturnType<typeof setTimeout> | undefined
     let wasmSupported = false
     let audioSupported = false
     let voiceInput: VoiceInput | null = null
@@ -314,15 +319,33 @@ async function main() {
         : new FsMemoryProvider(connectionProfile.artifact_dir, session)
       usageAtConnectionStart = { ...session.usage }
       await destroyMcpClients(mcpEntries).catch(() => {})
-      mcpEntries = await createMcpClients(connectionProfile)
+      mcpEntries = []
+      mcpLoaded = false
+      if (mcpIdleTimer) clearTimeout(mcpIdleTimer)
       void sweepDeferredLabels(session.user, session.project).catch(() => {})
       return null
     }
 
-    // Init MCP clients async — handlers below work with [] until ready
-    createMcpClients(profile)
-      .then(entries => { mcpEntries = entries })
-      .catch(e => console.error('[mcp] init failed:', e.message))
+    const ensureMcpClients = async (): Promise<void> => {
+      if (mcpIdleTimer) { clearTimeout(mcpIdleTimer); mcpIdleTimer = undefined }
+      if (mcpLoaded) return
+      mcpLoaded = true
+      try { mcpEntries = await createMcpClients(connectionProfile) }
+      catch (error: any) { mcpLoaded = false; console.error('[mcp] init failed:', error.message) }
+    }
+
+    const closeMcpWhenIdle = (): void => {
+      if (!mcpEntries.length || mcpIdleTimer) return
+      const entries = mcpEntries
+      mcpIdleTimer = setTimeout(() => {
+        mcpIdleTimer = undefined
+        if (mcpEntries !== entries) return
+        mcpEntries = []
+        mcpLoaded = false
+        void destroyMcpClients(entries).catch(e => console.error('[mcp] idle close failed:', e.message))
+      }, (connectionProfile.mcp?.idle_timeout_s ?? 900) * 1000)
+      mcpIdleTimer.unref()
+    }
 
     const send = (msg: ServerMessage) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
@@ -383,7 +406,12 @@ async function main() {
           voiceOutput?.cancel(); voiceOutput = null
           send({ type: 'audio_out_end', reason: 'interrupted' })
         })
-        voiceInput = new VoiceInput(provider.stt, { codec: msg.codec, sample_rate: msg.sample_rate }, part => {
+        voiceInput = new VoiceInput(provider.stt, {
+          codec: msg.codec,
+          sample_rate: msg.sample_rate,
+          silence_ms: connectionProfile.voice?.endpointing.silence_ms,
+          max_utterance_s: connectionProfile.voice?.endpointing.max_utterance_s,
+        }, part => {
           send({ type: 'transcript_partial', ...part })
           if (part.final && part.text.trim()) queueMicrotask(() => ws.emit('message', Buffer.from(JSON.stringify({ type: 'message', content: part.text })), false))
         })
@@ -394,7 +422,14 @@ async function main() {
       if (msg.type === 'audio_end') { voiceInput?.end(); return }
 
       if (msg.type === 'barge_in') {
-        voiceTurn?.bargeIn(); voiceTurn = null
+        if (voiceTurn) voiceTurn.bargeIn()
+        else {
+          voiceInput?.cancel(); voiceInput = null
+          voiceOutput?.cancel(); voiceOutput = null
+          abortController.abort()
+          send({ type: 'audio_out_end', reason: 'interrupted' })
+        }
+        voiceTurn = null
         abortController = new AbortController()
         return
       }
@@ -621,7 +656,9 @@ async function main() {
           const memSection = await memory.buildSystemPromptSection()
           session.messages.push({
             role: 'system',
-            content: readFileSync(connectionProfile.system_prompt, 'utf-8') + skillIndex + memSection,
+            content: readFileSync(audioSupported && connectionProfile.system_prompt_voice
+              ? connectionProfile.system_prompt_voice
+              : connectionProfile.system_prompt, 'utf-8') + skillIndex + memSection,
           })
         }
 
@@ -649,6 +686,7 @@ async function main() {
             voiceOutput?.end()
             saveSession(session)
             send({ type: 'session_end', sessionId: id })
+            closeMcpWhenIdle()
           },
           onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => {
             send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens })
@@ -675,6 +713,7 @@ async function main() {
           }),
           onStage: (stage, intensity, tier, model, state, cost_usd) => send({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
         }
+        await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
           profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
@@ -730,6 +769,7 @@ async function main() {
       recordUsage(session.user, connectionDelta)
 
       // Destroy per-connection MCP clients (fire-and-forget)
+      if (mcpIdleTimer) clearTimeout(mcpIdleTimer)
       void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
 
       // on_stop hooks (fire-and-forget — close handler cannot be async)

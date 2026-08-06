@@ -2,7 +2,9 @@
 
 A profile is a YAML file that defines one agent instance: its model, system prompt, tools, memory, hooks, and triggers.
 
-Profiles live in `profiles/` (project-local) or `~/.harness/profiles/` (user-global).
+The installer places the bundled profiles in `~/.harness/profiles/`. A profile
+directory is self-contained: its prompts and named sub-agent profiles resolve
+beside the YAML file, so it can be copied or installed without a checkout.
 
 ## Minimal profile
 
@@ -45,6 +47,15 @@ the profile YAML's directory, so keep prompt assets beside their profile.
 system_prompt: ./devops.md
 ```
 
+`system_prompt_voice` is optional. Audio-capable clients use it instead of
+`system_prompt`; text clients retain the normal prompt.
+
+```yaml
+system_prompt_voice: ./devops-voice.md
+```
+
+Named `agents[].profile` paths resolve from the owning YAML directory too.
+
 ---
 
 ### `artifact_dir` _(required)_
@@ -60,6 +71,36 @@ artifact_dir: .harness/devops
 ### `working_dir` _(default: `$CWD`)_
 
 Directory the agent considers its working root for relative paths.
+
+`$CWD` deliberately means the directory from which the harness was launched;
+use an absolute path when an agent must always operate in one fixed directory.
+
+---
+
+### `mcp` _(optional)_
+
+Controls resource lifetime for this profile's MCP clients. MCP connects only
+when the profile receives its first turn, then closes after inactivity.
+
+```yaml
+mcp:
+  idle_timeout_s: 900
+```
+
+---
+
+### `voice` _(optional)_
+
+Declares plugin-provided streaming STT/TTS by name. The provider-specific
+`config` object stays opaque to core. Plugins load from `.agents/voice/`.
+
+```yaml
+voice:
+  stt: { provider: my-stt, config: {} }
+  tts: { provider: my-tts, config: { voice: calm } }
+  endpointing: { silence_ms: 700, max_utterance_s: 60 }
+  barge_in: true
+```
 
 ---
 

@@ -84,6 +84,18 @@ describe('REST /health and /run (no auth)', () => {
     server.close()
   })
 
+  it('uses the selected profile channel runtime for a multi-profile run', async () => {
+    const other = { name: 'other', contract: undefined } as any
+    const channels = { enabled: true } as any
+    const channelFor = vi.fn().mockReturnValue(channels)
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, profiles: new Map([['default', FREEFORM_PROFILE], ['other', other]]), apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [], channelsForProfile: channelFor })
+    const { server, base } = await startServer(handler)
+    await fetch(`${base}/run`, { method: 'POST', body: JSON.stringify({ profile: 'other', input: 'hi' }) })
+    expect(channelFor).toHaveBeenCalledWith(other)
+    expect(runProfileOnce).toHaveBeenLastCalledWith(expect.objectContaining({ profile: other, channels }))
+    server.close()
+  })
+
   it('POST /run missing input returns 400', async () => {
     const res = await fetch(`${base}/run`, { method: 'POST', body: JSON.stringify({ user: 'a' }) })
     expect(res.status).toBe(400)

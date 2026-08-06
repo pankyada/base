@@ -55,6 +55,13 @@ artifact_dir: ${subdir}/artifacts
     expect(loadProfile(join(subdir, 'profile.yaml')).system_prompt_voice).toBe(join(subdir, 'voice.md'))
   })
 
+  it('resolves sub-agent profile paths beside their owning profile', () => {
+    const subdir = mkdtempSync(join(tmpdir(), 'harness-agents-profiledir-'))
+    writeFileSync(join(subdir, 'profile.yaml'), `name: orchestrator\nmodel:\n  base_url: https://api.openai.com/v1\n  api_key_env: KEY\n  id: gpt-4o\nsystem_prompt: ./prompt.md\nartifact_dir: ${subdir}/artifacts\nagents:\n  - name: worker\n    profile: ./worker.yaml\n    input: { type: object }\n    output: { type: object }\n`)
+    writeFileSync(join(subdir, 'prompt.md'), '# prompt')
+    expect(loadProfile(join(subdir, 'profile.yaml')).agents?.[0].profile).toBe(join(subdir, 'worker.yaml'))
+  })
+
   it('defaults hooks.timeout_ms to 5000', () => {
     const yaml = `
 name: test

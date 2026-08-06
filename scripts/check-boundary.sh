@@ -102,6 +102,20 @@ const allowlist = readAllowlist(allowlistPath)
 const srcRoot = path.join(repoRoot, 'src')
 const violations = []
 
+// Core owns interfaces, never a product transport or audio vendor SDK. Keep
+// this separate from the source-vocabulary scan: dependencies can smuggle a
+// vendor into core even when its name never appears in source.
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+const vendorPattern = /(elevenlabs|deepgram|twilio|telegram|whatsapp|discord|slack)/i
+for (const [section, dependencies] of Object.entries({
+  dependencies: packageJson.dependencies ?? {},
+  devDependencies: packageJson.devDependencies ?? {},
+})) {
+  for (const name of Object.keys(dependencies)) {
+    if (vendorPattern.test(name)) violations.push(`package.json: ${section}.${name}: vendor dependency is forbidden in core`)
+  }
+}
+
 for (const filePath of sourceFiles(srcRoot)) {
   const source = fs.readFileSync(filePath)
   if (source.includes(0)) continue

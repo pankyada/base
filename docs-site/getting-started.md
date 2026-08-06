@@ -13,6 +13,14 @@ cd base
 pnpm install
 ```
 
+For a release install, use the installer. It installs binaries and a
+self-contained default profile bundle under `~/.harness/profiles/`; existing
+profile files are kept unchanged.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pankyada/base/main/scripts/install.sh | sh
+```
+
 ## Configuration
 
 ```bash
@@ -45,9 +53,14 @@ HARNESS_PROFILE=devops pnpm tui
 ```bash
 pnpm dev                          # default profile (~/.harness/profiles/coding.yaml)
 pnpm dev profiles/devops.yaml     # path to a profile YAML
+pnpm dev --profiles ~/.harness/profiles --default-profile coding
 ```
 
 Server listens on port `7337`. Override with `HARNESS_PORT`.
+
+With `--profiles`, one server handles all valid YAML profiles in that directory.
+Clients select one through `hello.profile`; REST callers send `profile` in the
+request body. Unknown names return an error rather than falling back silently.
 
 ## Connect the web client
 
