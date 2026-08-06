@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { writeFileSync, mkdtempSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { loadProfile } from '../src/profiles/loader.js'
+import { loadProfile, systemPromptFor } from '../src/profiles/loader.js'
 
 describe('loadProfile', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'harness-'))
@@ -53,6 +53,13 @@ artifact_dir: ${subdir}/artifacts
     writeFileSync(join(subdir, 'profile.yaml'), `name: voice\nmodel:\n  base_url: https://api.openai.com/v1\n  api_key_env: KEY\n  id: gpt-4o\nsystem_prompt: ./prompt.md\nsystem_prompt_voice: ./voice.md\nartifact_dir: ${subdir}/artifacts\n`)
     writeFileSync(join(subdir, 'prompt.md'), '# prompt'); writeFileSync(join(subdir, 'voice.md'), '# voice')
     expect(loadProfile(join(subdir, 'profile.yaml')).system_prompt_voice).toBe(join(subdir, 'voice.md'))
+  })
+
+  it('uses the voice prompt only for audio-capable transports', () => {
+    const profile = { system_prompt: '/text.md', system_prompt_voice: '/voice.md' } as any
+    expect(systemPromptFor(profile, true)).toBe('/voice.md')
+    expect(systemPromptFor(profile, false)).toBe('/text.md')
+    expect(systemPromptFor({ system_prompt: '/text.md' } as any, true)).toBe('/text.md')
   })
 
   it('resolves sub-agent profile paths beside their owning profile', () => {

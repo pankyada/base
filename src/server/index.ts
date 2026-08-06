@@ -13,7 +13,7 @@ import { TriggerManager } from '../triggers/manager.js'
 import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
-import { loadProfile, applyModeDefaults } from '../profiles/loader.js'
+import { loadProfile, applyModeDefaults, systemPromptFor } from '../profiles/loader.js'
 import { loadProfileDirectory } from '../profiles/registry.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
@@ -656,9 +656,7 @@ async function main() {
           const memSection = await memory.buildSystemPromptSection()
           session.messages.push({
             role: 'system',
-            content: readFileSync(audioSupported && connectionProfile.system_prompt_voice
-              ? connectionProfile.system_prompt_voice
-              : connectionProfile.system_prompt, 'utf-8') + skillIndex + memSection,
+            content: readFileSync(systemPromptFor(connectionProfile, audioSupported), 'utf-8') + skillIndex + memSection,
           })
         }
 

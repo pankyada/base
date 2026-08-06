@@ -117,6 +117,11 @@ export function validateWorkflowModels(profile: Profile): void {
   }
 }
 
+/** Pick a profile-owned prompt for the current transport capability. */
+export function systemPromptFor(profile: Profile, audioCapable: boolean): string {
+  return audioCapable && profile.system_prompt_voice ? profile.system_prompt_voice : profile.system_prompt
+}
+
 export function loadProfile(profilePath: string): Profile {
   const raw = readFileSync(profilePath, 'utf-8')
   const parsed = yaml.load(raw)
