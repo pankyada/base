@@ -24,6 +24,7 @@ const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
 
 export interface RestDeps {
   defaultProfile: Profile
+  profiles?: Map<string, Profile>
   apiKey?: string
   runStore: RunStore
   abortRegistry: Map<string, AbortController>
@@ -90,6 +91,8 @@ export function findProfilePath(name: string): string | null {
 
 function resolveProfile(name: string | undefined, deps: RestDeps): Profile | null {
   if (!name) return deps.defaultProfile
+  const registered = deps.profiles?.get(name)
+  if (registered) return registered
   const path = findProfilePath(name)
   return path ? loadProfile(path) : null
 }
@@ -625,7 +628,7 @@ export function createRestHandler(deps: RestDeps) {
         if (url.endsWith('/inbound') && deps.channels && await deps.channels.handleHttp(channel, req, res)) return
       }
       if (method === 'GET' && url === '/health') {
-        return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, version: VERSION })
+        return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, profiles: deps.profiles ? [...deps.profiles.keys()].sort() : [deps.defaultProfile.name], version: VERSION })
       }
 
       if (deps.apiKey && req.headers['authorization'] !== `Bearer ${deps.apiKey}`) {

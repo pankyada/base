@@ -73,6 +73,17 @@ describe('REST /health and /run (no auth)', () => {
     expect(body.run_id).toHaveLength(8)
   })
 
+  it('selects a registered profile from the request body and reports all profiles in health', async () => {
+    const other = { name: 'other', contract: undefined } as any
+    const handler = createRestHandler({ defaultProfile: FREEFORM_PROFILE, profiles: new Map([['default', FREEFORM_PROFILE], ['other', other]]), apiKey: undefined, runStore: makeMockRunStore(), abortRegistry: new Map(), skills: [] })
+    const { server, base } = await startServer(handler)
+    const health = await fetch(`${base}/health`)
+    expect(await health.json()).toMatchObject({ profiles: ['default', 'other'] })
+    await fetch(`${base}/run`, { method: 'POST', body: JSON.stringify({ profile: 'other', input: 'hi' }) })
+    expect(runProfileOnce).toHaveBeenLastCalledWith(expect.objectContaining({ profile: other }))
+    server.close()
+  })
+
   it('POST /run missing input returns 400', async () => {
     const res = await fetch(`${base}/run`, { method: 'POST', body: JSON.stringify({ user: 'a' }) })
     expect(res.status).toBe(400)
