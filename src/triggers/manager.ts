@@ -48,7 +48,9 @@ export class TriggerManager {
     const triggers = this.options.profile.triggers
     if (!triggers) return
     if (triggers.cron) {
-      if (triggers.cron_input !== undefined) {
+      // Freeform profiles receive structured cron input as JSON text. Validate
+      // only when the profile explicitly declares a typed input contract.
+      if (triggers.cron_input !== undefined && this.options.profile.contract?.input) {
         const check = validateAndBuildInput(triggers.cron_input, compileContract(this.options.profile))
         if (!check.ok) throw new Error(`[cron] profile '${this.options.profile.name}' cron_input is invalid: ${check.error}`)
       }

@@ -13,6 +13,15 @@ function manager(run: any) {
 }
 
 describe('TriggerManager', () => {
+  it('accepts object cron input for a freeform profile', async () => {
+    const instance = new TriggerManager({
+      profile: { ...profile, triggers: { cron: '0 8 * * *', cron_input: { task: 'health check' }, max_concurrent_runs: 3 } },
+      runStore: { create: vi.fn(), update: vi.fn(), get: vi.fn(() => ({ status: 'running' })) }, abortRegistry: new Map(), run: vi.fn(),
+    } as any)
+    expect(() => instance.init()).not.toThrow()
+    await instance.stop()
+  })
+
   it('skips overlapping wakeups by default', async () => {
     let resolveRun!: (value: any) => void
     const run = vi.fn<(options: any) => Promise<any>>(() => new Promise(resolve => { resolveRun = resolve }))
