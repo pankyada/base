@@ -3,6 +3,8 @@ set -e
 
 REPO="pankyada/base"
 INSTALL_DIR="$HOME/.local/bin"
+HARNESS_DIR="$HOME/.harness"
+PROFILE_DIR="$HARNESS_DIR/profiles"
 BASE_URL="https://github.com/${REPO}/releases/latest/download"
 
 OS=$(uname -s)
@@ -43,13 +45,13 @@ case "${OS}" in
     ;;
 esac
 
-mkdir -p "${INSTALL_DIR}"
+mkdir -p "${INSTALL_DIR}" "${HARNESS_DIR}"
 
 echo "Installing harness to ${INSTALL_DIR}..."
 
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   echo "Using gh CLI to download release assets..."
-  gh release download -R "${REPO}" -p "harness-${SUFFIX}" -p "harness-server-${SUFFIX}" -p "harness-tui-${TUI_SUFFIX}" --dir "${INSTALL_DIR}" --clobber
+  gh release download -R "${REPO}" -p "harness-${SUFFIX}" -p "harness-server-${SUFFIX}" -p "harness-tui-${TUI_SUFFIX}" -p "harness-profiles.tar.gz" --dir "${INSTALL_DIR}" --clobber
   mv "${INSTALL_DIR}/harness-${SUFFIX}" "${INSTALL_DIR}/harness"
   mv "${INSTALL_DIR}/harness-server-${SUFFIX}" "${INSTALL_DIR}/harness-server"
   mv "${INSTALL_DIR}/harness-tui-${TUI_SUFFIX}" "${INSTALL_DIR}/harness-tui"
@@ -67,9 +69,18 @@ else
   eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-${SUFFIX}\" -o \"${INSTALL_DIR}/harness\""
   eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-server-${SUFFIX}\" -o \"${INSTALL_DIR}/harness-server\""
   eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-tui-${TUI_SUFFIX}\" -o \"${INSTALL_DIR}/harness-tui\""
+  eval "curl ${CURL_OPTS} ${CURL_AUTH} \"${BASE_URL}/harness-profiles.tar.gz\" -o \"${INSTALL_DIR}/harness-profiles.tar.gz\""
 fi
 
 chmod +x "${INSTALL_DIR}/harness" "${INSTALL_DIR}/harness-server" "${INSTALL_DIR}/harness-tui"
+
+if [ ! -f "${PROFILE_DIR}/coding.yaml" ]; then
+  tar -xzf "${INSTALL_DIR}/harness-profiles.tar.gz" -C "${HARNESS_DIR}"
+  echo "Installed default profiles to ${PROFILE_DIR}"
+else
+  echo "Keeping existing profiles in ${PROFILE_DIR}"
+fi
+rm -f "${INSTALL_DIR}/harness-profiles.tar.gz"
 
 echo ""
 echo "Installed:"

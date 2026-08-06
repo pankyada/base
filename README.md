@@ -3,6 +3,8 @@
 Generic profile-driven agent runtime with a Go/Bubble Tea terminal control
 surface.
 
+Licensed under the [MIT License](LICENSE).
+
 ```bash
 pnpm install
 pnpm tui

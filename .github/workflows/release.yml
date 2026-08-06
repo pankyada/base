@@ -80,6 +80,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.bump.outputs.tag || github.ref_name }}"
+          tar -czf bin/harness-profiles.tar.gz profiles
           gh release create "$TAG" \
             bin/harness-macos-arm64 \
             bin/harness-macos-x64 \
@@ -90,5 +91,6 @@ jobs:
             bin/harness-tui-darwin-arm64 \
             bin/harness-tui-darwin-amd64 \
             bin/harness-tui-linux-amd64 \
+            bin/harness-profiles.tar.gz \
             --title "$TAG" \
             --generate-notes

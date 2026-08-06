@@ -11,7 +11,7 @@ workflow:
   playbook: data
   routing:
     table: { recon: cheap, plan: balanced, design: balanced, build: balanced, verify: cheap, review: critic }
-system_prompt: ./prompts/data.md
+system_prompt: ./data.md
 working_dir: $CWD
 artifact_dir: .harness/data
 tools:

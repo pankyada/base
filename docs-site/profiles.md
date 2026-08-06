@@ -12,7 +12,7 @@ model:
   base_url: https://api.anthropic.com/v1
   api_key_env: ANTHROPIC_API_KEY
   id: claude-sonnet-4-6
-system_prompt: prompts/my-agent.md
+system_prompt: ./my-agent.md
 artifact_dir: .harness/my-agent
 ```
 
@@ -37,10 +37,12 @@ Human-readable identifier. Shown in logs and the TUI status bar.
 
 ### `system_prompt` _(required)_
 
-Path to a Markdown file used as the system prompt. `$CWD` expands to `process.cwd()`, `~` to the home directory.
+Path to a Markdown file used as the system prompt. Relative paths resolve from
+the profile YAML's directory, so keep prompt assets beside their profile.
+`$CWD` expands to `process.cwd()`, `~` to the home directory.
 
 ```yaml
-system_prompt: prompts/devops.md
+system_prompt: ./devops.md
 ```
 
 ---
@@ -269,7 +271,7 @@ model:
   api_key_env: ANTHROPIC_API_KEY
   id: claude-sonnet-4-6
 
-system_prompt: prompts/devops.md
+system_prompt: ./devops.md
 artifact_dir: .harness/devops
 
 # Explicit ACLs — no mode: field, so profile has full control

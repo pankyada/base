@@ -26,7 +26,7 @@ workflow:
   knowledge:
     graph: true
     generalization_probe: true
-system_prompt: ./prompts/coding.md
+system_prompt: ./coding.md
 working_dir: $CWD
 artifact_dir: .harness/coding
 tools:

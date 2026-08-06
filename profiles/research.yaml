@@ -11,7 +11,7 @@ workflow:
   playbook: research
   routing:
     table: { recon: cheap, plan: balanced, design: balanced, build: frontier, verify: cheap, review: critic }
-system_prompt: ./prompts/research.md
+system_prompt: ./research.md
 working_dir: $CWD
 artifact_dir: .harness/research
 tools:

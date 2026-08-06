@@ -18,7 +18,7 @@ vi.mock('../src/mcp/client.js', () => ({
 
 const TEST_PROFILE_NAME = 'test-delegate'
 const TEST_PROFILE_PATH = join(process.cwd(), 'profiles', `${TEST_PROFILE_NAME}.yaml`)
-const TEST_PROMPT_PATH = join(process.cwd(), 'prompts', 'test-delegate-prompt.md')
+const TEST_PROMPT_PATH = join(process.cwd(), 'profiles', 'test-delegate-prompt.md')
 const TEST_ARTIFACT_DIR = join(process.cwd(), '.harness', 'test-delegate')
 
 function makeContext(overrides: Partial<ToolContext> = {}): ToolContext {
@@ -47,7 +47,7 @@ function makeContext(overrides: Partial<ToolContext> = {}): ToolContext {
 describe('Delegate tool', () => {
   beforeAll(() => {
     mkdirSync(join(process.cwd(), 'profiles'), { recursive: true })
-    mkdirSync(join(process.cwd(), 'prompts'), { recursive: true })
+    mkdirSync(join(process.cwd(), 'profiles'), { recursive: true })
     writeFileSync(TEST_PROMPT_PATH, '# Test delegate prompt\nYou are a test sub-agent.')
     writeFileSync(TEST_PROFILE_PATH, [
       `name: ${TEST_PROFILE_NAME}`,
@@ -55,7 +55,7 @@ describe('Delegate tool', () => {
       '  base_url: https://api.openai.com/v1',
       '  api_key_env: TEST_DELEGATE_API_KEY',
       '  id: gpt-4o-mini',
-      'system_prompt: ./prompts/test-delegate-prompt.md',
+      'system_prompt: ./test-delegate-prompt.md',
       'working_dir: $CWD',
       `artifact_dir: ${TEST_ARTIFACT_DIR}`,
       'tools:',

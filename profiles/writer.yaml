@@ -11,7 +11,7 @@ workflow:
   playbook: writing
   routing:
     table: { recon: cheap, plan: balanced, design: balanced, build: balanced, verify: cheap, review: critic }
-system_prompt: ./prompts/writer.md
+system_prompt: ./writer.md
 working_dir: $CWD
 artifact_dir: .harness/writer
 tools:

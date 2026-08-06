@@ -11,7 +11,7 @@ workflow:
   playbook: security
   routing:
     table: { recon: cheap, plan: balanced, design: balanced, build: frontier, verify: balanced, review: critic }
-system_prompt: ./prompts/security.md
+system_prompt: ./security.md
 working_dir: $CWD
 artifact_dir: .harness/security
 tools:

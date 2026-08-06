@@ -5,7 +5,7 @@ model:
   api_key_env: ANTHROPIC_API_KEY
   id: claude-sonnet-4-6
   fallback_id: claude-sonnet-4-6
-system_prompt: ./prompts/devops.md
+system_prompt: ./devops.md
 working_dir: $CWD
 artifact_dir: .harness/devops
 tools:

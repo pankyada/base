@@ -129,7 +129,7 @@ model:
   api_key_env: ANTHROPIC_API_KEY
   id: claude-opus-4-8
 
-system_prompt: ./prompts/research.md
+system_prompt: ./research.md
 artifact_dir: .harness/research
 
 tools:

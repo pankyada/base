@@ -5,13 +5,13 @@ import { join } from 'path'
 import { PendingStore } from '../src/runs/pending.js'
 import { ParkSignal } from '../src/runs/park.js'
 
-function tempStore() {
-  return new PendingStore(mkdtempSync(join(tmpdir(), 'harness-pending-')))
+function tempStore(now: () => Date = () => new Date()) {
+  return new PendingStore(mkdtempSync(join(tmpdir(), 'harness-pending-')), now)
 }
 
 describe('PendingStore', () => {
   it('persists pending input and answers it once', () => {
-    const store = tempStore()
+    const store = tempStore(() => new Date('2026-08-06T00:30:00.000Z'))
     const pending = store.create({
       id: 'pending-1', run_id: 'run-1', session_id: 'session-1', user: 'alice', profile: 'p',
       prompt: 'Pick one', kind: 'select', options: ['a', 'b'], channel: 'stdout',
