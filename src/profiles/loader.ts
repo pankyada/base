@@ -129,6 +129,7 @@ export function loadProfile(profilePath: string): Profile {
     working_dir: expandPath(validated.working_dir, cwd),
     artifact_dir: expandPath(validated.artifact_dir, cwd),
     system_prompt: expandPath(validated.system_prompt, cwd, profileDir),
+    ...(validated.system_prompt_voice ? { system_prompt_voice: expandPath(validated.system_prompt_voice, cwd, profileDir) } : {}),
   }
 
   const withMode = applyModeDefaults(profile)

@@ -48,6 +48,13 @@ artifact_dir: ${subdir}/artifacts
     expect(profile.system_prompt).toBe(join(subdir, 'prompt.md'))
   })
 
+  it('resolves optional voice prompt beside the profile', () => {
+    const subdir = mkdtempSync(join(tmpdir(), 'harness-voice-profiledir-'))
+    writeFileSync(join(subdir, 'profile.yaml'), `name: voice\nmodel:\n  base_url: https://api.openai.com/v1\n  api_key_env: KEY\n  id: gpt-4o\nsystem_prompt: ./prompt.md\nsystem_prompt_voice: ./voice.md\nartifact_dir: ${subdir}/artifacts\n`)
+    writeFileSync(join(subdir, 'prompt.md'), '# prompt'); writeFileSync(join(subdir, 'voice.md'), '# voice')
+    expect(loadProfile(join(subdir, 'profile.yaml')).system_prompt_voice).toBe(join(subdir, 'voice.md'))
+  })
+
   it('defaults hooks.timeout_ms to 5000', () => {
     const yaml = `
 name: test

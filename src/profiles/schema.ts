@@ -247,6 +247,7 @@ export const ProfileSchema = z.object({
   models: z.object({ roles: RoleModelsSchema }).optional(),
   workflow: WorkflowSchema.optional(),
   system_prompt: z.string(),
+  system_prompt_voice: z.string().optional(),
   working_dir: z.string().default('$CWD'),
   artifact_dir: z.string(),
   tools: z.preprocess(
