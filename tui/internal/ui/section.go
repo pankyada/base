@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var toolCategory = map[string]string{
@@ -180,22 +181,23 @@ func (s Section) Render(width, frame int, allExpanded bool) string {
 // --- small helpers (shared across ui package) ---
 
 func pad(s string, n int) string {
-	l := len([]rune(s))
+	l := lipgloss.Width(s)
 	if l >= n {
 		return s
 	}
 	return s + strings.Repeat(" ", n-l)
 }
 
+// truncate clips s to n visible columns, appending an ellipsis when it
+// overflows. It is ANSI-aware (via charmbracelet/x/ansi) so it never counts
+// escape-code bytes as width and never cuts inside an escape sequence —
+// both of which corrupt styling and misalign borders in modals/panels when
+// truncate runs on an already-styled (colored) string.
 func truncate(s string, n int) string {
-	r := []rune(s)
-	if n <= 0 || len(r) <= n {
-		return s
+	if n <= 0 {
+		return ""
 	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
+	return ansi.Truncate(s, n, "…")
 }
 
 // fitArg trims a tool argument to n columns. A bare path is trimmed from the

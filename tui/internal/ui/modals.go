@@ -192,9 +192,14 @@ func modelBody(models []protocol.ModelInfo, cursor int, filter string, custom bo
 		} else if i == cursor {
 			labelStyle = StAccentB
 		}
+		// Truncate meta as plain text against its own width budget before
+		// styling — truncating the fully-assembled (already-colored) row
+		// risks cutting mid-escape-sequence, which corrupts styling and
+		// misaligns the modal border on long strings like model.Reason.
+		metaWidth := maxInt(0, innerWidth-lipgloss.Width(marker)-labelWidth-idWidth-4)
 		row := marker + labelStyle.Render(pad(label, labelWidth)) + "  " +
-			idStyle.Render(pad(id, idWidth)) + "  " + StFaint.Render(meta)
-		lines = append(lines, truncate(row, innerWidth))
+			idStyle.Render(pad(id, idWidth)) + "  " + StFaint.Render(truncate(meta, metaWidth))
+		lines = append(lines, row)
 	}
 
 	lines = append(lines, "")

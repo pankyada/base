@@ -1,6 +1,6 @@
 import yaml from 'js-yaml'
 import { readFileSync } from 'fs'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
 import { homedir } from 'os'
 import { ProfileSchema, Profile, MODE_DEFAULTS } from './schema.js'
 import { MODEL_REGISTRY } from '../models/registry.js'
@@ -9,9 +9,12 @@ function untildify(p: string): string {
   return p.startsWith('~') ? p.replace('~', homedir()) : p
 }
 
-function expandPath(p: string, cwd: string): string {
+// base defaults to cwd so working_dir/artifact_dir keep resolving against the
+// launch directory (matches the documented $CWD sentinel); system_prompt
+// passes the profile file's own directory so it doesn't depend on launch cwd.
+function expandPath(p: string, cwd: string, base: string = cwd): string {
   if (p === '$CWD') return cwd
-  return resolve(untildify(p))
+  return resolve(base, untildify(p))
 }
 
 export function applyModeDefaults(profile: Profile): Profile {
@@ -110,12 +113,13 @@ export function loadProfile(profilePath: string): Profile {
   const parsed = yaml.load(raw)
   const validated = ProfileSchema.parse(parsed)
   const cwd = process.cwd()
+  const profileDir = dirname(resolve(profilePath))
 
   const profile: Profile = {
     ...validated,
     working_dir: expandPath(validated.working_dir, cwd),
     artifact_dir: expandPath(validated.artifact_dir, cwd),
-    system_prompt: expandPath(validated.system_prompt, cwd),
+    system_prompt: expandPath(validated.system_prompt, cwd, profileDir),
   }
 
   const withMode = applyModeDefaults(profile)
