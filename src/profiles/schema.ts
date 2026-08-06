@@ -336,7 +336,13 @@ export const ProfileSchema = z.object({
 type ParsedProfile = z.infer<typeof ProfileSchema>
 // Keep hand-built test/embedding profiles source-compatible while parsed YAML
 // always receives the safe classifier defaults above.
-export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists'> & { safety?: SafetyConfig; context?: ContextConfig; lists?: Record<string, unknown[] | string> }
+export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists'> & {
+  safety?: SafetyConfig
+  context?: ContextConfig
+  lists?: Record<string, unknown[] | string>
+  /** Absolute source path, added by loadProfile for profile-local references. */
+  profile_path?: string
+}
 
 export function resolveRole(profile: Profile, role: Tier): string {
   return profile.models?.roles?.[role] ?? profile.model.id

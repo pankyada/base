@@ -46,6 +46,7 @@ artifact_dir: ${subdir}/artifacts
     writeFileSync(join(subdir, 'prompt.md'), '# prompt')
     const profile = loadProfile(join(subdir, 'profile.yaml'))
     expect(profile.system_prompt).toBe(join(subdir, 'prompt.md'))
+    expect(profile.profile_path).toBe(join(subdir, 'profile.yaml'))
   })
 
   it('resolves optional voice prompt beside the profile', () => {

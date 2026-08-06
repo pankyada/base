@@ -131,6 +131,7 @@ export function loadProfile(profilePath: string): Profile {
 
   const profile: Profile = {
     ...validated,
+    profile_path: resolve(profilePath),
     working_dir: expandPath(validated.working_dir, cwd),
     artifact_dir: expandPath(validated.artifact_dir, cwd),
     system_prompt: expandPath(validated.system_prompt, cwd, profileDir),

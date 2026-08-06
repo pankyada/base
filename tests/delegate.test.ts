@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from 'vitest'
-import { writeFileSync, mkdirSync, rmSync } from 'fs'
+import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'fs'
 import { join } from 'path'
-import { delegateTool } from '../src/tools/builtin/delegate.js'
+import { tmpdir } from 'os'
+import { delegateTool, findProfilePath } from '../src/tools/builtin/delegate.js'
 import { runAgentLoop } from '../src/loop/agent-loop.js'
 import { destroyMcpClients } from '../src/mcp/client.js'
 import type { ToolContext } from '../src/tools/types.js'
@@ -23,7 +24,7 @@ const TEST_ARTIFACT_DIR = join(process.cwd(), '.harness', 'test-delegate')
 
 function makeContext(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    profile: {} as any,
+    profile: { profile_path: TEST_PROFILE_PATH } as any,
     session: { user: 'testuser' } as any,
     workingDir: process.cwd(),
     memory: {} as any,
@@ -75,6 +76,15 @@ describe('Delegate tool', () => {
     vi.mocked(runAgentLoop).mockReset()
     vi.mocked(destroyMcpClients).mockReset()
     vi.mocked(destroyMcpClients).mockResolvedValue(undefined)
+  })
+
+  it('resolves named delegates beside the active profile, never from repository cwd', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'delegate-profile-bundle-'))
+    const owner = join(dir, 'owner.yaml')
+    const worker = join(dir, 'worker.yaml')
+    writeFileSync(owner, 'name: owner')
+    writeFileSync(worker, 'name: worker')
+    expect(findProfilePath('worker', { profile_path: owner })).toBe(worker)
   })
 
   it('returns error when delegateDepth >= 1 (max depth exceeded)', async () => {

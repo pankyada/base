@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
 import { homedir } from 'os'
 import { ToolDefinition, ToolContext, AgentLoopEvents } from '../types.js'
 import { loadProfile } from '../../profiles/loader.js'
@@ -13,9 +13,9 @@ import { loadAllSkills, resolveSkillsDirs } from '../../skills/loader.js'
 import { buildSkillIndex } from '../../skills/indexer.js'
 import { runAgentLoop } from '../../loop/agent-loop.js'
 
-function findProfilePath(name: string): string | null {
+export function findProfilePath(name: string, profile?: { profile_path?: string }): string | null {
   const candidates = [
-    resolve(process.cwd(), 'profiles', `${name}.yaml`),
+    ...(profile?.profile_path ? [resolve(dirname(profile.profile_path), `${name}.yaml`)] : []),
     resolve(homedir(), '.harness', 'profiles', `${name}.yaml`),
   ]
   for (const p of candidates) {
@@ -44,11 +44,11 @@ export const delegateTool: ToolDefinition = {
     }
 
     // Profile discovery
-    const profilePath = findProfilePath(profileName)
+    const profilePath = findProfilePath(profileName, context.profile)
     if (!profilePath) {
       return (
         `Error: profile "${profileName}" not found. ` +
-        `Searched: profiles/${profileName}.yaml, ~/.harness/profiles/${profileName}.yaml`
+        `Searched: sibling of the active profile, ~/.harness/profiles/${profileName}.yaml`
       )
     }
 

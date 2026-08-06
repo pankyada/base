@@ -43,7 +43,7 @@ if (process.argv[2] === 'audit') {
       console.error(`audit entry ${id} is not undoable`)
       process.exitCode = 1
     } else {
-      const candidates = [resolve(process.cwd(), 'profiles', `${entry.profile}.yaml`), resolve(homedir(), '.harness', 'profiles', `${entry.profile}.yaml`)]
+      const candidates = [resolve(homedir(), '.harness', 'profiles', `${entry.profile}.yaml`)]
       const profilePath = candidates.find(existsSync)
       if (entry.undo.kind === 'memory_restore' && !profilePath) {
         console.error(`cannot undo memory entry: profile "${entry.profile}" is unavailable`)

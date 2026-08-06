@@ -1,4 +1,4 @@
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
 import { homedir } from 'os'
 import { Ajv } from 'ajv'
 import type { Profile } from '../profiles/schema.js'
@@ -10,9 +10,9 @@ function untildify(p: string): string {
   return p.startsWith('~') ? p.replace('~', homedir()) : p
 }
 
-function resolvePath(p: string): string {
+function resolvePath(p: string, profile: Profile): string {
   if (p === '$CWD') return process.cwd()
-  return resolve(untildify(p))
+  return resolve(profile.profile_path ? dirname(profile.profile_path) : process.cwd(), untildify(p))
 }
 
 type AgentExecutor = (input: Record<string, unknown>, context: ToolContext) => Promise<string>
@@ -29,7 +29,7 @@ export async function loadAgentTools(profile: Profile): Promise<ToolDefinition[]
       throw new Error(`Duplicate agent name "${entry.name}" in profile "${profile.name}"`)
     }
 
-    const subProfilePath = resolvePath(entry.profile)
+    const subProfilePath = resolvePath(entry.profile, profile)
     const inputValidator = ajv.compile(entry.input)
     const outputValidator = ajv.compile(entry.output)
 

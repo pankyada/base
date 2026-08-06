@@ -85,14 +85,13 @@ async function readBody(req: IncomingMessage): Promise<string> {
 
 export function findProfilePath(name: string): string | null {
   const candidates = [
-    resolve(process.cwd(), 'profiles', `${name}.yaml`),
     resolve(homedir(), '.harness', 'profiles', `${name}.yaml`),
   ]
   return candidates.find(p => existsSync(p)) ?? null
 }
 
 function resolveProfile(name: string | undefined, deps: RestDeps): Profile | null {
-  if (!name) return deps.defaultProfile
+  if (!name || name === deps.defaultProfile.name) return deps.defaultProfile
   const registered = deps.profiles?.get(name)
   if (registered) return registered
   const path = findProfilePath(name)
@@ -373,13 +372,7 @@ async function handleAssignSession(req: IncomingMessage, res: ServerResponse, se
 }
 
 async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: RestDeps, profileName: string): Promise<void> {
-  const profilePath = findProfilePath(profileName)
-  let profile: Profile | null = null
-  try {
-    profile = profilePath ? loadProfile(profilePath) : (deps.defaultProfile.name === profileName ? deps.defaultProfile : null)
-  } catch (e) {
-    // falls through to 404
-  }
+  const profile = resolveProfile(profileName, deps)
 
   if (!profile || profile.triggers?.webhook !== true) {
     return sendJson(res, 404, { error: `webhook not found: ${profileName}` })

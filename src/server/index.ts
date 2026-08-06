@@ -167,10 +167,7 @@ async function main() {
   const stalledRequeued: string[] = []
   for (const run of stalledRuns) {
     const registeredProfile = profiles.get(run.profile)
-    const candidates = [
-      resolve(process.cwd(), 'profiles', `${run.profile}.yaml`),
-      resolve(homedir(), '.harness', 'profiles', `${run.profile}.yaml`),
-    ]
+    const candidates = [resolve(homedir(), '.harness', 'profiles', `${run.profile}.yaml`)]
     const runProfilePath = registeredProfile ? undefined : candidates.find(p => existsSync(p))
     if (!registeredProfile && !runProfilePath) {
       runStore.update(run.id, { status: 'failed', error: 'profile not found on restart', finished_at: new Date().toISOString() })
