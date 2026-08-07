@@ -6,6 +6,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["--yes", "serve", "-l", "8765", "/Users/pankajkumaryadav/Desktop/development/base/.claude/worktrees/architecture-site/docs/architecture-site"],
       "port": 8765
+    },
+    {
+      "name": "docs-site",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "harness-docs", "preview", "--port", "4174"],
+      "port": 4174
     }
   ]
 }

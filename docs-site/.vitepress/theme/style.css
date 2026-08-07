@@ -1,0 +1,448 @@
+/* ==========================================================================
+   Harness docs — design system
+   Grounded in the product's own visual language: the ink background and
+   layer-accent hues already used by the interactive architecture explorer
+   (docs/architecture-site), and Space Grotesk as the shared display face.
+   ========================================================================== */
+
+:root {
+  --h-ink: #0b0d17;
+  --h-ink-soft: #10131f;
+  --h-ink-elv: #161a2c;
+
+  --h-blue: #2563eb;
+  --h-green: #059669;
+  --h-red: #dc2626;
+  --h-violet: #7c3aed;
+  --h-amber: #b45309;
+
+  --h-text: #e9ebf4;
+  --h-text-muted: #939ab3;
+
+  --h-font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --h-font-mono: 'JetBrains Mono', var(--vp-font-family-mono);
+
+  --h-grid-size: 44px;
+  --h-grid-image: radial-gradient(color-mix(in srgb, var(--h-text-muted) 65%, transparent) 1.4px, transparent 1.4px);
+}
+
+/* ---- brand + surface mapping onto VitePress tokens ---------------------- */
+
+.dark {
+  --vp-c-bg: var(--h-ink);
+  --vp-c-bg-alt: var(--h-ink-soft);
+  --vp-c-bg-elv: var(--h-ink-elv);
+  --vp-c-bg-soft: var(--h-ink-soft);
+
+  --vp-c-brand-1: #6d8dff;
+  --vp-c-brand-2: var(--h-blue);
+  --vp-c-brand-3: #4f6fe0;
+  --vp-c-brand-soft: rgba(37, 99, 235, 0.16);
+
+  --vp-c-text-1: var(--h-text);
+  --vp-c-text-2: var(--h-text-muted);
+
+  --vp-home-hero-name-background: linear-gradient(120deg, #7c9bff 0%, #a78bfa 55%, #f0abfc 100%);
+  --vp-home-hero-name-color: transparent;
+}
+
+:root:not(.dark) {
+  --vp-c-brand-1: #3151d3;
+  --vp-c-brand-2: var(--h-blue);
+  --vp-c-brand-3: #1d3fae;
+  --vp-c-brand-soft: rgba(37, 99, 235, 0.1);
+
+  --vp-home-hero-name-background: linear-gradient(120deg, #2547c9 0%, #6d28d9 100%);
+  --vp-home-hero-name-color: transparent;
+}
+
+.VPButton.brand,
+.VPButton.brand:hover {
+  --vp-button-brand-bg: var(--h-blue);
+  --vp-button-brand-hover-bg: #3b74f6;
+}
+
+/* ---- type ---------------------------------------------------------------- */
+
+.VPNavBarTitle .title,
+.VPHero .name,
+.VPHero .text,
+h1, h2, h3,
+.VPFeature .title {
+  font-family: var(--h-font-display);
+  letter-spacing: -0.01em;
+}
+
+:root {
+  --vp-font-family-mono: var(--h-font-mono);
+}
+
+code, pre, kbd, .vp-doc div[class*='language-'] {
+  font-family: var(--h-font-mono) !important;
+}
+
+/* ==========================================================================
+   Site-wide texture — a faint trace grid painted on the body itself via
+   background-attachment:fixed. Deliberately not a separate position:fixed
+   element: stacking a second full-viewport fixed layer next to the nav's
+   own fixed layer causes a real compositing bug (nav appears to scroll
+   with content) in Chromium-family browsers. A single background layer on
+   body has no such risk and needs no extra DOM.
+   ========================================================================== */
+
+body {
+  background-color: var(--vp-c-bg);
+  background-image: var(--h-grid-image);
+  background-size: var(--h-grid-size) var(--h-grid-size);
+  background-attachment: fixed;
+  background-position: center top;
+}
+
+/* .VPSidebar defaults to --vp-c-bg-alt (a different, flat shade with no
+   texture) which reads as a disconnected opaque panel next to the
+   textured body. Paint the identical grid at the identical viewport-fixed
+   position so the lines run continuously across the seam. */
+.VPSidebar,
+.VPNavBar {
+  background-color: var(--h-ink) !important;
+  background-image: var(--h-grid-image);
+  background-size: var(--h-grid-size) var(--h-grid-size);
+  background-attachment: fixed;
+  background-position: center top;
+}
+
+:root:not(.dark) .VPSidebar,
+:root:not(.dark) .VPNavBar {
+  background-color: var(--vp-c-bg) !important;
+}
+
+/* ==========================================================================
+   Hero signal — glow + traveling "packet" pulses, scoped to the hero only.
+   Absolutely positioned within .VPHero's own stacking context (not
+   viewport-fixed), so it scrolls away with the hero and never touches nav.
+   ========================================================================== */
+
+/* HeroSignal renders via the home-hero-before slot, which places it as a
+   sibling immediately BEFORE .VPHero, both children of .VPHome. Kept flush
+   with the viewport edges (no negative inset) rather than relying on an
+   ancestor to clip a bleed — VitePress's own scoped component styles can
+   win the cascade against a global overflow:hidden on .VPHome. */
+.h-hero-signal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: min(880px, 100vh);
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.VPHero {
+  position: relative;
+  z-index: 1;
+}
+
+.h-hero-glow {
+  position: absolute;
+  width: 38vmax;
+  height: 38vmax;
+  max-width: 640px;
+  max-height: 640px;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.22;
+  animation: h-drift 32s ease-in-out infinite alternate;
+}
+
+:root:not(.dark) .h-hero-glow {
+  opacity: 0.14;
+  filter: blur(100px);
+}
+
+.h-hero-glow--blue {
+  top: -8%;
+  left: -6%;
+  background: var(--h-blue);
+  animation-duration: 28s;
+}
+
+.h-hero-glow--red {
+  top: 4%;
+  right: -8%;
+  background: var(--h-red);
+  animation-duration: 36s;
+  animation-delay: -8s;
+}
+
+.h-hero-glow--violet {
+  bottom: -12%;
+  left: 30%;
+  background: var(--h-violet);
+  animation-duration: 42s;
+  animation-delay: -18s;
+}
+
+@keyframes h-drift {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(3vmax, 2vmax) scale(1.06); }
+}
+
+.h-hero-pulses {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.45;
+}
+
+.h-hero-pulses path {
+  fill: none;
+  stroke: none;
+}
+
+.h-hero-pulse {
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+.h-hero-pulse--blue { fill: var(--h-blue); color: var(--h-blue); }
+.h-hero-pulse--violet { fill: var(--h-violet); color: var(--h-violet); }
+
+@media (prefers-reduced-motion: reduce) {
+  .h-hero-glow { animation: none; }
+  .h-hero-pulses { display: none; }
+}
+
+@media (max-width: 768px) {
+  .h-hero-glow { width: 60vmax; height: 60vmax; filter: blur(60px); }
+}
+
+/* ==========================================================================
+   Hero
+   ========================================================================== */
+
+.VPHero .name {
+  background-size: 200% auto;
+  animation: h-hero-sheen 8s ease-in-out infinite alternate;
+}
+
+@keyframes h-hero-sheen {
+  from { background-position: 0% center; }
+  to   { background-position: 100% center; }
+}
+
+.VPHero .actions {
+  position: relative;
+}
+
+.VPHero .actions::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -28px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--vp-c-divider) 15%, var(--vp-c-divider) 85%, transparent);
+}
+
+.VPButton {
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+.VPButton.brand:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px -8px rgba(37, 99, 235, 0.55);
+}
+
+.VPButton.alt:hover {
+  transform: translateY(-2px);
+}
+
+.VPButton:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .VPHero .name { animation: none; }
+}
+
+/* ==========================================================================
+   Feature cards — top accent maps to the same layer taxonomy used in the
+   architecture explorer (safety=red, automation/memory=amber,
+   extensibility=violet, core=green, product surface=blue).
+   ========================================================================== */
+
+.VPFeatures .item:nth-child(1) .VPFeature  { --card-accent: var(--h-blue); }
+.VPFeatures .item:nth-child(2) .VPFeature  { --card-accent: var(--h-red); }
+.VPFeatures .item:nth-child(3) .VPFeature  { --card-accent: var(--h-red); }
+.VPFeatures .item:nth-child(4) .VPFeature  { --card-accent: var(--h-amber); }
+.VPFeatures .item:nth-child(5) .VPFeature  { --card-accent: var(--h-amber); }
+.VPFeatures .item:nth-child(6) .VPFeature  { --card-accent: var(--h-red); }
+.VPFeatures .item:nth-child(7) .VPFeature  { --card-accent: var(--h-amber); }
+.VPFeatures .item:nth-child(8) .VPFeature  { --card-accent: var(--h-amber); }
+.VPFeatures .item:nth-child(9) .VPFeature  { --card-accent: var(--h-violet); }
+.VPFeatures .item:nth-child(10) .VPFeature { --card-accent: var(--h-violet); }
+.VPFeatures .item:nth-child(11) .VPFeature { --card-accent: var(--h-blue); }
+.VPFeatures .item:nth-child(12) .VPFeature { --card-accent: var(--h-green); }
+
+.VPFeature {
+  --card-accent: var(--h-blue);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.22s ease, box-shadow 0.22s ease;
+}
+
+.VPFeature::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--card-accent);
+  opacity: 0.85;
+  transform: scaleX(0.4);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+
+.VPFeature:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--card-accent) 55%, var(--vp-c-border));
+  box-shadow: 0 16px 32px -18px color-mix(in srgb, var(--card-accent) 60%, transparent);
+}
+
+.VPFeature:hover::before {
+  transform: scaleX(1);
+}
+
+.VPFeature .icon {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.VPFeature:hover .icon {
+  transform: scale(1.12) rotate(-4deg);
+}
+
+/* ==========================================================================
+   Nav + sidebar
+   ========================================================================== */
+
+.VPNavBar {
+  backdrop-filter: saturate(140%) blur(10px);
+}
+
+.VPNavBar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--h-blue), var(--h-violet), var(--h-red));
+  opacity: 0.35;
+}
+
+.VPNavBarMenuLink {
+  position: relative;
+}
+
+.VPNavBarMenuLink.active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--vp-c-brand-1);
+}
+
+.VPSidebarItem.is-active > .item .text {
+  color: var(--vp-c-brand-1);
+}
+
+.VPSidebarItem .indicator {
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.VPSidebarItem.is-active > .item .indicator {
+  background-color: var(--vp-c-brand-1);
+  transform: scaleY(1);
+}
+
+/* ==========================================================================
+   Content polish
+   ========================================================================== */
+
+.vp-doc div[class*='language-'] {
+  border-radius: 10px;
+  box-shadow: 0 1px 0 0 var(--vp-c-divider) inset;
+}
+
+.vp-doc table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.vp-doc a:not(.header-anchor):not(.VPButton) {
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--h-blue) 35%, transparent);
+}
+
+/* thin, accent-tinted scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--vp-c-text-3) 40%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--h-blue) 55%, var(--vp-c-text-3));
+  background-clip: content-box;
+}
+
+/* visible, on-brand focus ring — accessibility floor, not decoration */
+a:focus-visible,
+button:focus-visible,
+.VPButton:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--h-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   Scroll reveal
+   ========================================================================== */
+
+.h-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.5s cubic-bezier(0.2, 0.7, 0.2, 1), transform 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.h-reveal-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .h-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
