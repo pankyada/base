@@ -5,6 +5,8 @@ surface.
 
 Licensed under the [MIT License](LICENSE).
 
+Architecture, features, and usage examples: [docs-site/architecture.md](docs-site/architecture.md).
+
 ```bash
 pnpm install
 pnpm tui

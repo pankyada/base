@@ -8,10 +8,12 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/getting-started' },
+      { text: 'Architecture', link: '/architecture' },
       { text: 'Reference', link: '/profiles' },
     ],
     sidebar: [
       { text: 'Getting Started', link: '/getting-started' },
+      { text: 'Architecture', link: '/architecture' },
       {
         text: 'Reference',
         items: [
@@ -33,7 +35,7 @@ export default defineConfig({
       { icon: 'github', link: 'https://github.com/pankyada/base' },
     ],
     footer: {
-      message: 'Released under the ISC License.',
+      message: 'Released under the MIT License.',
     },
   },
 })

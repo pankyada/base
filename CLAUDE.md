@@ -36,6 +36,10 @@ All entry points are in `dist/` after build; binary aliases are `harness`, `harn
 
 This is a **generic agent harness** — a thin WebSocket-based runtime that wires an LLM to tools, skills, memory, MCP servers, and hooks. Everything is profile-driven (YAML).
 
+Canonical operator architecture and usage examples live in
+[`docs-site/architecture.md`](docs-site/architecture.md). Keep its system map
+current when changing a load-bearing runtime boundary.
+
 ### Runtime flow
 
 ```
