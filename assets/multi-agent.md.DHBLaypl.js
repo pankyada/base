@@ -44,7 +44,7 @@ import{c as i,Q as a,j as n,m as t}from"./chunks/framework.rlpw0eGz.js";const d=
 <span class="line"><span style="--shiki-light:#22863A;--shiki-dark:#85E89D;">  api_key_env</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">ANTHROPIC_API_KEY</span></span>
 <span class="line"><span style="--shiki-light:#22863A;--shiki-dark:#85E89D;">  id</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">claude-opus-4-8</span></span>
 <span class="line"></span>
-<span class="line"><span style="--shiki-light:#22863A;--shiki-dark:#85E89D;">system_prompt</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">./prompts/research.md</span></span>
+<span class="line"><span style="--shiki-light:#22863A;--shiki-dark:#85E89D;">system_prompt</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">./research.md</span></span>
 <span class="line"><span style="--shiki-light:#22863A;--shiki-dark:#85E89D;">artifact_dir</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">.harness/research</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#22863A;--shiki-dark:#85E89D;">tools</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">:</span></span>
