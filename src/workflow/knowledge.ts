@@ -2,18 +2,28 @@ import OpenAI from 'openai'
 import { z } from 'zod'
 import type { Profile } from '../profiles/schema.js'
 import { resolveRole } from '../profiles/schema.js'
-import type { MemoryLink, MemoryProvider } from '../memory/interface.js'
+import type { MemoryLink, MemoryProvider, TemporalMeta } from '../memory/interface.js'
 import type { Stage } from './types.js'
 
 export interface KnowledgeNode {
   key: string
   type: 'Decision' | 'Constraint' | 'Component' | 'Requirement' | 'Risk' | 'Finding' | 'Followup'
   content: string
+  temporal?: TemporalMeta
 }
 
 const NodeType = z.enum(['Decision', 'Constraint', 'Component', 'Requirement', 'Risk', 'Finding', 'Followup'])
+const TemporalSchema = z.object({
+  valid_from: z.string().optional(),
+  valid_until: z.string().optional(),
+  recur: z.string().optional(),
+  timezone: z.string().optional(),
+  entity: z.string().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  supersedes: z.string().optional(),
+}).strict()
 const ExtractSchema = z.object({
-  nodes: z.array(z.object({ key: z.string().min(1), type: NodeType, content: z.string().min(1) })),
+  nodes: z.array(z.object({ key: z.string().min(1), type: NodeType, content: z.string().min(1), temporal: TemporalSchema.optional() })),
   edges: z.array(z.object({ source: z.string().optional(), target: z.string(), relation: z.enum(['depends_on', 'implements', 'supersedes', 'contradicts', 'generalizes_to', 'evidence_for']) })),
 })
 
@@ -26,7 +36,7 @@ export async function extractKnowledge(artifact: string, stage: Stage, openai: O
   try {
     const response = await (openai.chat.completions as any).create({
       model: resolveRole(profile, 'cheap'),
-      messages: [{ role: 'user', content: `Extract durable project knowledge from this ${stage} artifact. Return ONLY JSON with nodes and typed edges.\n${artifact}` }],
+      messages: [{ role: 'user', content: `Extract durable project knowledge from this ${stage} artifact. Return ONLY JSON with nodes and typed edges. Add optional temporal metadata only when the artifact gives a clear explicit signal; use ISO-8601 timestamps with offsets and do not infer dates or recurrence.\n${artifact}` }],
       max_tokens: 500,
       temperature: 0,
     })
@@ -56,7 +66,7 @@ export async function persistKnowledge(memory: MemoryProvider, nodes: KnowledgeN
       }
       links.push({ source: node.key, target: node.key, relation: 'knowledge-type:Decision' })
     }
-    await memory.write('project', node.key, node.content, dedupeLinks(links))
+    await memory.write('project', node.key, node.content, dedupeLinks(links), node.temporal ?? existing?.temporal)
   }
 }
 

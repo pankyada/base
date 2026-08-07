@@ -113,13 +113,19 @@ type Model struct {
 	gitBusy    string // git action in flight, "" when idle
 	gitConfirm string // git action armed, awaiting a second click
 
-	tasks           []Task
-	tasksDetected   bool // tasks came from heuristics, not from tasks.json
-	taskRuns        map[string]*TaskRun
-	taskCursor      int
-	taskEditing     bool
-	taskEditor      textarea.Model
-	taskEditorError string
+	tasks               []Task
+	tasksDetected       bool // tasks came from heuristics, not from tasks.json
+	taskRuns            map[string]*TaskRun
+	taskCursor          int
+	taskEditing         bool
+	taskEditor          textarea.Model
+	taskEditorError     string
+	pendingQueue        []protocol.PendingInput
+	pendingCursor       int
+	pendingAnswering    bool
+	pendingOptionCursor int
+	pendingSelected     map[int]bool
+	pendingAnswerInput  textinput.Model
 
 	// Rail render and hit map are produced together in reflow so a click can
 	// never be resolved against a different layout than the one on screen.
@@ -134,30 +140,36 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 	skillEditor.ShowLineNumbers = false
 	taskEditor := textarea.New()
 	taskEditor.ShowLineNumbers = false
+	pendingAnswerInput := textinput.New()
+	pendingAnswerInput.Prompt = "› "
+	pendingAnswerInput.Placeholder = "type response"
+	pendingAnswerInput.CharLimit = 4096
 	modelInput := textinput.New()
 	modelInput.Prompt = "custom id › "
 	modelInput.CharLimit = 200
 	viewportModel := viewport.New(80, 16)
 	m := Model{
-		sender:         sender,
-		composer:       composer,
-		viewport:       viewportModel,
-		skillEditor:    skillEditor,
-		taskEditor:     taskEditor,
-		taskRuns:       map[string]*TaskRun{},
-		workflowStages: map[string]StageItem{},
-		stageCosts:     map[string]float64{},
-		modelInput:     modelInput,
-		keys:           NewKeyMap(),
-		prefs:          preferences,
-		profile:        profile,
-		model:          "connecting",
-		workingDir:     ".",
-		approvalMode:   "danger",
-		userID:         userID,
-		follow:         true,
-		width:          80,
-		height:         24,
+		sender:             sender,
+		composer:           composer,
+		viewport:           viewportModel,
+		skillEditor:        skillEditor,
+		taskEditor:         taskEditor,
+		pendingAnswerInput: pendingAnswerInput,
+		pendingSelected:    map[int]bool{},
+		taskRuns:           map[string]*TaskRun{},
+		workflowStages:     map[string]StageItem{},
+		stageCosts:         map[string]float64{},
+		modelInput:         modelInput,
+		keys:               NewKeyMap(),
+		prefs:              preferences,
+		profile:            profile,
+		model:              "connecting",
+		workingDir:         ".",
+		approvalMode:       "danger",
+		userID:             userID,
+		follow:             true,
+		width:              80,
+		height:             24,
 	}
 	if mode := preferences.ApprovalModeByProfile[profile]; mode == "strict" || mode == "bash" || mode == "danger" || mode == "yolo" {
 		m.approvalMode = mode
@@ -941,6 +953,9 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlayTab == "tasks" && m.taskEditing {
 		return m.updateTaskEditor(msg)
 	}
+	if m.overlayTab == "inbox" && m.pendingAnswering {
+		return m.updatePendingAnswer(msg)
+	}
 	if m.overlayTab == "skills" && msg.String() == "esc" && m.skillConfirm != "" {
 		m.skillConfirm = ""
 		m.reflow()
@@ -972,6 +987,9 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.overlayTab == "tasks" {
 		return m.updateTasksTab(msg)
+	}
+	if m.overlayTab == "inbox" {
+		return m.updateInboxTab(msg)
 	}
 	if msg.String() == "right" {
 		m.cycleOverlay(1)
@@ -1087,6 +1105,136 @@ func (m Model) updateTasksTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateInboxTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.overlayOpen = false
+	case "left":
+		m.cycleOverlay(-1)
+	case "right":
+		m.cycleOverlay(1)
+	case "up":
+		if m.pendingCursor > 0 {
+			m.pendingCursor--
+		}
+	case "down":
+		if m.pendingCursor < len(m.pendingQueue)-1 {
+			m.pendingCursor++
+		}
+	case "enter":
+		m.beginPendingAnswer()
+	}
+	m.reflow()
+	return m, nil
+}
+
+func (m Model) updatePendingAnswer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "esc" {
+		m.pendingAnswering = false
+		m.pendingAnswerInput.Blur()
+		m.reflow()
+		return m, nil
+	}
+	item, ok := m.selectedPending()
+	if !ok {
+		m.pendingAnswering = false
+		m.reflow()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	switch item.Kind {
+	case "text":
+		if msg.String() == "enter" {
+			m.submitPendingAnswer()
+		} else {
+			m.pendingAnswerInput, cmd = m.pendingAnswerInput.Update(msg)
+		}
+	case "select":
+		switch msg.String() {
+		case "up":
+			if m.pendingOptionCursor > 0 {
+				m.pendingOptionCursor--
+			}
+			m.setPendingOptionValue(item)
+		case "down":
+			if m.pendingOptionCursor < len(item.Options)-1 {
+				m.pendingOptionCursor++
+			}
+			m.setPendingOptionValue(item)
+		case "enter":
+			m.submitPendingAnswer()
+		}
+	case "multi_select":
+		switch msg.String() {
+		case "up":
+			if m.pendingOptionCursor > 0 {
+				m.pendingOptionCursor--
+			}
+		case "down":
+			if m.pendingOptionCursor < len(item.Options)-1 {
+				m.pendingOptionCursor++
+			}
+		case " ":
+			m.pendingSelected[m.pendingOptionCursor] = !m.pendingSelected[m.pendingOptionCursor]
+		case "enter":
+			m.submitPendingAnswer()
+		}
+	}
+	m.reflow()
+	return m, cmd
+}
+
+func (m *Model) beginPendingAnswer() {
+	item, ok := m.selectedPending()
+	if !ok {
+		return
+	}
+	m.pendingAnswering = true
+	m.pendingOptionCursor = 0
+	m.pendingSelected = map[int]bool{}
+	m.pendingAnswerInput.Blur()
+	m.pendingAnswerInput.SetValue("")
+	if item.Kind == "text" {
+		m.pendingAnswerInput.Focus()
+	} else if item.Kind == "select" && len(item.Options) > 0 {
+		m.setPendingOptionValue(item)
+	}
+}
+
+func (m Model) selectedPending() (protocol.PendingInput, bool) {
+	if m.pendingCursor < 0 || m.pendingCursor >= len(m.pendingQueue) {
+		return protocol.PendingInput{}, false
+	}
+	return m.pendingQueue[m.pendingCursor], true
+}
+
+func (m *Model) setPendingOptionValue(item protocol.PendingInput) {
+	if m.pendingOptionCursor >= 0 && m.pendingOptionCursor < len(item.Options) {
+		m.pendingAnswerInput.SetValue(item.Options[m.pendingOptionCursor])
+	}
+}
+
+func (m *Model) submitPendingAnswer() {
+	item, ok := m.selectedPending()
+	if !ok {
+		return
+	}
+	value, valid := pendingAnswerValue(item, m.pendingOptionCursor, m.pendingAnswerInput.Value(), m.pendingSelected)
+	if !valid {
+		m.notices.Add(NoticeError, "answer not valid", "choose one of the listed options", "")
+		return
+	}
+	m.send(protocol.PendingAnswer(item.ID, value))
+	m.pendingQueue = append(m.pendingQueue[:m.pendingCursor], m.pendingQueue[m.pendingCursor+1:]...)
+	if m.pendingCursor >= len(m.pendingQueue) {
+		m.pendingCursor = maxInt(0, len(m.pendingQueue)-1)
+	}
+	m.pendingAnswering = false
+	m.pendingAnswerInput.Blur()
+	m.pendingAnswerInput.SetValue("")
+	m.pendingSelected = map[int]bool{}
+}
+
 func (m Model) updateSkillEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" {
 		if m.skillEditor.Value() != m.skillPreview && !m.skillEditorConfirm {
@@ -1185,6 +1333,11 @@ func (m *Model) primeOverlayTab() {
 		m.taskEditorError = ""
 		m.taskEditor.Blur()
 		m.refreshProject()
+	case "inbox":
+		m.pendingAnswering = false
+		m.pendingAnswerInput.Blur()
+		m.pendingCursor = minInt(m.pendingCursor, maxInt(0, len(m.pendingQueue)-1))
+		m.send(protocol.PendingList())
 	}
 }
 
@@ -1422,6 +1575,8 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		default:
 			m.notices.Add(NoticeError, "unknown tasks action", action, "list · edit · detect · ask · run <id> · stop <id>")
 		}
+	case "inbox":
+		m.openOverlay("inbox")
 	default:
 		m.notices.Add(NoticeError, "unknown command", "/"+command, slashHelp())
 	}
@@ -1529,6 +1684,11 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.notices.Add(NoticeInfo, "model changed", msg.Model, "")
 	case "todos":
 		m.todos = msg.Todos
+	case "pending":
+		m.pendingQueue = append([]protocol.PendingInput{}, msg.Pending...)
+		if m.pendingCursor >= len(m.pendingQueue) {
+			m.pendingCursor = maxInt(0, len(m.pendingQueue)-1)
+		}
 	case "artifacts":
 		m.artifacts = append(m.artifacts, msg.Artifacts...)
 	case "skills":
@@ -1822,6 +1982,8 @@ func (m Model) View() string {
 			body = skillsTab(m.proposedSkills, m.installedSkills, m.skillCursor, m.skillPreview, m.skillPreviewOffset, m.skillEditing, m.skillEditor.View(), m.skillEditorError, m.width)
 		} else if m.overlayTab == "tasks" {
 			body = tasksTab(m.tasks, m.taskCursor, m.taskStates(), m.tasksDetected, taskConfigPath(m.workingDir), m.taskEditing, m.taskEditor.View(), m.taskEditorError, m.width)
+		} else if m.overlayTab == "inbox" {
+			body = pendingInboxViewState(m.pendingQueue, m.pendingCursor, m.pendingAnswering, m.pendingAnswerInput.Value(), m.pendingOptionCursor, m.pendingSelected, m.width, m.height)
 		}
 		return Center(background, tabsView(m.overlayTab, m.width, m.height, body), m.width, m.height)
 	}

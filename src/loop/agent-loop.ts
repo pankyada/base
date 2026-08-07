@@ -76,7 +76,7 @@ export async function runAgentLoop(
     isMcp: boolean,
     auditDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } = { decision: 'allow', decided_by: 'default', reason: 'tool executed' },
   ): Promise<ToolResult> => {
-    context.budget?.checkTool()
+    context.budget?.checkTool(tc.name, context.session.usage.cost_usd)
     await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
 
     const toolDef = allTools.find(t => t.name === tc.name)
@@ -121,7 +121,7 @@ export async function runAgentLoop(
 
   while (true) {
     if (signal?.aborted) return
-    context.budget?.checkModel(session.usage.cost_usd)
+    context.budget?.checkModel(session.usage.cost_usd, modelId)
 
     if (resumeApproval) {
       const approval = resumeApproval
@@ -218,6 +218,9 @@ export async function runAgentLoop(
     session.usage.input += tokensIn
     session.usage.output += tokensOut
     session.usage.cost_usd += cost
+    // A provider response can cross the ceiling; abort before any returned
+    // tool call executes or a final over-budget turn is accepted.
+    context.budget?.checkModel(session.usage.cost_usd, modelId)
     events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(projectedMessages, session))
     logEvent({
       session: session.id, profile: profile.name, kind: 'llm',

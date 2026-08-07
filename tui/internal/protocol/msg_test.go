@@ -39,6 +39,13 @@ func TestDecodeTodos(t *testing.T) {
 	}
 }
 
+func TestDecodePending(t *testing.T) {
+	m, err := DecodeServer([]byte(`{"type":"pending","pending":[{"id":"p1","run_id":"r1","session_id":"s1","user":"alice","profile":"p","prompt":"Pick","kind":"select","options":["a","b"],"created_at":"2026-08-07T00:00:00Z","expires_at":"2026-08-08T00:00:00Z","state":"open","answered_at":null}]}`))
+	if err != nil || len(m.Pending) != 1 || m.Pending[0].ID != "p1" || m.Pending[0].Options[1] != "b" {
+		t.Fatalf("decoded=%+v err=%v", m, err)
+	}
+}
+
 func TestEncodeClientHello(t *testing.T) {
 	b, err := json.Marshal(Hello("alice"))
 	if err != nil {
@@ -72,6 +79,8 @@ func TestEncodeRevampClientMessages(t *testing.T) {
 		{"skill_discard", SkillDiscard("linting"), `{"type":"skill_discard","name":"linting"}`},
 		{"skills_mine", SkillsMine(), `{"type":"skills_mine"}`},
 		{"compact", Compact(), `{"type":"compact"}`},
+		{"pending_list", PendingList(), `{"type":"pending_list"}`},
+		{"pending_answer", PendingAnswer("p1", "evening"), `{"type":"pending_answer","pending_id":"p1","value":"evening"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -3,7 +3,8 @@ import { join } from 'path'
 import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths, projectPaths } from '../session/user-paths.js'
-import { imminentEntries, queryEntries, validateTemporal } from './query.js'
+import { imminentEntries, queryEntries } from './query.js'
+import { validateTemporal } from './temporal.js'
 
 interface GraphNode {
   key: string

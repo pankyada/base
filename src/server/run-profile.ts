@@ -17,7 +17,9 @@ import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import type { ChannelRuntime } from '../channels/runtime.js'
 import type { PendingStore } from '../runs/pending.js'
 import { isParkSignal } from '../runs/park.js'
+import { BudgetExceeded } from '../runs/budget.js'
 import type { RunBudget } from '../runs/budget.js'
+import { audit } from '../audit/journal.js'
 
 export interface RestUsage { tokens_in: number; tokens_out: number; cost_usd: number }
 
@@ -107,8 +109,8 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       session,
     }
   } catch (error) {
-    if (isParkSignal(error)) {
-      error.sessionId = session.id
+    if (isParkSignal(error) || error instanceof BudgetExceeded) {
+      if (isParkSignal(error)) error.sessionId = session.id
       saveSession(session)
       const delta = {
         input: session.usage.input - usageBefore.input,
@@ -116,6 +118,26 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
         cost_usd: session.usage.cost_usd - usageBefore.cost_usd,
       }
       recordUsage(user, delta)
+    }
+    if (error instanceof BudgetExceeded) {
+      audit({
+        run_id: opts.runId,
+        session_id: session.id,
+        user,
+        profile: profile.name,
+        tool: error.in_flight,
+        input: { budget_reason: error.reason, spent: error.spent, limit: error.limit },
+        effect: 'destructive',
+        decision: 'deny',
+        decided_by: 'gate',
+        decided_reason: `autonomy budget exceeded before ${error.in_flight}: ${error.reason}`,
+        tainted: (session.taint_sources?.length ?? 0) > 0,
+        ok: false,
+      })
+      await channels?.send(user, undefined, {
+        text: `Run stopped: autonomy budget exceeded (${error.reason}). Spent ${error.spent.cost_usd.toFixed(4)} USD, ${error.spent.tools} tools, ${error.spent.wall_s.toFixed(1)}s; in flight: ${error.in_flight}.`,
+        urgency: 'high',
+      }).catch(() => {})
     }
     throw error
   } finally {

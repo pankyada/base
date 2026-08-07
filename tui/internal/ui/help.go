@@ -27,6 +27,7 @@ func helpView(keys KeyMap, width, height int) string {
 		sectionHeader("project", inner),
 		"click     run a task, or stage/commit/push in the rail",
 		"/tasks    list, edit, detect, run <id>, stop <id>",
+		"/inbox    answer parked questions",
 		"/git      status, stage, unstage, commit <msg>, push, pull, diff, log",
 		"",
 		sectionHeader("global", inner), helpBinding(keys.Quit), "/?      open this popup", "ctrl+x  clear queued messages", "ctrl+r  clear attachments",

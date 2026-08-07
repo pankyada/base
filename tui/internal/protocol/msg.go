@@ -68,6 +68,30 @@ type SkillSummary struct {
 	MTime       string `json:"mtime"`
 }
 
+// PendingInput mirrors PendingInput in src/runs/pending.ts.
+type PendingInput struct {
+	ID          string                 `json:"id"`
+	RunID       string                 `json:"run_id"`
+	SessionID   string                 `json:"session_id"`
+	User        string                 `json:"user"`
+	Profile     string                 `json:"profile"`
+	Prompt      string                 `json:"prompt"`
+	Kind        string                 `json:"kind"`
+	Options     []string               `json:"options,omitempty"`
+	ToolCallID  string                 `json:"tool_call_id,omitempty"`
+	Purpose     string                 `json:"purpose,omitempty"`
+	ToolName    string                 `json:"tool_name,omitempty"`
+	ToolInput   map[string]interface{} `json:"tool_input,omitempty"`
+	IsMCP       bool                   `json:"is_mcp,omitempty"`
+	Channel     string                 `json:"channel,omitempty"`
+	CreatedAt   string                 `json:"created_at"`
+	ExpiresAt   string                 `json:"expires_at"`
+	State       string                 `json:"state"`
+	Answer      string                 `json:"answer,omitempty"`
+	AnsweredAt  *string                `json:"answered_at"`
+	AnsweredVia string                 `json:"answered_via,omitempty"`
+}
+
 // ServerMessage is a flat envelope over every server->client message.
 // Only the fields relevant to msg.Type are populated.
 type ServerMessage struct {
@@ -118,6 +142,7 @@ type ServerMessage struct {
 	Intensity int              `json:"intensity,omitempty"`
 	Tier      string           `json:"tier,omitempty"`
 	State     string           `json:"state,omitempty"`
+	Pending   []PendingInput   `json:"pending,omitempty"`
 }
 
 // DecodeServer parses one server->client frame.
@@ -159,6 +184,8 @@ func (skillPromoteMsg) isClientMessage()    {}
 func (skillDiscardMsg) isClientMessage()    {}
 func (skillsMineMsg) isClientMessage()      {}
 func (compactMsg) isClientMessage()         {}
+func (pendingListMsg) isClientMessage()     {}
+func (pendingAnswerMsg) isClientMessage()   {}
 
 func Hello(userID string) ClientMessage {
 	return helloMsg{Type: "hello", UserID: userID}
@@ -200,6 +227,22 @@ type compactMsg struct {
 }
 
 func Compact() ClientMessage { return compactMsg{Type: "compact"} }
+
+type pendingListMsg struct {
+	Type string `json:"type"`
+}
+
+func PendingList() ClientMessage { return pendingListMsg{Type: "pending_list"} }
+
+type pendingAnswerMsg struct {
+	Type      string `json:"type"`
+	PendingID string `json:"pending_id"`
+	Value     string `json:"value"`
+}
+
+func PendingAnswer(pendingID, value string) ClientMessage {
+	return pendingAnswerMsg{Type: "pending_answer", PendingID: pendingID, Value: value}
+}
 
 type skillsListMsg struct {
 	Type string `json:"type"`

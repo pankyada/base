@@ -1,103 +1,133 @@
 import type { MemoryEntry, RecallQuery, TemporalMeta } from './interface.js'
-import { expandRecurrence } from './recurrence.js'
+import { isImminent, isValidAt, overlapsWindow, parseTimestamp, validateTemporal, validitySpecificity } from './temporal.js'
 
 function parseAt(value?: string): Date {
-  const at = value ? new Date(value) : new Date()
-  if (Number.isNaN(at.getTime())) throw new Error(`invalid recall time "${value}"`)
-  return at
+  if (!value) return new Date()
+  return parseQueryTimestamp(value, 'recall at')
 }
 
-function windowFor(query: RecallQuery, at: Date): { from: Date; to: Date } | undefined {
-  if (!query.window) return undefined
-  const range = /^(\d{4}-\d{2}-\d{2}(?:T[^.]+(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?)\.\.(\d{4}-\d{2}-\d{2}(?:T[^.]+(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?)$/.exec(query.window)
-  if (range) return { from: parseAt(range[1]), to: parseAt(range[2]) }
-  const relative = /^(next|last)\s+(\d+)d$/.exec(query.window.trim().toLowerCase())
-  if (!relative) throw new Error(`invalid recall window "${query.window}"`)
-  const delta = Number(relative[2]) * 86_400_000
-  return relative[1] === 'next' ? { from: at, to: new Date(at.getTime() + delta) } : { from: new Date(at.getTime() - delta), to: at }
+function parseQueryTimestamp(value: string, field: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const date = new Date(`${value}T00:00:00.000Z`)
+    if (!Number.isNaN(date.getTime())) return date
+  }
+  return parseTimestamp(value, field)
+}
+
+function parseWindow(value: string, at: Date): { from: Date; to: Date } {
+  const relative = /^(next|last)\s+(\d+)d$/i.exec(value.trim())
+  if (relative) {
+    const delta = Number(relative[2]) * 86_400_000
+    return relative[1].toLowerCase() === 'next'
+      ? { from: at, to: new Date(at.getTime() + delta) }
+      : { from: new Date(at.getTime() - delta), to: at }
+  }
+  const separator = value.indexOf('..')
+  if (separator > 0 && value.indexOf('..', separator + 2) === -1) {
+    return {
+      from: parseQueryTimestamp(value.slice(0, separator), 'window start'),
+      to: parseQueryTimestamp(value.slice(separator + 2), 'window end'),
+    }
+  }
+  throw new Error(`invalid recall window "${value}"`)
 }
 
 function dateOr(value: string | undefined, fallback: number): number {
-  if (!value) return fallback
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) throw new Error(`temporal timestamp must be ISO-8601 with offset: "${value}"`)
-  return date.getTime()
+  return value ? parseTimestamp(value).getTime() : fallback
 }
 
-export function validateTemporal(meta: TemporalMeta | undefined): void {
-  if (!meta) return
-  for (const value of [meta.valid_from, meta.valid_until]) {
-    if (value && !/(Z|[+-]\d{2}:\d{2})$/.test(value)) throw new Error(`temporal timestamp needs an explicit offset: "${value}"`)
-    if (value && Number.isNaN(new Date(value).getTime())) throw new Error(`invalid temporal timestamp: "${value}"`)
-  }
-  if (meta.valid_from && meta.valid_until && new Date(meta.valid_until).getTime() < new Date(meta.valid_from).getTime()) throw new Error('valid_until must not precede valid_from')
-  if (meta.confidence !== undefined && (meta.confidence < 0 || meta.confidence > 1 || !Number.isFinite(meta.confidence))) throw new Error('confidence must be between 0 and 1')
-  if (meta.timezone) {
-    try { new Intl.DateTimeFormat('en-US', { timeZone: meta.timezone }).format() } catch { throw new Error(`invalid IANA timezone: "${meta.timezone}"`) }
-  }
-  if (meta.recur && !meta.valid_from) throw new Error('recur requires valid_from with offset')
-  if (meta.recur && meta.valid_from) expandRecurrence(meta.recur, meta.valid_from, new Date(meta.valid_from), new Date(new Date(meta.valid_from).getTime() + 86_400_000), 1, meta.timezone)
+function lexicalScore(entry: MemoryEntry, text?: string): number {
+  if (!text) return 0
+  const haystack = `${entry.key} ${entry.content ?? entry.preview}`.toLowerCase()
+  const needle = text.toLowerCase().trim()
+  if (!needle) return 0
+  let score = 0
+  let offset = 0
+  while ((offset = haystack.indexOf(needle, offset)) !== -1) { score++; offset += needle.length }
+  return score
 }
 
-function activeAt(meta: TemporalMeta | undefined, at: Date): boolean {
-  if (!meta?.recur) return at.getTime() >= dateOr(meta?.valid_from, Number.NEGATIVE_INFINITY) && at.getTime() <= dateOr(meta?.valid_until, Number.POSITIVE_INFINITY)
-  const start = new Date(meta.valid_from!)
-  const duration = meta.valid_until ? Math.max(1, new Date(meta.valid_until).getTime() - start.getTime()) : 86_400_000
-  return expandRecurrence(meta.recur, meta.valid_from!, new Date(at.getTime() - duration), new Date(at.getTime() + 1), 366, meta.timezone)
-    .some(occurrence => occurrence.getTime() <= at.getTime() && at.getTime() < occurrence.getTime() + duration)
+function entityMatches(entity: string | undefined, query?: string): boolean {
+  if (!query) return true
+  return entity === query || (query.endsWith('/') && entity !== undefined && entity.startsWith(query))
 }
 
-function overlaps(meta: TemporalMeta | undefined, from: Date, to: Date): boolean {
-  if (!meta?.recur) return dateOr(meta?.valid_from, Number.NEGATIVE_INFINITY) < to.getTime() && dateOr(meta?.valid_until, Number.POSITIVE_INFINITY) >= from.getTime()
-  const start = new Date(meta.valid_from!)
-  const duration = meta.valid_until ? Math.max(1, new Date(meta.valid_until).getTime() - start.getTime()) : 86_400_000
-  return expandRecurrence(meta.recur, meta.valid_from!, new Date(from.getTime() - duration), to, 366, meta.timezone)
-    .some(occurrence => occurrence.getTime() < to.getTime() && occurrence.getTime() + duration >= from.getTime())
-}
-
-function specificity(meta: TemporalMeta | undefined): number {
-  const from = dateOr(meta?.valid_from, Number.NEGATIVE_INFINITY)
-  const until = dateOr(meta?.valid_until, Number.POSITIVE_INFINITY)
-  return until - from
-}
+export { validateTemporal }
 
 export function queryEntries(entries: MemoryEntry[], query: RecallQuery): MemoryEntry[] {
+  if (query.limit !== undefined && (!Number.isInteger(query.limit) || query.limit < 1)) throw new Error('recall limit must be a positive integer')
   const at = parseAt(query.at)
-  const window = windowFor(query, at)
-  const text = query.text?.toLowerCase()
-  const selected = entries.filter(entry => {
-    if (window ? !overlaps(entry.temporal, window.from, window.to) : !activeAt(entry.temporal, at)) return false
-    if (query.entity && !(entry.temporal?.entity === query.entity || (query.entity.endsWith('/') && entry.temporal?.entity?.startsWith(query.entity)))) return false
-    if (query.relation && !entry.links?.some(link => link.relation === query.relation)) return false
-    if (text && !`${entry.key} ${entry.content ?? entry.preview}`.toLowerCase().includes(text)) return false
-    return true
-  })
-  const selectedByKey = new Map(selected.map(entry => [entry.key, entry]))
-  const superseded = new Set(selected.flatMap(entry => entry.temporal?.supersedes && selectedByKey.has(entry.temporal.supersedes) ? [entry.temporal.supersedes] : []))
-  const collapsed = new Map<string, MemoryEntry>()
-  for (const entry of selected) {
-    if (superseded.has(entry.key)) continue
-    const entity = entry.temporal?.entity
-    if (!entity) { collapsed.set(`key:${entry.key}`, entry); continue }
-    const existing = collapsed.get(`entity:${entity}`)
-    if (!existing || dateOr(entry.temporal?.valid_from, Number.NEGATIVE_INFINITY) > dateOr(existing.temporal?.valid_from, Number.NEGATIVE_INFINITY)) collapsed.set(`entity:${entity}`, entry)
+  const window = query.window ? parseWindow(query.window, at) : undefined
+  const text = query.text?.trim()
+  const selected = entries
+    .filter(entry => window ? overlapsWindow(entry.temporal, window.from, window.to) : isValidAt(entry.temporal, at))
+    .filter(entry => entityMatches(entry.temporal?.entity, query.entity))
+    .filter(entry => !query.relation || entry.links?.some(link => link.relation === query.relation))
+    .filter(entry => !text || lexicalScore(entry, text) > 0)
+    .map(entry => ({ entry, lexical: lexicalScore(entry, text) }))
+
+  const selectedByKey = new Map(selected.map(item => [item.entry.key, item.entry]))
+  const superseded = new Set<string>()
+  for (const { entry } of selected) {
+    const replacement = entry.temporal?.supersedes
+    if (replacement && selectedByKey.has(replacement)) superseded.add(replacement)
   }
+
+  const collapsed = new Map<string, { entry: MemoryEntry; lexical: number }>()
+  for (const item of selected) {
+    if (superseded.has(item.entry.key)) continue
+    const entity = item.entry.temporal?.entity
+    const key = entity ? `entity:${entity}` : `key:${item.entry.key}`
+    const existing = collapsed.get(key)
+    if (!existing || !entity || newerEntityFact(item.entry, existing.entry) || (sameInstant(item.entry, existing.entry) && compare(item, existing) < 0)) collapsed.set(key, item)
+  }
+
   return [...collapsed.values()]
-    .sort((a, b) => specificity(a.temporal) - specificity(b.temporal)
-      || dateOr(b.temporal?.valid_from, Number.NEGATIVE_INFINITY) - dateOr(a.temporal?.valid_from, Number.NEGATIVE_INFINITY)
-      || (b.temporal?.confidence ?? 1) - (a.temporal?.confidence ?? 1)
-      || a.key.localeCompare(b.key))
+    .sort(compare)
+    .map(item => item.entry)
     .slice(0, query.limit ?? 20)
 }
 
-/** Facts starting in the next day belong in the system-prefix pin band. */
+function compare(a: { entry: MemoryEntry; lexical: number }, b: { entry: MemoryEntry; lexical: number }): number {
+  const aSpecificity = validitySpecificity(a.entry.temporal)
+  const bSpecificity = validitySpecificity(b.entry.temporal)
+  const specificity = aSpecificity === bSpecificity ? 0 : aSpecificity < bSpecificity ? -1 : 1
+  const aFrom = dateOr(a.entry.temporal?.valid_from, Number.NEGATIVE_INFINITY)
+  const bFrom = dateOr(b.entry.temporal?.valid_from, Number.NEGATIVE_INFINITY)
+  const recency = aFrom === bFrom ? 0 : bFrom < aFrom ? -1 : 1
+  return specificity
+    || recency
+    || (b.entry.temporal?.confidence ?? 1) - (a.entry.temporal?.confidence ?? 1)
+    || b.lexical - a.lexical
+    || a.entry.key.localeCompare(b.entry.key)
+}
+
+function sameInstant(a: MemoryEntry, b: MemoryEntry): boolean {
+  return dateOr(a.temporal?.valid_from, Number.NEGATIVE_INFINITY) === dateOr(b.temporal?.valid_from, Number.NEGATIVE_INFINITY)
+}
+
+function newerEntityFact(a: MemoryEntry, b: MemoryEntry): boolean {
+  const aFrom = dateOr(a.temporal?.valid_from, Number.NEGATIVE_INFINITY)
+  const bFrom = dateOr(b.temporal?.valid_from, Number.NEGATIVE_INFINITY)
+  return aFrom > bFrom
+}
+
+/** Facts beginning in the next day are candidates for the memory prefix band. */
 export function imminentEntries(entries: MemoryEntry[], at = new Date(), withinMs = 86_400_000): MemoryEntry[] {
-  return entries
-    .filter(entry => {
-      const start = entry.temporal?.valid_from
-      if (!start) return false
-      const instant = new Date(start).getTime()
-      return Number.isFinite(instant) && instant > at.getTime() && instant <= at.getTime() + withinMs
-    })
+  const candidates = entries
+    .filter(entry => isImminent(entry.temporal, at, withinMs))
+  const superseded = new Set(entries.flatMap(entry => entry.temporal?.supersedes ? [entry.temporal.supersedes] : []))
+  const latestByEntity = new Map<string, MemoryEntry>()
+  for (const entry of candidates) {
+    const entity = entry.temporal?.entity
+    if (!entity) continue
+    const existing = latestByEntity.get(entity)
+    if (!existing || newerEntityFact(entry, existing)) latestByEntity.set(entity, entry)
+  }
+  return candidates
+    .filter(entry => !superseded.has(entry.key))
+    .filter(entry => !entry.temporal?.entity || latestByEntity.get(entry.temporal.entity)?.key === entry.key)
     .sort((a, b) => dateOr(a.temporal?.valid_from, Number.POSITIVE_INFINITY) - dateOr(b.temporal?.valid_from, Number.POSITIVE_INFINITY))
 }
+
+export { isValidAt, overlapsWindow, isImminent, validitySpecificity }

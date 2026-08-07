@@ -52,6 +52,7 @@ export interface TelemetryEvent {
   tokens_out?: number
   cost_usd?: number
   trigger?: string
+  source?: 'cron' | 'watch' | 'poll'
   task_id?: string
   stage_id?: string
   stage?: Stage | 'triage'

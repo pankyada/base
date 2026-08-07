@@ -10,6 +10,11 @@ function entry(payload: Record<string, unknown>): AuditEntry {
 }
 
 describe('audit undo', () => {
+  it('reports entries without an inverse as not undoable', async () => {
+    const { undo, ...withoutUndo } = entry({})
+    await expect(undoAuditEntry(withoutUndo, '')).resolves.toContain('not undoable')
+  })
+
   it('restores prior file content and removes newly-created files', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'undo-'))
     const existing = join(dir, 'existing.txt'); writeFileSync(existing, 'new')

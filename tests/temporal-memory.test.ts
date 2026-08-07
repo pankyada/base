@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { cpSync, mkdirSync, mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { FsMemoryProvider } from '../src/memory/fs-memory.js'
@@ -68,6 +68,20 @@ describe.each(providers())('%s temporal memory', provider => {
     expect((await provider.query('user', { at: AT, text: 'answer' })).map(entry => entry.key)).toEqual(['new'])
   })
 
+  it('uses half-open validity bounds and preserves temporal metadata on round-trip', async () => {
+    const temporal = {
+      valid_from: '2026-08-15T12:00:00+05:30',
+      valid_until: '2026-08-16T12:00:00+05:30',
+      entity: 'trip',
+      confidence: 0.8,
+      timezone: 'Asia/Kolkata',
+    }
+    await provider.write('user', 'bounded', 'One-day trip', undefined, temporal)
+    expect((await provider.query('user', { at: temporal.valid_from, entity: 'trip' })).map(entry => entry.key)).toEqual(['bounded'])
+    expect((await provider.query('user', { at: temporal.valid_until })).map(entry => entry.key)).not.toContain('bounded')
+    expect((await provider.read('user', 'bounded'))?.temporal).toEqual(temporal)
+  })
+
   it('filters by relation and lexical content after temporal selection', async () => {
     await provider.write('user', 'handoff-note', 'Send the Kyoto handoff', [{ target: 'ravi', relation: 'manager' }])
     await provider.write('user', 'other-note', 'Send the Kyoto handoff', [{ target: 'ravi', relation: 'peer' }])
@@ -89,7 +103,7 @@ describe('legacy memory format', () => {
   it('loads a pre-temporal markdown file as eternally current', async () => {
     const artifactDir = mkdtempSync(join(tmpdir(), 'harness-temporal-legacy-'))
     mkdirSync(join(artifactDir, 'memory'))
-    writeFileSync(join(artifactDir, 'memory', 'legacy.md'), 'Old format memory\n')
+    cpSync(new URL('./fixtures/memory/legacy.md', import.meta.url), join(artifactDir, 'memory', 'legacy.md'))
     const provider = new FsMemoryProvider(artifactDir, createSession('test', 'legacy-user'))
     expect((await provider.query('profile', { at: AT })).map(entry => entry.key)).toEqual(['legacy'])
   })

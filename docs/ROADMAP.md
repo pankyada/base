@@ -365,77 +365,80 @@ stdout/webhook reference adapters, and conditional `Notify` registration.
 
 ---
 
-### 🔄 18. Deferred asks — durable human-in-loop
+### ✅ 18. Deferred asks — durable human-in-loop
 
-**In progress on `feat/17-channels`:** durable pending records, `waiting_input`
-run state, park/resume across REST, channels, and WebSocket, TTL expiry
-sentinels, cancellation, and unattended approval reuse are implemented. Final
-client inbox rendering and end-to-end restart acceptance remain before marking
-this item shipped.
+**What shipped:**
+- Durable pending records, `waiting_input` run state, park/resume across REST,
+  channels, and WebSocket, TTL expiry sentinels, cancellation, and unattended
+  approval reuse
+- Go TUI inbox with pending-question list, text/select/multi-select answers,
+  option validation, `/inbox`, and `pending`/`pending_list`/`pending_answer`
+  protocol support
+- End-to-end restart acceptance coverage for answered and expired questions,
+  including append-only session-ledger verification
 
 `AskUser` awaits an in-memory promise held by a live connection, so an
 unattended run cannot ask, and a restart destroys the question. Makes a question
 a durable object: parked to disk, delivered over a channel, answerable hours
 later, resumable across restarts.
 
-**To build:**
-- Pending-input store + TTL sweeper; new run status `waiting_input`
-- `AskUser` gains `defer` / `ttl` / `channel`; non-deferred path byte-identical
-- `ParkSignal` + checkpoint/resume; same run id, append-only ledger
-- `GET /pending`, `POST /runs/:id/input`, `DELETE /pending/:id` + WS equivalents
-- Unattended `tool_prompt` becomes a pending record — one mechanism, two entry points
-
 **Design:** [`deferred-asks-design.md`](superpowers/specs/2026-08-02-deferred-asks-design.md)
 
 ---
 
-### 🔄 19. Temporal memory
+### ✅ 19. Temporal memory
 
 Every memory fact is currently implicitly eternal and implicitly current, which
 produces confidently stale answers. Adds validity intervals, bounded recurrence,
 entity grouping, and supersession-instead-of-overwrite.
 
-**To build:**
-- Optional `valid_from` / `valid_until` / `recur` / `entity` / `confidence` frontmatter
-- `Recall` tool: query by instant, window, entity, relation; filter → collapse → rank
-- Bounded RRULE subset in-tree (no dependency); DST, month-end, leap-day tests
-- Supersession collapse — current view deduplicated, history still queryable at a past instant
-- Projection integration: expired facts evict first, imminent facts pin
+**What shipped:**
+- Shared temporal parsing, validation, ISO-offset frontmatter round-trip, legacy compatibility, and FS/Graph provider conformance
+- `Recall` instant/window/entity/relation/text filtering with supersession history, specificity/recency/confidence/lexical ranking, and imminent-memory prefix pinning
+- Bounded in-tree RRULE subset with interval, weekday, ordinal weekday, month-day, UNTIL, COUNT, DST, month-end, and leap-day coverage
+- Improver and workflow knowledge producers accept explicit temporal metadata without domain-specific date parsing
 
 **Design:** [`temporal-memory-design.md`](superpowers/specs/2026-08-02-temporal-memory-design.md)
 
 ---
 
-### 🔄 20. Watch & poll triggers
+### ✅ 20. Watch & poll triggers
 
 Generalizes `triggers` beyond a clock. The critical property is that the
 no-change path is **free**: a poll's cursor probe runs one tool call and no model
 call, turning ~288 wasted turns/day per watched source into a handful of real runs.
 
-**To build:**
-- `triggers.watch` (chokidar + debounce + batch cap + ignore) and `triggers.poll` (interval + probe + persisted cursor)
-- Write-suppression window so a run writing into its own watched path cannot self-trigger
-- Overlap policy (`skip` default) + global concurrency cap
-- `CronScheduler` → `TriggerManager`; **existing cron tests must pass untouched**
-- Telemetry `skip_reason` — the operational health signal for ambient agents
+**What shipped:**
+- Unified cron/watch/poll lifecycle with contract-validated inputs, per-trigger
+  overlap modes, queue depth one, and global concurrency protection
+- Chokidar watch debounce/coalescing, batch caps, default/profile ignores, and
+  harness-write suppression to prevent self-trigger storms
+- Deterministic poll probes with no model path, JSONPath-lite cursors, cold-start
+  recording, corruption-safe persistence, jitter, and exponential error backoff
+- Source-tagged fire/skip telemetry plus budget-hook integration; legacy cron
+  import path and untouched cron tests remain compatible
 
 **Design:** [`watch-poll-triggers-design.md`](superpowers/specs/2026-08-02-watch-poll-triggers-design.md)
 
 ---
 
-### 🔄 21. Autonomy budget & conditional ACL
+### ✅ 21. Autonomy budget & conditional ACL
 
 ACL cannot currently express "allow when the arguments look like this, ask
 otherwise", so unattended profiles must choose between over-permission and
 constant interruption. Triggered runs also have no spend ceiling and leave no
 record of *why* an action was permitted.
 
-**To build:**
-- `triggers.budget` (cost / tool count / wall time), fail-closed, checked before every model and tool call; delegated children inherit a share, not a fresh allowance
-- Object ACL form with `allow_if` / `deny_if` over a **closed, data-only predicate set** (`equals`, `in_list`, `matches`, `under_path`, `lt`/`gt`, `absent`/`present`) — no code evaluation, unknown predicate fails the load
-- `lists:` in profile or sourced from memory; read failure denies
-- Append-only audit journal recording `decided_by` + `decided_reason` per effectful call
-- `harness audit [--undo]`; core inverses for `Write` / `MemoryWrite` / `MemoryDelete`
+**What shipped:**
+- Fail-closed per-run cost, tool-count, and wall-time budgets with model/tool
+  checkpoints, delegated ledger inheritance, budget-exceeded run status, audit,
+  and channel notification
+- Conditional ACLs with closed predicates, profile and memory-backed lists,
+  short-cache resolution, symlink-safe path containment, and deny-unbeatable
+  composition across approval modes
+- Complete effectful-call JSONL audit records with decision provenance/reason,
+  redacted bounded input digests, `harness audit --since/--tool`, and best-effort
+  core undo for file and memory writes/deletes
 
 **Design:** [`autonomy-budget-acl-design.md`](superpowers/specs/2026-08-02-autonomy-budget-acl-design.md)
 

@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { Session } from '../session/types.js'
-import { MemoryProvider } from '../memory/interface.js'
+import { MemoryProvider, TemporalMeta } from '../memory/interface.js'
 import { Improver, ProposedSkill } from './interface.js'
 import { queryEvents } from '../telemetry/query.js'
 import { Profile } from '../profiles/schema.js'
@@ -31,20 +31,22 @@ export class DefaultImprover implements Improver {
 
     const memSection = await memory.buildSystemPromptSection()
 
-    let memories: Array<{ key: string; content: string }> = []
+    let memories: Array<{ key: string; content: string; temporal?: TemporalMeta }> = []
     try {
       const response = await this.openai.chat.completions.create({
         model: this.modelId,
         messages: [{
           role: 'user',
-          content: `Review this agent session. Identify 0-3 things worth remembering for future sessions. Output ONLY JSON: {"summary":"one short line describing the session","memories":[{"key":"slug","content":"markdown"}]} (memories may be empty).\n\nCurrent memory:${memSection}\n\nTranscript:\n${transcript}`,
+          content: `Review this agent session. Identify 0-3 things worth remembering for future sessions. Output ONLY JSON: {"summary":"one short line describing the session","memories":[{"key":"slug","content":"markdown","temporal":{"valid_from":"ISO-8601 with offset","valid_until":"ISO-8601 with offset","recur":"optional supported recurrence","timezone":"optional IANA timezone","entity":"optional entity","confidence":0.0,"supersedes":"optional memory key"}}]} (memories may be empty). Add temporal metadata only when the session gives a clear explicit signal; never invent dates or recurrence.\n\nCurrent memory:${memSection}\n\nTranscript:\n${transcript}`,
         }],
       })
       const raw = response.choices[0].message.content ?? '{}'
       // strip markdown code fences if present
       const cleaned = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim()
-      const parsed = JSON.parse(cleaned) as { summary?: string; memories?: Array<{ key: string; content: string }> }
-      memories = Array.isArray(parsed.memories) ? parsed.memories : []
+      const parsed = JSON.parse(cleaned) as { summary?: string; memories?: Array<{ key: string; content: string; temporal?: TemporalMeta }> }
+      memories = Array.isArray(parsed.memories)
+        ? parsed.memories.filter(m => typeof m?.key === 'string' && typeof m?.content === 'string')
+        : []
       if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
         session.summary = parsed.summary.trim()
         saveSession(session)
@@ -54,7 +56,7 @@ export class DefaultImprover implements Improver {
     }
 
     for (const m of memories) {
-      if (m.key && m.content) await memory.write('user', m.key, m.content)
+      if (m.key && m.content) await memory.write('user', m.key, m.content, undefined, m.temporal)
     }
 
     if (memories.length > 0) {

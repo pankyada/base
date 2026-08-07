@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
+import { CursorStore } from '../src/triggers/cursors.js'
 import { PollTrigger, cursorAt, intervalMs } from '../src/triggers/poll.js'
 
 function cursorStore() {
@@ -15,12 +19,16 @@ describe('PollTrigger', () => {
     const fire = vi.fn()
     const skip = vi.fn()
     let cursor = 'a'
+    let modelTokens = 0
     const trigger = new PollTrigger(
       { name: 'mail', every: '5m', probe: { tool: 'mail__list' }, cursor_path: 'messages[0].id' },
       'user', 'profile', cursors as any, async () => ({ messages: [{ id: cursor }] }), fire, skip,
     )
+    const model = () => { modelTokens++ }
     await trigger.tick()
+    model()
     await trigger.tick()
+    expect(modelTokens).toBe(1)
     expect(fire).not.toHaveBeenCalled()
     expect(skip).toHaveBeenCalledWith('cursor_unchanged', expect.any(Number))
 
@@ -64,5 +72,22 @@ describe('PollTrigger', () => {
     expect(intervalMs('2h')).toBe(7_200_000)
     expect(cursorAt({ messages: [{ id: 42 }] }, 'messages[0].id')).toBe('42')
     expect(cursorAt({}, 'messages[0].id')).toBeNull()
+  })
+
+  it('treats a corrupt cursor as cold start and never fires on garbage', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'cursor-corrupt-'))
+    vi.stubEnv('HOME', home)
+    const path = join(home, '.harness', 'cursors', 'user')
+    const { mkdirSync } = await import('fs')
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(path, 'profile__mail.json'), '{not-json')
+    const fire = vi.fn()
+    const trigger = new PollTrigger(
+      { name: 'mail', every: '5m', probe: { tool: 'mail__list' }, cursor_path: 'id' },
+      'user', 'profile', new CursorStore(), async () => ({ id: 'new' }), fire, vi.fn(),
+    )
+    await trigger.tick()
+    expect(fire).not.toHaveBeenCalled()
+    vi.unstubAllEnvs()
   })
 })

@@ -28,6 +28,24 @@ describe('bounded recurrence', () => {
     ])
   })
 
+  it('supports weekly BYDAY and monthly ordinal BYDAY', () => {
+    const weekly = expandRecurrence(
+      'FREQ=WEEKLY;BYDAY=MO,WE',
+      '2026-08-03T09:00:00+00:00',
+      new Date('2026-08-03T00:00:00Z'),
+      new Date('2026-08-10T00:00:00Z'),
+    )
+    expect(weekly.map(date => date.toISOString().slice(0, 10))).toEqual(['2026-08-03', '2026-08-05'])
+
+    const ordinal = expandRecurrence(
+      'FREQ=MONTHLY;BYDAY=2MO',
+      '2026-01-12T09:00:00+00:00',
+      new Date('2026-02-01T00:00:00Z'),
+      new Date('2026-04-01T00:00:00Z'),
+    )
+    expect(ordinal.map(date => date.toISOString().slice(0, 10))).toEqual(['2026-02-09', '2026-03-09'])
+  })
+
   it.each([
     ['spring forward', '2026-03-07T09:00:00-05:00', '2026-03-08T13:00:00.000Z'],
     ['fall back', '2026-10-31T09:00:00-04:00', '2026-11-01T14:00:00.000Z'],

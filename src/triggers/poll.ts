@@ -14,9 +14,11 @@ export type PollFire = (input: Record<string, unknown>, config: PollConfig) => P
 export type PollSkip = (reason: 'cursor_unchanged' | 'probe_error', probeMs?: number) => void
 
 export function intervalMs(value: string): number {
-  const match = /^(\d+)(s|m|h|d)$/.exec(value)
+  const match = /^([1-9]\d*)(s|m|h|d)$/.exec(value)
   if (!match) throw new Error(`invalid poll interval "${value}"`)
-  return Number(match[1]) * ({ s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const)[match[2] as 's' | 'm' | 'h' | 'd']
+  const milliseconds = Number(match[1]) * ({ s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const)[match[2] as 's' | 'm' | 'h' | 'd']
+  if (!Number.isSafeInteger(milliseconds)) throw new Error(`poll interval is too large "${value}"`)
+  return milliseconds
 }
 
 export function cursorAt(value: unknown, path: string): string | null {
@@ -34,7 +36,7 @@ export function cursorAt(value: unknown, path: string): string | null {
 export class PollTrigger {
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
-  private errors = 0
+  private errors: number
 
   constructor(
     private readonly config: PollConfig,
@@ -44,37 +46,58 @@ export class PollTrigger {
     private readonly probe: PollProbe,
     private readonly fire: PollFire,
     private readonly skip: PollSkip,
-  ) {}
+  ) {
+    this.errors = cursors.read(user, profile, config.name)?.consecutive_errors ?? 0
+  }
 
   start(): void { this.schedule() }
   stop(): void { this.stopped = true; if (this.timer) clearTimeout(this.timer) }
 
   async tick(): Promise<void> {
     const started = Date.now()
+    let output: unknown
     try {
-      const output = await this.probe(this.config.probe.tool, this.config.probe.args ?? {})
-      const cursor = cursorAt(output, this.config.cursor_path)
-      if (cursor === null) throw new Error(`cursor path "${this.config.cursor_path}" did not resolve to a scalar`)
-      const previous = this.cursors.read(this.user, this.profile, this.config.name)
-      this.cursors.write(this.user, this.profile, this.config.name, { value: cursor, updated_at: new Date().toISOString(), consecutive_errors: 0 })
-      this.errors = 0
-      if (!previous || previous.value === undefined) return
-      if (previous.value === cursor) return this.skip('cursor_unchanged', Date.now() - started)
-      await this.fire({ trigger: 'poll', name: this.config.name, cursor }, this.config)
+      output = await this.probe(this.config.probe.tool, this.config.probe.args ?? {})
     } catch {
-      const previous = this.cursors.read(this.user, this.profile, this.config.name)
-      this.errors = (previous?.consecutive_errors ?? 0) + 1
-      this.cursors.write(this.user, this.profile, this.config.name, { value: previous?.value, updated_at: new Date().toISOString(), consecutive_errors: this.errors })
-      this.skip('probe_error', Date.now() - started)
+      this.recordProbeError(started)
+      return
+    }
+
+    const cursor = cursorAt(output, this.config.cursor_path)
+    if (cursor === null) {
+      this.recordProbeError(started)
+      return
+    }
+
+    const previous = this.cursors.read(this.user, this.profile, this.config.name)
+    this.cursors.write(this.user, this.profile, this.config.name, { value: cursor, updated_at: new Date().toISOString(), consecutive_errors: 0 })
+    this.errors = 0
+    if (!previous || previous.value === undefined || previous.value === cursor) {
+      this.skip('cursor_unchanged', Date.now() - started)
+      this.schedule()
+      return
+    }
+
+    try {
+      await this.fire({ trigger: 'poll', name: this.config.name, cursor }, this.config)
     } finally {
       if (!this.stopped) this.schedule()
     }
   }
 
+  private recordProbeError(started: number): void {
+    const previous = this.cursors.read(this.user, this.profile, this.config.name)
+    this.errors = Math.min(20, (previous?.consecutive_errors ?? this.errors) + 1)
+    this.cursors.write(this.user, this.profile, this.config.name, { value: previous?.value, updated_at: new Date().toISOString(), consecutive_errors: this.errors })
+    this.skip('probe_error', Date.now() - started)
+    if (!this.stopped) this.schedule()
+  }
+
   private schedule(): void {
+    if (this.stopped) return
     const base = Math.min(3_600_000, intervalMs(this.config.every) * 2 ** this.errors)
     const jitter = base * (this.config.jitter_pct ?? 0) / 100
-    const delay = base + (jitter ? Math.round((Math.random() * 2 - 1) * jitter) : 0)
+    const delay = Math.min(3_600_000, Math.max(0, base + (jitter ? Math.round((Math.random() * 2 - 1) * jitter) : 0)))
     this.timer = setTimeout(() => { void this.tick() }, delay)
   }
 }

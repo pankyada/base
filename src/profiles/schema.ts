@@ -4,7 +4,7 @@ import type { Tier, Intensity } from '../workflow/types.js'
 export const AclValue = z.enum(['allow', 'prompt', 'deny'])
 const PredicateSchema = z.object({
   arg: z.string().min(1), equals: z.unknown().optional(), in_list: z.string().optional(), matches: z.string().optional(), under_path: z.string().optional(), lt: z.number().optional(), gt: z.number().optional(), absent: z.boolean().optional(), present: z.boolean().optional(),
-}).superRefine((value, ctx) => {
+}).strict().superRefine((value, ctx) => {
   const count = ['equals', 'in_list', 'matches', 'under_path', 'lt', 'gt', 'absent', 'present'].filter(key => (value as any)[key] !== undefined).length
   if (count !== 1) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'predicate requires exactly one operation' })
 })
@@ -158,15 +158,15 @@ const WatchTriggerSchema = z.object({
   ignore: z.array(z.string()).default([]),
   max_batch: z.number().int().positive().default(50),
   mode: TriggerModeSchema,
-})
+}).strict()
 const PollTriggerSchema = z.object({
   name: z.string().min(1),
-  every: z.string().regex(/^\d+(s|m|h|d)$/, 'must be a number followed by s, m, h, or d'),
-  probe: z.object({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()).default({}) }),
+  every: z.string().regex(/^[1-9]\d*(s|m|h|d)$/, 'must be a positive number followed by s, m, h, or d'),
+  probe: z.object({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()).default({}) }).strict(),
   cursor_path: z.string().min(1),
   jitter_pct: z.number().min(0).max(100).default(0),
   mode: TriggerModeSchema,
-})
+}).strict()
 
 export type ExecutorConfig = z.infer<typeof ExecutorSchema>
 
@@ -308,7 +308,7 @@ export const ProfileSchema = z.object({
     poll: z.array(PollTriggerSchema).default([]),
     max_concurrent_runs: z.number().int().positive().default(3),
     budget: z.object({ max_cost_usd: z.number().nonnegative(), max_tools: z.number().int().nonnegative(), max_wall_s: z.number().nonnegative() }).optional(),
-  }).optional(),
+  }).strict().optional(),
   lists: z.record(z.string(), ListSourceSchema).default({}),
   description: z.string().optional(),
   interop: z.object({

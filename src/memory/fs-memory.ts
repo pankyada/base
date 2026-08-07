@@ -4,7 +4,8 @@ import matter from 'gray-matter'
 import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths, projectPaths } from '../session/user-paths.js'
-import { imminentEntries, queryEntries, validateTemporal } from './query.js'
+import { imminentEntries, queryEntries } from './query.js'
+import { parseTemporal, serializeTemporal, validateTemporal } from './temporal.js'
 
 export class FsMemoryProvider implements MemoryProvider {
   constructor(
@@ -48,7 +49,7 @@ export class FsMemoryProvider implements MemoryProvider {
     return {
       content: parsed.content.trim(),
       links: parsed.data.links as MemoryLink[] | undefined,
-      temporal: temporalFrom(parsed.data), provenance: parsed.data.tainted ? 'untrusted' : 'trusted', source: typeof parsed.data.taint_source === 'string' ? parsed.data.taint_source : undefined,
+      temporal: parseTemporal(parsed.data), provenance: parsed.data.tainted ? 'untrusted' : 'trusted', source: typeof parsed.data.taint_source === 'string' ? parsed.data.taint_source : undefined,
     }
   }
 
@@ -60,7 +61,7 @@ export class FsMemoryProvider implements MemoryProvider {
     }
     const dir = this.dirFor(scope)
     mkdirSync(dir, { recursive: true })
-    const data = { ...(links?.length ? { links } : {}), ...(temporal ?? {}), ...(provenance?.tainted ? { tainted: true, taint_source: provenance.source } : {}) }
+    const data = { ...(links?.length ? { links } : {}), ...serializeTemporal(temporal), ...(provenance?.tainted ? { tainted: true, taint_source: provenance.source } : {}) }
     const fileContent = Object.keys(data).length > 0 ? matter.stringify(content, data) : content
     writeFileSync(join(dir, `${key}.md`), fileContent, 'utf-8')
     await this.rebuildIndex(scope)
@@ -105,7 +106,7 @@ export class FsMemoryProvider implements MemoryProvider {
           preview: parsed.content.trim().slice(0, 100),
           content: parsed.content.trim(),
           links: parsed.data.links as MemoryLink[] | undefined,
-          temporal: temporalFrom(parsed.data),
+          temporal: parseTemporal(parsed.data),
         }
       })
   }
@@ -147,13 +148,4 @@ export class FsMemoryProvider implements MemoryProvider {
     const dir = this.dirFor(scope)
     writeFileSync(join(dir, 'MEMORY.md'), `# Memory Index\n\n${lines.join('\n')}\n`, 'utf-8')
   }
-}
-
-function temporalFrom(data: Record<string, unknown>): TemporalMeta | undefined {
-  const temporal: TemporalMeta = {}
-  for (const key of ['valid_from', 'valid_until', 'recur', 'timezone', 'entity', 'supersedes'] as const) {
-    if (typeof data[key] === 'string') temporal[key] = data[key] as never
-  }
-  if (typeof data.confidence === 'number') temporal.confidence = data.confidence
-  return Object.keys(temporal).length ? temporal : undefined
 }

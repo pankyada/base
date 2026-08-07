@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { TriggerManager } from '../src/triggers/manager.js'
+import { ProfileSchema } from '../src/profiles/schema.js'
 
 const profile: any = {
   name: 'ambient', triggers: { max_concurrent_runs: 3 },
@@ -49,5 +50,15 @@ describe('TriggerManager', () => {
     expect(run).toHaveBeenCalledTimes(2)
     expect(run.mock.calls[1][0].userMessage).toContain('3')
     resolvers.shift()!({ session: { id: 'second' } })
+  })
+
+  it('rejects watch and poll trigger typos at profile load', () => {
+    const base = {
+      name: 'bad', model: { base_url: 'https://example.com', api_key_env: 'KEY', id: 'm' },
+      system_prompt: '/tmp/prompt', artifact_dir: '/tmp',
+    }
+    expect(() => ProfileSchema.parse({ ...base, triggers: { watch: [{ name: 'w', path: '/tmp', debouce_ms: 10 }] } })).toThrow()
+    expect(() => ProfileSchema.parse({ ...base, triggers: { poll: [{ name: 'p', every: '5m', probe: { tool: 'x' }, cursor_path: 'id', curser_path: 'bad' }] } })).toThrow()
+    expect(() => ProfileSchema.parse({ ...base, triggers: { poll: [{ name: 'p', every: '0s', probe: { tool: 'x' }, cursor_path: 'id' }] } })).toThrow()
   })
 })

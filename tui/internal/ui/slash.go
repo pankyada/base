@@ -7,6 +7,7 @@ var slashCommands = map[string]string{
 	"model":    "choose active model",
 	"skills":   "review proposed skills",
 	"tasks":    "run/edit project build commands",
+	"inbox":    "answer parked questions",
 	"git":      "stage, commit, push, diff",
 	"compact":  "condense session context",
 	"theme":    "pick a terminal theme",
@@ -23,7 +24,7 @@ var slashCommands = map[string]string{
 // does this do?"), so this is its only trigger. Left out of the list itself
 // so the inline hint doesn't have to explain two different help surfaces;
 // "/help" covers the discoverable case.
-var slashOrder = []string{"model", "approval", "tasks", "git", "skills", "compact", "theme", "density", "clear", "help", "quit"}
+var slashOrder = []string{"model", "approval", "tasks", "inbox", "git", "skills", "compact", "theme", "density", "clear", "help", "quit"}
 
 func slashCommand(value string) (command, args string, ok bool) {
 	if !strings.HasPrefix(value, "/") || strings.Contains(value[:minInt(len(value), 2)], "\n") {
