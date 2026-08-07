@@ -6,5 +6,6 @@ bin/
 harness-server
 .harness-data/
 docs-site/.vitepress/cache/
+docs-site/public/architecture-site/
 tui/harness-tui
 *.tsbuildinfo

@@ -5,8 +5,13 @@ HTTP entry points, then runs the profile selected for each request. A profile
 owns its model, prompt, tools, safety policy, memory, automations, and optional
 voice configuration; the runtime stays generic.
 
-The interactive architecture explorer in `docs/architecture-site/` is a visual
-companion. This page is the canonical, current operational architecture.
+The **[interactive architecture explorer](/architecture-site/index.html)**
+(source: `docs/architecture-site/` in the repo) is the canonical, detailed
+architecture doc — every layer, module, file, and the design choices that
+differ from a typical agent harness (conditional ACL, the provenance gate,
+durable deferred asks, watch/poll triggers, autonomy budgets, temporal
+memory, channels). This page is the shorter operator-facing summary: request
+lifecycle, runtime boundaries, and how to actually run and extend the thing.
 
 ## System map
 
@@ -50,17 +55,18 @@ processes when a profile needs a separate failure domain.
 
 ## Main features
 
-| Feature | What it gives you |
-|---|---|
-| Self-contained profiles | Prompt and named sub-agent paths resolve beside their YAML. Installed bundles work without a repository checkout. |
-| Multi-profile server | One port can serve many agents; a client can choose or switch profiles per connection. |
-| Streaming agent loop | OpenAI-compatible provider API, tool-call fan-out, retry, usage and cost tracking. |
-| Context projection | Durable append-only transcript, token calibration, pins, digests, and restorable tool output. |
-| Safety controls | `allow` / `prompt` / `deny`, conditional predicates, mode defaults, budgets, provenance taint, approval gates, audit and best-effort undo. |
-| Extensibility | Profile-defined MCP servers, custom tools, skills, hooks, agents, channels, memory provider, and voice plugins. |
-| Durable automation | Cron, watch, and poll triggers; globally capped concurrency; deferred questions survive restarts. |
-| Voice transport | Binary audio frames, streaming STT/TTS plugin interfaces, sentence chunking, endpointing, voice prompts, and barge-in cancellation. |
-| Product surfaces | Go TUI, readline CLI, REST/SSE API, WebSocket protocol, and optional browser client. |
+| Feature | What it gives you | Details |
+|---|---|---|
+| Self-contained profiles | Prompt and named sub-agent paths resolve beside their YAML. Installed bundles work without a repository checkout. | [Profiles](./profiles) |
+| Multi-profile server | One port can serve many agents; a client can choose or switch profiles per connection. | [Profiles](./profiles) |
+| Streaming agent loop | OpenAI-compatible provider API, tool-call fan-out, retry, usage and cost tracking. | [Built-in Tools](./builtin-tools) |
+| Context projection | Durable append-only transcript, token calibration, pins, digests, and restorable tool output. | [Context Projection](./context) |
+| Safety & governance | `allow`/`prompt`/`deny` plus argument-aware `allow_if`/`deny_if`, mode defaults, autonomy budgets, a structural provenance gate against prompt injection, and an audit journal with best-effort undo. | [Safety & Governance](./safety) |
+| Extensibility | Profile-defined MCP servers, custom tools, skills, hooks, agents, channels, memory provider, and voice plugins. | [Skills](./skills) · [MCP Servers](./mcp-servers) · [Multi-Agent](./multi-agent) |
+| Durable automation | Cron, watch, and poll triggers with a free no-change path; globally capped concurrency; deferred questions that survive a full server restart; pluggable channels to reach a human. | [Automation](./automation) |
+| Temporal memory | Facts carry validity intervals and recurrence instead of being implicitly eternal; `Recall` answers "what was true at time T," fully backward compatible. | [Memory](./memory) |
+| Voice transport | Binary audio frames, streaming STT/TTS plugin interfaces, sentence chunking, endpointing, voice prompts, and barge-in cancellation. | [Voice](./voice) |
+| Product surfaces | Go TUI, readline CLI, REST/SSE API, WebSocket protocol, and optional browser client. | [CLI & TUI](./cli-tui) |
 
 ## Use it
 
@@ -165,3 +171,11 @@ interrupted partial in the session ledger.
 | Workflow playbooks | `.agents/playbooks/<name>/PLAYBOOK.md` |
 
 See [Profiles](./profiles), [Multi-Agent](./multi-agent), [MCP Servers](./mcp-servers), and [CLI & TUI](./cli-tui) for field-level reference.
+
+## Where to go next
+
+- [Getting Started](./getting-started) — install, run, and a guarded automation example
+- [Safety & Governance](./safety) — conditional ACL, the provenance gate, autonomy budgets, audit + undo
+- [Automation](./automation) — triggers (cron/watch/poll), durable deferred asks, channels
+- [Memory](./memory) — scopes, providers, and temporal facts with `Recall`
+- [Voice](./voice) — streaming STT/TTS, endpointing, barge-in

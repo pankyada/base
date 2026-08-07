@@ -3,7 +3,7 @@ name: Deploy docs
 on:
   push:
     branches: [main]
-    paths: ["docs-site/**"]
+    paths: ["docs-site/**", "docs/architecture-site/**"]
 
 jobs:
   deploy:
@@ -23,6 +23,8 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - run: ./scripts/sync-architecture-site.sh
 
       - run: pnpm --filter harness-docs build
 

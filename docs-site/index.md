@@ -3,12 +3,15 @@ layout: home
 
 hero:
   name: Harness
-  text: A WebSocket-based agent harness
-  tagline: Wire LLMs to tools, skills, memory, and MCP servers — all from a profile YAML.
+  text: A profile-driven agent runtime
+  tagline: "Tools, memory, MCP, and multi-agent — plus what most harnesses skip: safe unattended autonomy with conditional ACLs, a structural prompt-injection gate, durable deferred asks, and a hard spend ceiling."
   actions:
     - theme: brand
       text: Get Started
       link: /getting-started
+    - theme: alt
+      text: Use Cases
+      link: /use-cases
     - theme: alt
       text: GitHub
       link: https://github.com/pankyada/base
@@ -16,22 +19,37 @@ hero:
 features:
   - icon: 📋
     title: Profile-driven
-    details: Everything — model, tools, memory, hooks — defined in a single YAML file. No code changes to add a new agent type.
+    details: Everything — model, tools, memory, hooks, channels — defined in a single YAML file. No code changes to add a new agent type.
+  - icon: 🛡️
+    title: Conditional ACL
+    details: "'Allow this tool when the arguments look like this, ask otherwise.' A closed, data-only predicate set — no code eval, deny always wins."
+  - icon: 🚧
+    title: Provenance gate
+    details: Content the agent reads can never silently authorize an action. A monotonic taint flag escalates outbound/destructive tools regardless of ACL — yolo mode can't bypass it.
+  - icon: 💬
+    title: Durable deferred asks
+    details: AskUser({ defer:true }) parks a question to disk and resumes hours or days later, across a full server restart — not an in-memory promise that dies with the connection.
+  - icon: ⏱️
+    title: Watch & poll triggers
+    details: Filesystem watch and cursor-based poll triggers, with a free no-change path — zero model calls when nothing changed.
+  - icon: 💰
+    title: Autonomy budgets
+    details: Hard cost / tool-count / wall-time ceilings checked before every model and tool call, with a complete undo-able audit trail.
+  - icon: 🕰️
+    title: Temporal memory
+    details: Facts carry validity intervals and recurrence instead of being implicitly eternal — Recall answers "what was true at time T," fully backward compatible.
+  - icon: 📡
+    title: Pluggable channels
+    details: A named, bidirectional transport to reach a human — approvals, notifications, and deferred questions, with no vendor in core.
   - icon: 🔌
     title: MCP-native
     details: Connect any MCP server (stdio, HTTP, SSE, WebSocket) with per-tool ACL and automatic schema discovery.
   - icon: 🤝
     title: Multi-agent
-    details: Agents compose via the agents block. Orchestrate workers with typed I/O contracts and parallel fan-out.
-  - icon: 🔒
-    title: Instance modes
-    details: developer / analyst / assistant / production — each sets default tool ACLs and validates the deployment trust model.
-  - icon: ⚡
-    title: Triggered + durable
-    details: Cron and webhook triggers wake agents on a schedule or external event. Runs checkpoint to disk and resume after crashes.
-  - icon: 🧠
-    title: Self-improving
-    details: Post-session reflection writes key learnings to memory. Skill mining extracts reusable patterns every N sessions.
+    details: Agents compose via the agents block. Orchestrate workers with typed I/O contracts, parallel fan-out, and a shared autonomy budget.
+  - icon: 🎙️
+    title: Streaming voice
+    details: Binary audio transport, streaming STT/TTS as pluggable interfaces, sentence-chunked synthesis, and barge-in that cancels the in-flight model turn.
   - icon: 📐
     title: Context projection
     details: Durable session ledgers project into a budgeted context with restorable tool output, explicit pins, digest promotion, and calibrated token estimates.

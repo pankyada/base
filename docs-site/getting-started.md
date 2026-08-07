@@ -101,8 +101,36 @@ Backend: [http://localhost:7337](http://localhost:7337)
 
 Session data, memory, and telemetry are persisted to `.harness-data/` on the host.
 
+## Reviewing what the agent did
+
+Every effectful tool call is journaled with the reason it was permitted:
+
+```bash
+harness audit --since 2026-08-01
+harness audit --undo <entry_id>   # best-effort reverse, where a tool supplied one
+```
+
+See [Safety & Governance](./safety#audit-journal-undo).
+
+## Setting up for your use case
+
+Not every profile is an interactive chat session sitting in front of a
+human. [Use Cases](./use-cases) walks through four complete, runnable
+profiles end to end — a coding assistant, a personal assistant with voice
+and SMS-style paging, a production data-analysis agent called over REST,
+and an unattended ops agent that watches infrastructure and pages you
+through a channel — each with the full YAML and a line-by-line explanation
+of why every field is set the way it is.
+
 ## What's next?
 
-- [Profiles](./profiles) — configure models, tools, and triggers
-- [Built-in Tools](./builtin-tools) — what the agent can do
+- [Use Cases](./use-cases) — four worked setups: coding, personal assistant with voice, production data analysis, unattended ops
+- [Profiles](./profiles) — every field: models, tools, triggers, channels, safety
+- [Built-in Tools](./builtin-tools) — what the agent can do, including `Notify`, `AskUser`, and `Recall`
+- [Safety & Governance](./safety) — conditional ACL, the provenance gate, autonomy budgets, and the audit journal
+- [Automation](./automation) — cron/watch/poll triggers, durable deferred asks, and channels
+- [Memory](./memory) — scopes, providers, and temporal facts with `Recall`
+- [Voice](./voice) — streaming STT/TTS, endpointing, and barge-in
 - [MCP Servers](./mcp-servers) — connect external tools
+- [Multi-Agent](./multi-agent) — orchestrators, workers, and fan-out
+- [Architecture](./architecture) — the full system map and the [interactive explorer](https://github.com/pankyada/base/blob/main/docs/architecture-site/index.html) behind it

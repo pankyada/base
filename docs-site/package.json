@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "../scripts/sync-architecture-site.sh",
     "dev": "vitepress dev",
+    "prebuild": "../scripts/sync-architecture-site.sh",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

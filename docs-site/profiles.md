@@ -123,6 +123,25 @@ mode: analyst
 
 ---
 
+### `safety` _(optional)_
+
+```yaml
+safety:
+  enabled: true                  # static + model-based risk classification for Bash/ExecuteCode
+  gate_untrusted_actions: false  # default false; true under mode: assistant / production
+  gate_writes: false             # also gate write-class tools, not just outbound/destructive
+  timeout_ms: 3000
+  cache_ttl_hours: 168
+```
+
+`gate_untrusted_actions` is the [provenance gate](./safety#provenance-gate):
+once a turn reads untrusted content (an inbound channel message, an
+MCP result tagged untrusted), `outbound`/`destructive` tools escalate to
+approval regardless of ACL — and neither a matching predicate nor `yolo`
+mode bypasses that escalation.
+
+---
+
 ### `tools`
 
 ```yaml
@@ -142,6 +161,21 @@ tools:
       acl:
         list_pull_requests: allow
         "*": prompt
+```
+
+An ACL entry can also be an object with argument-aware conditions instead of
+a plain string — see [Safety & Governance → Conditional ACL](./safety#conditional-acl)
+for the full predicate vocabulary:
+
+```yaml
+tools:
+  builtin:
+    Notify:
+      default: prompt
+      allow_if:
+        - { arg: channel, in_list: trusted_channels }
+lists:
+  trusted_channels: [phone]
 ```
 
 Built-in tool ACL defaults (when no `mode:` is set):
@@ -268,9 +302,72 @@ triggers:
   cron_input:
     task: "Run daily health check"
   webhook: false               # set true to enable POST /webhooks/<profile-name>
+
+  watch:                       # filesystem-change triggers
+    - name: vault
+      path: "$VAULT/inbox"
+      events: [add, change]    # add | change | unlink
+      debounce_ms: 2000
+      ignore: ["**/.obsidian/**"]
+      max_batch: 50
+      mode: skip                # skip | queue | parallel
+
+  poll:                        # cursor-based polling triggers — no model call on unchanged
+    - name: mail
+      every: "5m"               # Ns | Nm | Nh | Nd
+      probe: { tool: "gmail__list_messages", args: { q: "is:unread", max: 1 } }
+      cursor_path: "messages[0].id"
+      jitter_pct: 10
+      mode: skip
+
+  max_concurrent_runs: 3
+  budget: { max_cost_usd: 0.50, max_tools: 30, max_wall_s: 300 }
 ```
 
 > **Constraint:** `mode: developer` combined with any trigger throws a hard validation error at startup. Use explicit ACLs instead.
+
+See [Automation](./automation#triggers) for the full triggers walkthrough and
+[Safety & Governance](./safety#autonomy-budget) for how `triggers.budget` is
+enforced.
+
+---
+
+### `channels`
+
+A named, bidirectional transport between the profile and a human — used by
+`Notify`, deferred `AskUser` questions, and approvals for unattended runs.
+
+```yaml
+channels:
+  - name: phone
+    transport: webhook          # or stdout, or a custom adapter under .agents/channels/
+    inbound: true
+    default: true
+    config:
+      url: "https://example.com/hooks/phone"
+    acl:
+      notify: allow
+      approvals: true
+      inbound: paired            # paired | open | off
+    limits:
+      max_sends_per_hour: 20
+```
+
+See [Automation → Channels](./automation#channels) for the full model.
+
+---
+
+### `lists`
+
+Named lists consumed by [conditional ACL](./safety#conditional-acl) predicates
+like `in_list`. Inline, or sourced from memory so a list can grow without a
+profile edit:
+
+```yaml
+lists:
+  trusted_channels: [phone]
+  trusted_contacts: "memory:user/trusted-contacts"
+```
 
 ---
 
