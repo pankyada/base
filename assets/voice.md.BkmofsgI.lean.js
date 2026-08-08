@@ -1,0 +1,1 @@
+import{c as i,Q as a,j as e,m as t}from"./chunks/framework.BfXm-OOo.js";const c=JSON.parse('{"title":"Voice","description":"","frontmatter":{},"headers":[],"relativePath":"voice.md","filePath":"voice.md"}'),n={name:"voice.md"};function h(l,s,o,p,r,d){return a(),e("div",null,[...s[0]||(s[0]=[t("",14)])])}const E=i(n,[["render",h]]);export{c as __pageData,E as default};

@@ -1,0 +1,1 @@
+import{c as t,Q as e,j as i,m as a}from"./chunks/framework.BfXm-OOo.js";const k=JSON.parse('{"title":"CLI & TUI","description":"","frontmatter":{},"headers":[],"relativePath":"cli-tui.md","filePath":"cli-tui.md"}'),n={name:"cli-tui.md"};function o(d,s,l,h,r,p){return e(),i("div",null,[...s[0]||(s[0]=[a("",47)])])}const g=t(n,[["render",o]]);export{k as __pageData,g as default};

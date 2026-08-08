@@ -1,1 +1,0 @@
-import{c as a,Q as e,j as i,m as t}from"./chunks/framework.rlpw0eGz.js";const k=JSON.parse('{"title":"Memory","description":"","frontmatter":{},"headers":[],"relativePath":"memory.md","filePath":"memory.md"}'),n={name:"memory.md"};function p(o,s,r,l,h,d){return e(),i("div",null,[...s[0]||(s[0]=[t("",32)])])}const u=a(n,[["render",p]]);export{k as __pageData,u as default};
