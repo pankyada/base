@@ -1,1 +1,0 @@
-self.__NEXT_FONT_MANIFEST='{"pages":{},"app":{"/Users/pankajkumaryadav/Desktop/development/base/web/app/layout":["static/media/e02f7a71372872a3-s.p.woff2","static/media/558ca1a6aa3cb55e-s.p.woff2","static/media/d3ebbfd689654d3a-s.p.woff2","static/media/98e207f02528a563-s.p.woff2","static/media/db96af6b531dc71f-s.p.woff2"]},"appUsingSizeAdjust":true,"pagesUsingSizeAdjust":false}';

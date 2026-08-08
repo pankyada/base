@@ -71,6 +71,8 @@ function waitingCase(id: string, state: 'open' | 'expired' = 'open') {
 
 describe('deferred asks across a fresh store restart', () => {
   beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-07T12:00:00.000Z'))
     vi.mocked(runAgentLoop).mockReset().mockImplementation(async (_message, _profile, session: any) => {
       const answer = session.messages.find((message: any) => message.role === 'tool')
       if (!answer) throw new Error('resume did not append tool answer')
@@ -80,7 +82,10 @@ describe('deferred asks across a fresh store restart', () => {
     vi.mocked(recordUsage).mockReset()
   })
 
-  afterEach(() => vi.unstubAllEnvs())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllEnvs()
+  })
 
   it('answers an open question using freshly constructed stores and preserves the ledger', async () => {
     const home = mkdtempSync(join(tmpdir(), 'harness-deferred-restart-'))

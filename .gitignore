@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .env
+web/.next/
+web/out/
+web/.env.local
 .superpowers/
 bin/
 harness-server
