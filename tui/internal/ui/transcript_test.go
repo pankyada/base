@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"harness-tui/internal/prefs"
 )
 
 func TestTranscriptRendersUserAndAgent(t *testing.T) {
@@ -69,6 +71,42 @@ func TestTranscriptHidesThinkingOnceTurnFinished(t *testing.T) {
 	out := stripANSI(tr.Render(80, 0))
 	if strings.Contains(out, "thinking") {
 		t.Fatalf("finished turn with no output should not show thinking: %s", out)
+	}
+}
+
+func TestFreshModelLeavesSixSectionReplyOpen(t *testing.T) {
+	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
+	m.transcript.Turns = []Turn{{Role: "agent", Text: strings.Join([]string{
+		"# One\nbody one",
+		"# Two\nbody two",
+		"# Three\nbody three",
+		"# Four\nbody four",
+		"# Five\nbody five",
+		"# Six\nbody six",
+	}, "\n"), Elapsed: "1.0s"}}
+	m.reflow()
+	out := stripANSI(m.transcript.Render(80, 0))
+	if m.density != "full" || m.transcript.Density != "full" {
+		t.Fatalf("fresh density model=%q transcript=%q", m.density, m.transcript.Density)
+	}
+	for _, body := range []string{"body one", "body two", "body three", "body four", "body five", "body six"} {
+		if !strings.Contains(out, body) {
+			t.Fatalf("default density folded %q: %s", body, out)
+		}
+	}
+}
+
+func TestExplicitDensityPreferenceStillFolds(t *testing.T) {
+	for _, density := range []string{"normal", "compact"} {
+		m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{DensityMode: density})
+		if m.density != density {
+			t.Fatalf("existing density %q was overwritten with %q", density, m.density)
+		}
+		m.transcript.Turns = []Turn{{Role: "agent", Text: "# One\nbody one\n# Two\nbody two\n# Three\nbody three\n# Four\nbody four", Elapsed: "1.0s"}}
+		m.reflow()
+		if got := stripANSI(m.transcript.Render(80, 0)); strings.Contains(got, "body four") {
+			t.Fatalf("compact density left section body open: %s", got)
+		}
 	}
 }
 

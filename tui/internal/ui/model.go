@@ -180,7 +180,7 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 	m.overlayTab = preferences.OverlayTab
 	m.density = preferences.DensityMode
 	if m.density != "full" && m.density != "compact" && m.density != "normal" {
-		m.density = "normal"
+		m.density = "full"
 	}
 	if preferences.Theme == "" {
 		preferences.Theme = "ember"

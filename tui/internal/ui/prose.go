@@ -77,7 +77,7 @@ func foldThreshold(density string) int {
 // densityModes is the picker list order and the /density-tab body content —
 // the single source of truth for what a valid density name is.
 var densityModes = []struct{ name, detail string }{
-	{"full", "never fold — every section always open"},
-	{"normal", "fold once a reply has 4+ sections · default"},
+	{"full", "default · never fold — every section always open"},
+	{"normal", "fold once a reply has 4+ sections"},
 	{"compact", "fold any reply with more than one section"},
 }
