@@ -406,7 +406,7 @@ async function main() {
         const preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
         send({ type: 'plan', content: preview.body })
         const choice = (await requestInput('Plan ready — proceed, edit, or cancel?', 'select', ['proceed', 'edit', 'cancel'])).trim().toLowerCase()
-        if (choice === 'cancel') {
+        if (choice !== 'proceed' && choice !== 'edit') {
           runStore.update(runId, { status: 'completed', finished_at: new Date().toISOString() })
           send({ type: 'notice', level: 'info', message: 'plan cancelled', detail: 'no session or artifact changes made' })
           send({ type: 'session_end', sessionId: session.id })
