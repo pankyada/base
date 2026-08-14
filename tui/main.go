@@ -18,7 +18,7 @@ import (
 	"harness-tui/internal/ws"
 )
 
-var version = "0.2.2"
+var version = "0.3.0"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version")
