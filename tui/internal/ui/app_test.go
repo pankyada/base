@@ -137,3 +137,24 @@ func TestCustomCommandExpandsArgumentsAndCanIgnoreThem(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionListOpensPickerWithPastSessions(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	if _, ok := m.handleSlash("/sessions"); !ok {
+		t.Fatal("/sessions should be handled")
+	}
+	if !m.sessionPicker || len(sender.messages) != 1 {
+		t.Fatalf("session request picker=%v messages=%d", m.sessionPicker, len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[0])
+	if err != nil || string(wire) != `{"type":"session_list"}` {
+		t.Fatalf("session request=%s err=%v", wire, err)
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "sessions", Sessions: []protocol.SessionSummary{
+		{ID: "sess-1", Title: "Yesterday's work", CreatedAt: "2026-08-13T10:00:00Z", Usage: protocol.Usage{CostUSD: 0.42}},
+	}})
+	if !m.sessionPicker || len(m.sessionOptions) != 1 || m.sessionOptions[0].ID != "sess-1" {
+		t.Fatalf("session picker options=%#v open=%v", m.sessionOptions, m.sessionPicker)
+	}
+}

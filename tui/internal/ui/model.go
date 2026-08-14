@@ -72,6 +72,9 @@ type Model struct {
 	modelFilter        string
 	modelCustom        bool
 	modelInput         textinput.Model
+	sessionPicker      bool
+	sessionCursor      int
+	sessionOptions     []protocol.SessionSummary
 	workingDir         string
 	activeTool         string
 	activeToolStarted  time.Time
@@ -1592,6 +1595,8 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		}
 	case "inbox":
 		m.openOverlay("inbox")
+	case "sessions":
+		m.requestSessions()
 	default:
 		// Built-in commands are handled by the switch above first. This keeps
 		// a custom command or skill named "theme" from shadowing /theme.
@@ -1655,6 +1660,14 @@ func (m *Model) send(message protocol.ClientMessage) {
 	if m.sender != nil {
 		m.sender.Send(message)
 	}
+}
+
+func (m *Model) requestSessions() {
+	m.sessionPicker = true
+	m.sessionCursor = 0
+	m.sessionOptions = nil
+	m.send(protocol.SessionList(""))
+	m.reflow()
 }
 
 func (m *Model) scheduleMentionIndex() tea.Cmd {
@@ -1791,6 +1804,12 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 	case "commands":
 		m.customCommands = msg.Commands
 		m.recomputeCompletion()
+	case "sessions":
+		m.sessionOptions = append([]protocol.SessionSummary{}, msg.Sessions...)
+		if m.sessionCursor >= len(m.sessionOptions) {
+			m.sessionCursor = maxInt(0, len(m.sessionOptions)-1)
+		}
+		m.sessionPicker = true
 	case "skill_content":
 		m.skillPreview = msg.Content
 		m.skillPreviewOffset = 0
