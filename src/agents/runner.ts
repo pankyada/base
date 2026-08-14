@@ -9,6 +9,7 @@ import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { GraphMemoryProvider } from '../memory/graph-memory.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
+import { buildSystemPrompt } from '../context/system-prompt.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import type { ToolContext, AgentLoopEvents } from '../tools/types.js'
 
@@ -57,8 +58,10 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
       const subSkills = loadAllSkills(resolveSkillsDirs())
       const systemPromptBase = readFileSync(subProfile.system_prompt, 'utf-8')
       const skillIndex = buildSkillIndex(subSkills)
-      const memSection = await subMemory.buildSystemPromptSection()
-      subSession.messages.push({ role: 'system', content: systemPromptBase + skillIndex + memSection })
+      subSession.messages.push({
+        role: 'system',
+        content: await buildSystemPrompt({ profile: subProfile, systemPromptBase, skillIndex, memory: subMemory }),
+      })
 
       const subEvents: AgentLoopEvents = {
         onToken: t => context.events.onToken(t),

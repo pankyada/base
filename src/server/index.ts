@@ -13,7 +13,7 @@ import { TriggerManager } from '../triggers/manager.js'
 import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
-import { loadProfile, applyModeDefaults, systemPromptFor } from '../profiles/loader.js'
+import { loadProfile, applyModeDefaults } from '../profiles/loader.js'
 import { loadProfileDirectory } from '../profiles/registry.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
@@ -27,6 +27,7 @@ import { commandSummaries, loadAllCommands, resolveCommandDirs } from '../skills
 import { registerAll, clearRegistry, registerTool } from '../tools/builtin/index.js'
 import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
+import { buildInteractiveSystemPrompt } from './interactive-prompt.js'
 import { listProposed, listInstalled, readSkill, writeSkill, promoteSkill, discardSkill } from '../skills/manage.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import { runWorkflow } from '../workflow/runner.js'
@@ -675,10 +676,9 @@ async function main() {
         })
         // Build system prompt with memory on first turn
         if (session.messages.length === 0) {
-          const memSection = await memory.buildSystemPromptSection()
           session.messages.push({
             role: 'system',
-            content: readFileSync(systemPromptFor(connectionProfile, audioSupported), 'utf-8') + skillIndex + memSection,
+            content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, memory),
           })
         }
 

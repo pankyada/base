@@ -12,6 +12,7 @@ vi.mock('../src/mcp/client.js', () => ({
 vi.mock('../src/skills/loader.js', () => ({
   loadAllSkills: vi.fn().mockReturnValue([]),
   resolveSkillsDirs: vi.fn().mockReturnValue([]),
+  getGitRoot: vi.fn().mockReturnValue(null),
 }))
 vi.mock('../src/skills/indexer.js', () => ({ buildSkillIndex: vi.fn().mockReturnValue('') }))
 vi.mock('../src/agents/loader.js', () => ({ loadAgentTools: vi.fn().mockResolvedValue([]) }))

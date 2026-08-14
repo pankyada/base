@@ -6,6 +6,7 @@ import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { GraphMemoryProvider } from '../memory/graph-memory.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
+import { buildSystemPrompt } from '../context/system-prompt.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import { runWorkflow } from '../workflow/runner.js'
@@ -63,9 +64,11 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
     const skills = loadAllSkills(resolveSkillsDirs())
     const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
     const skillIndex = buildSkillIndex(skills)
-    const memSection = await memory.buildSystemPromptSection()
     if (session.messages.length === 0) {
-      session.messages.push({ role: 'system', content: systemPromptBase + skillIndex + memSection })
+      session.messages.push({
+        role: 'system',
+        content: await buildSystemPrompt({ profile, systemPromptBase, skillIndex, memory }),
+      })
     }
 
     if (opts.resume) {
