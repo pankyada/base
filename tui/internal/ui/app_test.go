@@ -158,3 +158,12 @@ func TestSessionListOpensPickerWithPastSessions(t *testing.T) {
 		t.Fatalf("session picker options=%#v open=%v", m.sessionOptions, m.sessionPicker)
 	}
 }
+
+func TestEmptySessionPickerExplainsFreshStart(t *testing.T) {
+	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
+	m.sessionPicker = true
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "no past sessions") {
+		t.Fatalf("empty session picker missing explicit state: %s", view)
+	}
+}

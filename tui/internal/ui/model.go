@@ -402,6 +402,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modelPicker {
 		return m.updateModelPicker(msg)
 	}
+	if m.sessionPicker {
+		return m.updateSessionPicker(msg)
+	}
 	if m.completion.Open {
 		switch msg.String() {
 		case "up":
@@ -932,6 +935,33 @@ func (m Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
 			m.modelFilter += string(msg.Runes)
 			m.modelCursor = 0
+		}
+	}
+	m.reflow()
+	return m, nil
+}
+
+func (m Model) updateSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.sessionPicker = false
+	case "up":
+		if m.sessionCursor > 0 {
+			m.sessionCursor--
+		}
+	case "down":
+		if m.sessionCursor < len(m.sessionOptions)-1 {
+			m.sessionCursor++
+		}
+	case "enter":
+		if len(m.sessionOptions) == 0 {
+			m.notices.Add(NoticeInfo, "no past sessions", "", "start a message to create one")
+		} else if m.running {
+			m.notices.Add(NoticeWarn, "session resume blocked", "a turn is still running", "wait for it to finish")
+		} else {
+			selected := m.sessionOptions[m.sessionCursor]
+			m.send(protocol.Resume(selected.ID))
+			m.sessionPicker = false
 		}
 	}
 	m.reflow()
@@ -1810,6 +1840,16 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			m.sessionCursor = maxInt(0, len(m.sessionOptions)-1)
 		}
 		m.sessionPicker = true
+	case "session_resumed":
+		m.sessionID = msg.SessionID
+		m.running = false
+		m.activeTool = ""
+		m.activeToolStarted = time.Time{}
+		m.queue = nil
+		m.transcript.Turns = nil
+		m.workflowStages = map[string]StageItem{}
+		m.stageCosts = map[string]float64{}
+		m.notices.Add(NoticeInfo, "session resumed", msg.SessionID, "context restored on the server")
 	case "skill_content":
 		m.skillPreview = msg.Content
 		m.skillPreviewOffset = 0
@@ -2075,6 +2115,9 @@ func (m Model) View() string {
 	}
 	if m.modelPicker {
 		return Center(background, modelPicker(m.modelOptions, m.modelCursor, m.modelFilter, m.modelCustom, m.modelInput.View(), m.width, m.height), m.width, m.height)
+	}
+	if m.sessionPicker {
+		return Center(background, sessionPicker(m.sessionOptions, m.sessionCursor, m.width, m.height), m.width, m.height)
 	}
 	if m.overlayOpen {
 		body := skillsPlaceholder()

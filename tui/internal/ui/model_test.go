@@ -127,6 +127,43 @@ func TestModelQueuesBusyMessagesAndDrainsAfterSessionEnd(t *testing.T) {
 	}
 }
 
+func TestSessionPickerResumesSelectedSessionAndClearsTranscript(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.sessionPicker = true
+	m.sessionOptions = []protocol.SessionSummary{{ID: "sess-old", Title: "old work"}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.sessionPicker || len(sender.messages) != 1 {
+		t.Fatalf("resume picker=%v messages=%d", m.sessionPicker, len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[0])
+	if err != nil || string(wire) != `{"type":"resume","sessionId":"sess-old"}` {
+		t.Fatalf("resume request=%s err=%v", wire, err)
+	}
+	m.transcript.Turns = []Turn{{Role: "user", Text: "stale"}}
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-old"})
+	if m.sessionID != "sess-old" || len(m.transcript.Turns) != 0 {
+		t.Fatalf("resumed session=%q transcript=%#v", m.sessionID, m.transcript.Turns)
+	}
+}
+
+func TestSessionPickerRefusesResumeWhileRunning(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.running = true
+	m.sessionPicker = true
+	m.sessionOptions = []protocol.SessionSummary{{ID: "sess-old"}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.sessionPicker || len(sender.messages) != 0 {
+		t.Fatalf("running resume picker=%v messages=%d", m.sessionPicker, len(sender.messages))
+	}
+	if len(m.notices.Items) == 0 || !strings.Contains(m.notices.Items[len(m.notices.Items)-1].Message, "resume blocked") {
+		t.Fatalf("missing running-resume notice: %#v", m.notices.Items)
+	}
+}
+
 func TestModelPickerFiltersAndAcceptsCustomID(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

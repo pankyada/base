@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
@@ -219,6 +220,58 @@ func modelPicker(models []protocol.ModelInfo, cursor int, filter string, custom 
 	return modalFrame(StAccentB.Render("MODEL")+"\n"+
 		modelBody(models, cursor, filter, custom, customInput, modalInnerWidth(width))+"\n\n"+
 		StDim.Render("↑/↓ choose · / filter · enter apply · esc close"), width, height)
+}
+
+func sessionBody(sessions []protocol.SessionSummary, cursor, innerWidth int) string {
+	if len(sessions) == 0 {
+		return StFaint.Render("no past sessions")
+	}
+	dateWidth, costWidth := 12, 10
+	titleWidth := maxInt(8, innerWidth-dateWidth-costWidth-5)
+	lines := []string{StDim.Render("date"), ""}
+	for i, session := range sessions {
+		marker := "  "
+		if i == cursor {
+			marker = StAccent.Render("› ")
+		}
+		title := session.Title
+		if title == "" {
+			title = session.Summary
+		}
+		if title == "" {
+			title = session.ID
+		}
+		row := marker + pad(truncate(sessionDate(session.CreatedAt), dateWidth), dateWidth) + "  " +
+			pad(truncate(title, titleWidth), titleWidth) + "  " + StFaint.Render(fmt.Sprintf("$%.4f", session.Usage.CostUSD))
+		lines = append(lines, truncate(row, innerWidth))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sessionDate(createdAt string) string {
+	created, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return "unknown"
+	}
+	age := time.Since(created)
+	switch {
+	case age < time.Minute:
+		return "now"
+	case age < time.Hour:
+		return fmt.Sprintf("%dm ago", int(age/time.Minute))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(age/time.Hour))
+	case age < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(age/(24*time.Hour)))
+	default:
+		return created.Local().Format("Jan 02")
+	}
+}
+
+func sessionPicker(sessions []protocol.SessionSummary, cursor, width, height int) string {
+	return modalFrame(StAccentB.Render("SESSIONS")+"\n"+
+		sessionBody(sessions, cursor, modalInnerWidth(width))+"\n\n"+
+		StDim.Render("↑/↓ choose · enter resume · esc close"), width, height)
 }
 
 // themeBody renders the theme chooser as bare content — a swatch of each
