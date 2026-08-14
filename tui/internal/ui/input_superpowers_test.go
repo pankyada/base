@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"harness-tui/internal/prefs"
 )
 
 func TestMentionIndexRunsAsCommandAndSkipsIgnoredDirs(t *testing.T) {
@@ -56,5 +60,41 @@ func TestLocalCommandCanBeInterrupted(t *testing.T) {
 	result, ok := cmd().(localResultMsg)
 	if !ok || result.Code != 130 {
 		t.Fatalf("local result=%#v", result)
+	}
+}
+
+func TestCompletionOwnsTabAndAcceptsWithoutOpeningOverlay(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.composer.input.SetValue("/th")
+	m.recomputeCompletion()
+	m.reflow()
+	if !m.completion.Open || !m.keys.AcceptCompletion.Enabled() || m.keys.Overlay.Enabled() {
+		t.Fatalf("completion key ownership missing: open=%v accept=%v overlay=%v", m.completion.Open, m.keys.AcceptCompletion.Enabled(), m.keys.Overlay.Enabled())
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if m.composer.Value() != "/theme" || m.completion.Open || m.overlayOpen {
+		t.Fatalf("tab completion value=%q completion=%v overlay=%v", m.composer.Value(), m.completion.Open, m.overlayOpen)
+	}
+}
+
+func TestCompletionEnterAcceptsAndEscDismisses(t *testing.T) {
+	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
+	m.composer.input.SetValue("/th")
+	m.recomputeCompletion()
+	m.reflow()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.composer.Value() != "/theme" || m.running {
+		t.Fatalf("enter completion value=%q running=%v", m.composer.Value(), m.running)
+	}
+	m.composer.input.SetValue("/mo")
+	m.recomputeCompletion()
+	m.reflow()
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = updated.(Model)
+	if m.completion.Open || m.keys.AcceptCompletion.Enabled() {
+		t.Fatal("esc should dismiss popup without clearing composer")
 	}
 }

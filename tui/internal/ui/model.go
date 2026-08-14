@@ -99,6 +99,7 @@ type Model struct {
 	mentionValue       string
 	mentionMatches     []string
 	mentionCapped      bool
+	completion         Completion
 	attachments        []Attachment
 	localCancel        context.CancelFunc
 	lastLocal          *localResultMsg
@@ -174,7 +175,7 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 	if mode := preferences.ApprovalModeByProfile[profile]; mode == "strict" || mode == "bash" || mode == "danger" || mode == "yolo" {
 		m.approvalMode = mode
 	}
-	m.railVisible = preferences.RailVisible
+	m.railVisible = !preferences.RailHidden
 	m.overlayTab = preferences.OverlayTab
 	m.density = preferences.DensityMode
 	if m.density != "full" && m.density != "compact" && m.density != "normal" {
@@ -365,6 +366,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.mentionValue = msg.Value
 			m.mentionMatches = msg.Matches
 			m.mentionCapped = msg.Capped
+			m.recomputeCompletion()
 			m.reflow()
 		}
 		return m, nil
@@ -395,6 +397,29 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modelPicker {
 		return m.updateModelPicker(msg)
 	}
+	if m.completion.Open {
+		switch msg.String() {
+		case "up":
+			m.completion.Move(-1)
+			m.reflow()
+			return m, nil
+		case "down":
+			m.completion.Move(1)
+			m.reflow()
+			return m, nil
+		case "tab", "enter":
+			if value, ok := m.completion.Accept(m.composer.Value()); ok {
+				m.composer.input.SetValue(value)
+				m.clearCompletion()
+				m.reflow()
+			}
+			return m, nil
+		case "esc":
+			m.clearCompletion()
+			m.reflow()
+			return m, nil
+		}
+	}
 	if m.overlayOpen {
 		return m.updateOverlay(msg)
 	}
@@ -423,20 +448,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notices.Clear()
 		m.reflow()
 		return m, nil
-	case msg.String() == "tab" && len(slashMatches(m.composer.Value())) > 0:
-		matches := slashMatches(m.composer.Value())
-		m.composer.input.SetValue(matches[0] + " ")
-		m.reflow()
-		return m, nil
 	case msg.String() == "tab":
-		mentions := m.mentionMatches
-		if m.mentionValue == m.composer.Value() && len(mentions) > 0 {
-			value := m.composer.Value()
-			at := strings.LastIndex(value, "@")
-			m.composer.input.SetValue(value[:at] + mentions[0] + " ")
-			m.reflow()
-			return m, nil
-		}
 		m.openOverlay(m.prefs.OverlayTab)
 		m.reflow()
 		return m, nil
@@ -476,7 +488,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notices.Add(NoticeInfo, "context rail unavailable", "requires 100+ columns", "resize terminal")
 		} else {
 			m.railVisible = !m.railVisible
-			m.prefs.RailVisible = m.railVisible
+			m.prefs.RailHidden = !m.railVisible
 			_ = m.prefs.Save("")
 		}
 		m.reflow()
@@ -1380,6 +1392,7 @@ func matches(msg tea.KeyMsg, binding interface {
 
 func (m *Model) submit() tea.Cmd {
 	content := m.composer.Submit()
+	m.clearCompletion()
 	// Attachments alone are a valid message — dropping a file and pressing
 	// enter should send it without requiring accompanying text.
 	if content == "" && len(m.attachments) == 0 {
@@ -1616,10 +1629,36 @@ func (m *Model) scheduleMentionIndex() tea.Cmd {
 		m.mentionValue = ""
 		m.mentionMatches = nil
 		m.mentionCapped = false
+		m.recomputeCompletion()
 		return nil
 	}
 	m.mentionValue = value
+	m.recomputeCompletion()
 	return mentionIndexCmd(value, m.workingDir)
+}
+
+func (m *Model) recomputeCompletion() {
+	commands := make([]CompletionItem, 0, len(slashOrder))
+	for _, name := range slashOrder {
+		commands = append(commands, CompletionItem{
+			Label:  "/" + name,
+			Detail: slashCommands[name],
+			Insert: "/" + name,
+			Kind:   CompletionCommand,
+		})
+	}
+	files := make([]string, 0, len(m.mentionMatches))
+	if m.mentionValue == m.composer.Value() {
+		for _, match := range m.mentionMatches {
+			files = append(files, strings.TrimPrefix(match, "@"))
+		}
+	}
+	m.completion.Recompute(m.composer.Value(), commands, nil, files)
+}
+
+func (m *Model) clearCompletion() {
+	m.completion = Completion{}
+	m.keys.SetCompletionOpen(false)
 }
 
 func (m *Model) currentAgent() *Turn {
@@ -1834,6 +1873,7 @@ func truncateToolResult(result string) string {
 
 func (m *Model) reflow() {
 	width := maxInt(1, m.width)
+	m.keys.SetCompletionOpen(m.completion.Open)
 	// The composer, notices and status bar span the full terminal; only the
 	// transcript gives up columns to the rail, which keeps the rail a fixed
 	// column beside the scrollback rather than a sidebar around everything.
@@ -1936,14 +1976,8 @@ func (m Model) View() string {
 	if notices := m.notices.View(m.width); notices != "" {
 		parts = append(parts, notices)
 	}
-	if suggestions := slashMatches(m.composer.Value()); len(suggestions) > 0 {
-		parts = append(parts, StDim.Render(strings.Join(suggestions, "  ")))
-	} else if m.mentionValue == m.composer.Value() && len(m.mentionMatches) > 0 {
-		hint := strings.Join(m.mentionMatches[:minInt(5, len(m.mentionMatches))], "  ")
-		if m.mentionCapped {
-			hint += "  " + StFaint.Render("showing first 20k")
-		}
-		parts = append(parts, StDim.Render(hint))
+	if completion := m.completion.View(m.width); completion != "" {
+		parts = append(parts, completion)
 	}
 	if chips := attachmentBar(m.attachments, m.width); chips != "" {
 		parts = append(parts, chips)
