@@ -7,18 +7,21 @@ import type { Skill } from '../tools/types.js'
 
 export type { Skill }
 
-let _gitRootCached: string | null | undefined = undefined
+const _gitRootCached = new Map<string, string | null>()
 
-function getGitRoot(): string | null {
-  if (_gitRootCached !== undefined) return _gitRootCached
+export function getGitRoot(cwd = process.cwd()): string | null {
+  const cached = _gitRootCached.get(cwd)
+  if (cached !== undefined) return cached
   try {
-    _gitRootCached = execSync('git rev-parse --show-toplevel', { stdio: 'pipe', timeout: 3000 })
+    const root = execSync('git rev-parse --show-toplevel', { cwd, stdio: 'pipe', timeout: 3000 })
       .toString()
       .trim()
+    _gitRootCached.set(cwd, root)
+    return root
   } catch {
-    _gitRootCached = null
+    _gitRootCached.set(cwd, null)
+    return null
   }
-  return _gitRootCached
 }
 
 export function resolveSkillsDirs(): string[] {
