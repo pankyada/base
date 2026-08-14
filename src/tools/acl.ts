@@ -2,6 +2,7 @@ import { AclValue, ApprovalMode } from '../types.js'
 import type { Profile } from '../profiles/schema.js'
 import { matchesPredicate, type Predicate } from './predicates.js'
 import type { MemoryProvider, MemoryScope } from '../memory/interface.js'
+import type { StageAclOverlay } from '../workflow/stage-acl.js'
 
 export type ConditionalAcl = { default: AclValue; allow_if?: Predicate[]; deny_if?: Predicate[] }
 export type AclConfig = AclValue | ConditionalAcl
@@ -52,6 +53,12 @@ function modeDecision(toolName: string, decision: AclDecision, mode: ApprovalMod
   return decision
 }
 
+function applyStageOverlay(toolName: string, decision: AclDecision, overlay?: StageAclOverlay): AclDecision {
+  if (decision.value === 'deny') return decision
+  if (overlay?.[toolName] === 'deny') return { value: 'deny', decided_by: 'mode', reason: 'stage ACL overlay' }
+  return decision
+}
+
 function referencedMemoryLists(value: AclConfig | undefined, profile: Profile): Set<string> {
   if (!value || typeof value === 'string') return new Set()
   const sources = new Set<string>()
@@ -76,12 +83,13 @@ export function resolveAclDecision(
   profile: Profile,
   mode: ApprovalMode = 'danger',
   serverName?: string,
+  overlay?: StageAclOverlay,
 ): AclDecision {
   const raw = rawAcl(toolName, profile, serverName)
   const memoryLists = referencedMemoryLists(raw, profile)
   if (memoryLists.size > 0) return { value: 'deny', decided_by: 'predicate', reason: 'memory list requires async resolution' }
   const lists = Object.fromEntries(Object.entries(profile.lists ?? {}).filter(([, value]) => Array.isArray(value))) as Record<string, unknown[]>
-  return modeDecision(toolName, configuredValue(raw, input, lists), mode, serverName)
+  return modeDecision(toolName, applyStageOverlay(toolName, configuredValue(raw, input, lists), overlay), mode, serverName)
 }
 
 /** Resolve memory-backed lists with a short cache. Any source failure denies. */
@@ -92,6 +100,7 @@ export async function resolveAclDecisionWithMemory(
   memory: MemoryProvider,
   mode: ApprovalMode = 'danger',
   serverName?: string,
+  overlay?: StageAclOverlay,
 ): Promise<AclDecision> {
   const lists: Record<string, unknown[]> = {}
   const unavailable = new Set<string>()
@@ -143,11 +152,11 @@ export async function resolveAclDecisionWithMemory(
       return { value: 'deny', decided_by: 'predicate', reason: 'memory list unavailable' }
     }
   }
-  return modeDecision(toolName, configuredValue(raw, input, lists), mode, serverName)
+  return modeDecision(toolName, applyStageOverlay(toolName, configuredValue(raw, input, lists), overlay), mode, serverName)
 }
 
 /** Resolve the legacy mode-only ACL without relaxing a configured deny. */
-export function resolveAcl(toolName: string, profile: Profile, mode: ApprovalMode = 'danger', serverName?: string): AclValue {
+export function resolveAcl(toolName: string, profile: Profile, mode: ApprovalMode = 'danger', serverName?: string, overlay?: StageAclOverlay): AclValue {
   const value = serverName ? getMcpAcl(serverName, toolName, profile) : getAcl(toolName, profile)
-  return modeDecision(toolName, { value, decided_by: 'default', reason: 'profile ACL' }, mode, serverName).value
+  return modeDecision(toolName, applyStageOverlay(toolName, { value, decided_by: 'default', reason: 'profile ACL' }, overlay), mode, serverName).value
 }

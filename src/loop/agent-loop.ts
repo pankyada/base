@@ -18,6 +18,7 @@ import { calibrate, estimateTokens, rawTokens } from '../context/estimator.js'
 import { withRetry } from './retry.js'
 import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
 import type { StageTag } from '../workflow/types.js'
+import { stageAcl } from '../workflow/stage-acl.js'
 import { isParkSignal, ParkSignal } from '../runs/park.js'
 
 export { estimateCost }
@@ -57,6 +58,7 @@ export async function runAgentLoop(
   }
 ): Promise<void> {
   const modelId = opts?.modelId ?? profile.model.id
+  const stageOverlay = opts?.stage && opts.stage.stage !== 'triage' ? stageAcl(opts.stage.stage) : undefined
   if (opts?.appendUser !== false) {
     session.taint_sources = [...(context.taintSources ?? [])]
     session.messages.push({ role: 'user', content: userMessage })
@@ -288,7 +290,7 @@ export async function runAgentLoop(
         const baseName = isMcp ? tc.name.split('__', 2)[1] : tc.name
         // Skip classification for calls the profile already denies outright —
         // resolveAcl will short-circuit to 'deny' below regardless of risk.
-        if (resolveAcl(baseName, profile, 'danger', serverName) === 'deny') return
+        if (resolveAcl(baseName, profile, 'danger', serverName, stageOverlay) === 'deny') return
         const verdict = context.openai
           ? await classify(tc.name, parsedInputs[idx], context)
           : { ...classifyStatic(tc.name, parsedInputs[idx], context.workingDir), source: 'static' as const }
@@ -322,7 +324,7 @@ export async function runAgentLoop(
       const isMcp = tc.name.includes('__')
       const serverName = isMcp ? tc.name.split('__', 2)[0] : undefined
       const baseName = isMcp ? tc.name.split('__', 2)[1] : tc.name
-      const decision = await resolveAclDecisionWithMemory(baseName, input, profile, context.memory, context.approvalMode ?? 'danger', serverName)
+      const decision = await resolveAclDecisionWithMemory(baseName, input, profile, context.memory, context.approvalMode ?? 'danger', serverName, stageOverlay)
       let acl = decision.value
       let risk: 'safe' | 'caution' | 'danger' | undefined
       let reason: string | undefined
