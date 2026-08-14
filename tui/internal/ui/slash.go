@@ -50,10 +50,10 @@ func slashHelp() string {
 }
 
 func slashMatches(value string) []string {
-	if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, " \n") {
+	query, ok := slashQuery(value)
+	if !ok {
 		return nil
 	}
-	query := strings.TrimPrefix(value, "/")
 	var matches []string
 	for _, command := range slashOrder {
 		if strings.HasPrefix(command, query) {
@@ -61,4 +61,13 @@ func slashMatches(value string) []string {
 		}
 	}
 	return matches
+}
+
+// slashQuery centralizes the inline completion trigger rule. Slash commands
+// only complete while the composer contains the command token, before args.
+func slashQuery(value string) (string, bool) {
+	if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, " \n") {
+		return "", false
+	}
+	return strings.TrimPrefix(value, "/"), true
 }
