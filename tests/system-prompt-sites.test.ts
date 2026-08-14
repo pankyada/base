@@ -116,5 +116,17 @@ describe('project context in system prompts', () => {
     expect(rest).toBe(interactive)
   })
 
+  it('omits project context when the profile kill switch is disabled', async () => {
+    const memory = { buildSystemPromptSection: vi.fn().mockResolvedValue('') } as any
+    const disabled = await buildInteractiveSystemPrompt(
+      { ...profile, context: { project_files: false } },
+      false,
+      '',
+      memory,
+    )
+
+    expect(disabled).toBe('BASE-PROMPT')
+  })
+
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 })

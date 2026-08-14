@@ -230,6 +230,7 @@ const ContextSchema = z.object({
   pin_budget: z.number().min(0).max(1).default(0.25),
   digest_model_id: z.string().optional(),
   cache: z.boolean().default(false),
+  project_files: z.boolean().default(true),
 }).superRefine((value, ctx) => {
   if (value.high_water <= value.low_water) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['high_water'], message: 'high_water must be greater than low_water' })

@@ -86,6 +86,7 @@ pointer to what replaced them.
 | [62](#adr-62) | The assistant is named Mitra | 📋 | product |
 | [63](#adr-63) | Product state lives in `~/.mitra/`, separate from `~/.harness/` | 📋 | product |
 | [64](#adr-64) | Harness edits never happen from inside the product repo | 📋 | product |
+| [66](#adr-66) | Project instruction files are trusted prompt context | ✅ | context |
 
 ---
 
@@ -837,3 +838,18 @@ the model, and webhook ingress requires a constant-time shared-secret check.
 *Consequences:* New transports need no core change, but adapters must expose
 their own validation and retry behavior. Approval delivery degrades closed
 when no bound recipient or approved channel exists.
+
+### ADR-66
+**Project instruction files are trusted prompt context** — ✅
+
+*Context:* Agents need the repository's `AGENTS.md` and `CLAUDE.md` conventions
+to behave consistently across interactive, delegated, and REST runs.
+*Decision:* Discover those files using the established four-level,
+last-write-wins ladder and inject them with per-file provenance headers at the
+same trust level as the profile's `system_prompt`.
+*Accepted risk:* A hostile repository can grant its `AGENTS.md` system-prompt
+authority. Operators can disable discovery with `context.project_files: false`,
+and the provenance header keeps the source of every instruction visible in the
+assembled prompt.
+*Consequences:* Normal operator repositories need no prompt duplication, while
+untrusted checkouts have an explicit kill switch and visible instruction source.

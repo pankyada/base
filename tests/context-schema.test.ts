@@ -35,6 +35,25 @@ describe('context schema', () => {
     expect(profile.context.digest_model_id).toBe('x')
   })
 
+  it('defaults project files on and supports the profile kill switch', () => {
+    const defaults = ProfileSchema.parse({
+      name: 'x',
+      model: { base_url: 'https://example.com', api_key_env: 'KEY', id: 'model' },
+      system_prompt: '/tmp/prompt',
+      artifact_dir: '/tmp/art',
+    })
+    const disabled = ProfileSchema.parse({
+      name: 'x',
+      model: { base_url: 'https://example.com', api_key_env: 'KEY', id: 'model' },
+      system_prompt: '/tmp/prompt',
+      artifact_dir: '/tmp/art',
+      context: { project_files: false },
+    })
+
+    expect(defaults.context.project_files).toBe(true)
+    expect(disabled.context.project_files).toBe(false)
+  })
+
   it('rejects a high water mark that is not above low water', () => {
     expect(() => ProfileSchema.parse({
       name: 'x',

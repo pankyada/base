@@ -589,6 +589,7 @@ async function main() {
             pin_budget: connectionProfile.context?.pin_budget ?? 0.25,
             digest_model_id: connectionProfile.context?.digest_model_id,
             cache: connectionProfile.context?.cache ?? false,
+            project_files: connectionProfile.context?.project_files ?? true,
           },
         }
         const afterProjection = await project(session, compactProfile, connectionOpenai, memory)
