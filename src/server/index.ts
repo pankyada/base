@@ -39,6 +39,7 @@ import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
+import { applyUndoEntry, listUndoEntries } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
 import { isParkSignal } from '../runs/park.js'
 import { resumeExpiredInput, resumePendingInput } from '../runs/resume.js'
@@ -408,6 +409,7 @@ async function main() {
         if (choice === 'cancel') {
           runStore.update(runId, { status: 'completed', finished_at: new Date().toISOString() })
           send({ type: 'notice', level: 'info', message: 'plan cancelled', detail: 'no session or artifact changes made' })
+          send({ type: 'session_end', sessionId: session.id })
           return
         }
         let planBody = preview.body
@@ -512,6 +514,18 @@ async function main() {
 
       if (msg.type === 'pending_list') {
         sendPending()
+        return
+      }
+
+      if (msg.type === 'undo_list') {
+        send({ type: 'undo_entries', entries: listUndoEntries(userId, session.id) })
+        return
+      }
+
+      if (msg.type === 'undo_apply') {
+        const result = await applyUndoEntry(userId, session.id, msg.id, connectionProfile)
+        send({ type: 'notice', level: result.startsWith('undid ') ? 'info' : 'warn', message: result })
+        send({ type: 'undo_entries', entries: listUndoEntries(userId, session.id) })
         return
       }
 

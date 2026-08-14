@@ -6,8 +6,9 @@ import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { GraphMemoryProvider } from '../memory/graph-memory.js'
 import type { AuditEntry } from './journal.js'
 import type { MemoryRecord, MemoryScope } from '../memory/interface.js'
+import type { Profile } from '../profiles/schema.js'
 
-export async function undoAuditEntry(entry: AuditEntry, profilePath: string): Promise<string> {
+export async function undoAuditEntry(entry: AuditEntry, profilePath: string | Profile): Promise<string> {
   if (!entry.undo) return `audit entry ${entry.id} is not undoable`
   if (entry.undo.expires_at && Date.parse(entry.undo.expires_at) <= Date.now()) return `audit entry ${entry.id} undo window has expired`
   const { kind, payload } = entry.undo
@@ -23,7 +24,7 @@ export async function undoAuditEntry(entry: AuditEntry, profilePath: string): Pr
     const scope = payload.scope as MemoryScope
     const key = payload.key
     if (!['session', 'profile', 'user', 'project'].includes(scope) || typeof key !== 'string') return `audit entry ${entry.id} has invalid memory inverse`
-    const profile = loadProfile(profilePath)
+    const profile = typeof profilePath === 'string' ? loadProfile(profilePath) : profilePath
     const session = createSession(profile.name, entry.user); session.project = typeof payload.project === 'string' ? payload.project : 'inbox'
     const memory = profile.memory?.provider === 'graph' ? new GraphMemoryProvider(profile.artifact_dir, session) : new FsMemoryProvider(profile.artifact_dir, session)
     const before = payload.before as MemoryRecord | null

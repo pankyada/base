@@ -179,6 +179,8 @@ export type ClientMessage =
   | { type: 'compact' }
   | { type: 'pending_list' }
   | { type: 'pending_answer'; pending_id: string; value: string }
+  | { type: 'undo_list' }
+  | { type: 'undo_apply'; id: string }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -209,6 +211,7 @@ export type ServerMessage =
   | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number }
   | { type: 'plan'; content: string }
   | { type: 'pending'; pending: PendingInput[] }
+  | { type: 'undo_entries'; entries: UndoEntry[] }
   | { type: 'transcript_partial'; text: string; final: boolean }
   | { type: 'audio_out_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
   | { type: 'audio_out_end'; reason: 'complete' | 'interrupted' | 'error' }
@@ -223,6 +226,17 @@ export interface ArtifactWidget {
   meta?: string
   data?: unknown
   [key: string]: unknown
+}
+
+export interface UndoEntry {
+  id: string
+  ts: string
+  tool: string
+  target: string
+  expires_at?: string
+  available: boolean
+  applied: boolean
+  reason?: string
 }
 
 export interface UIMessage {
