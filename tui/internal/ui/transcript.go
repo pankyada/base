@@ -58,33 +58,36 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 	var hits []HitRow
 	row := 0
 	for turnIndex, t := range tr.Turns {
+		turnStart := row
+		turnWidth := maxInt(4, width-1)
 		if t.Role == "user" {
-			rendered := userBubble(t, width)
+			rendered := roleGutter(t.Role, userBubble(t, turnWidth))
 			blocks = append(blocks, rendered)
-			row += lipgloss.Height(rendered) + 1
+			row = turnStart + lipgloss.Height(rendered) + 1
 			continue
 		}
 		if t.Role == "local" {
-			rendered := StDim.Render("LOCAL") + "\n" + StText.Render(t.Text)
+			rendered := roleGutter(t.Role, StDim.Render("LOCAL")+"\n"+lipgloss.NewStyle().Width(turnWidth).Foreground(ColText).Render(t.Text))
 			blocks = append(blocks, rendered)
-			row += lipgloss.Height(rendered) + 1
+			row = turnStart + lipgloss.Height(rendered) + 1
 			continue
 		}
 		if t.Role == "task" {
 			// Task blocks are pre-rendered by the model each frame so they
 			// track their process's live output.
-			blocks = append(blocks, t.Text)
-			row += lipgloss.Height(t.Text) + 1
+			rendered := roleGutter(t.Role, t.Text)
+			blocks = append(blocks, rendered)
+			row = turnStart + lipgloss.Height(rendered) + 1
 			continue
 		}
 		if t.Role == "memory" {
-			rendered := StOK.Render("REMEMBERED") + StDim.Render(" · "+t.Time) + "\n" + StText.Render(t.Text)
+			rendered := roleGutter(t.Role, StOK.Render("REMEMBERED")+StDim.Render(" · "+t.Time)+"\n"+lipgloss.NewStyle().Width(turnWidth).Foreground(ColText).Render(t.Text))
 			blocks = append(blocks, rendered)
-			row += lipgloss.Height(rendered) + 1
+			row = turnStart + lipgloss.Height(rendered) + 1
 			continue
 		}
 		// agent
-		header := StDim.Render("HARNESS ◆ " + t.Time)
+		header := lipgloss.NewStyle().Foreground(roleColor(t.Role)).Render("HARNESS ◆") + " " + StFaint.Render(t.Time)
 		parts := []string{header}
 		row += lipgloss.Height(header)
 		sectionPtrs := make([]*Section, len(t.Sections))
@@ -94,12 +97,12 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 		for _, entry := range BuildTimeline(sectionPtrs, t.ExpandedGroups) {
 			if entry.Group != nil {
 				hits = append(hits, HitRow{Y: row, TurnIndex: turnIndex, GroupKey: entry.Group.Key})
-				rendered := entry.Group.Render(width, frame, tr.AllExpanded)
+				rendered := entry.Group.Render(turnWidth, frame, tr.AllExpanded)
 				itemRow := row + 1
 				forceOpen := entry.Group.Expanded || tr.AllExpanded
 				for _, item := range entry.Group.Items {
 					hits = append(hits, HitRow{Y: itemRow, TurnIndex: turnIndex, Item: item})
-					itemRow += lipgloss.Height(item.Render(groupItemWidth(width), frame, forceOpen))
+					itemRow += lipgloss.Height(item.Render(groupItemWidth(turnWidth), frame, forceOpen))
 				}
 				parts = append(parts, rendered)
 				row += lipgloss.Height(rendered)
@@ -110,7 +113,7 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 			// than as one more row of routine work.
 			hits = append(hits, HitRow{Y: row, TurnIndex: turnIndex, Item: entry.Standalone})
 			rendered := indentLines(groupIndent,
-				entry.Standalone.Render(maxInt(0, width-len([]rune(groupIndent))), frame, tr.AllExpanded))
+				entry.Standalone.Render(maxInt(0, turnWidth-len([]rune(groupIndent))), frame, tr.AllExpanded))
 			parts = append(parts, rendered)
 			row += lipgloss.Height(rendered)
 		}
@@ -145,7 +148,7 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 			}
 			addedAny := false
 			if lead != "" {
-				body := renderAgentText(lead, width)
+				body := renderAgentText(lead, turnWidth)
 				parts = append(parts, body)
 				row += lipgloss.Height(body)
 				addedAny = true
@@ -178,7 +181,7 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 					BorderForeground(ColBorder).
 					MarginLeft(1).
 					PaddingLeft(1).
-					Render(renderAgentText(bodyOnly, maxInt(4, width-4)))
+					Render(renderAgentText(bodyOnly, maxInt(4, turnWidth-4)))
 				parts = append(parts, expandedBody)
 				row += lipgloss.Height(expandedBody)
 			}
@@ -204,11 +207,19 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 			parts = append(parts, footer)
 			row += lipgloss.Height(footer)
 		}
-		rendered := lipgloss.JoinVertical(lipgloss.Left, parts...)
+		rendered := roleGutter(t.Role, lipgloss.JoinVertical(lipgloss.Left, parts...))
 		blocks = append(blocks, rendered)
-		row++
+		row = turnStart + lipgloss.Height(rendered) + 1
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, spread(blocks)...), hits
+}
+
+func roleGutter(role, content string) string {
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderForeground(roleColor(role)).
+		Render(content)
 }
 
 // spread inserts a blank line between blocks.

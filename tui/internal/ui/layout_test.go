@@ -84,6 +84,21 @@ func TestComposerSpansFullWidthEvenWithTheRailOpen(t *testing.T) {
 	}
 }
 
+func TestRoleGutterAddsOneColumnWithoutTranscriptOverflow(t *testing.T) {
+	const width = 40
+	content := strings.Repeat("long prose ", 20)
+	tr := Transcript{Turns: []Turn{{Role: "agent", Text: content, Elapsed: "1.0s"}}}
+	rendered, _ := tr.RenderWithHitMap(width, 0)
+	if got := lipgloss.Width(roleGutter("agent", "body")); got != lipgloss.Width("body")+1 {
+		t.Fatalf("gutter width = %d, want %d", got, lipgloss.Width("body")+1)
+	}
+	for i, line := range strings.Split(rendered, "\n") {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("transcript line %d overflows width: %d > %d", i, got, width)
+		}
+	}
+}
+
 func TestScrollbarOnlyAppearsWhenThereIsMoreBelow(t *testing.T) {
 	if got := stripANSI(scrollbarView(5, 5, 5, 0)); strings.TrimSpace(got) != "" {
 		t.Fatalf("content that fits needs no scrollbar, got %q", got)

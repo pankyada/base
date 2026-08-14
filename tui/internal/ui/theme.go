@@ -98,6 +98,25 @@ func categorySoftColor(category string) lipgloss.Color {
 	return lipgloss.Color(blendHex(categoryHex(category), currentTheme.Bg, categorySoftness))
 }
 
+// roleColor keeps turn identity visible even when the transcript body is
+// folded. The mono palette intentionally maps these to distinct greys.
+func roleColor(role string) lipgloss.Color {
+	switch role {
+	case "agent":
+		return ColAccent
+	case "user":
+		return ColPurple
+	case "task":
+		return ColTeal
+	case "memory":
+		return ColInfo
+	case "local":
+		return ColDim
+	default:
+		return ColDim
+	}
+}
+
 // blendHex linearly interpolates two "#RRGGBB" colors; t=0 returns a, t=1
 // returns b. Used to derive a dimmed shade of a theme's accent color for the
 // running-status pulse, without hand-picking a matching hex per theme.

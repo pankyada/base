@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -196,14 +197,30 @@ func TestTranscriptIndentsActivityUnderTurnHeader(t *testing.T) {
 			item = line
 		}
 	}
-	if !strings.HasPrefix(header, groupIndent+"▸") {
+	if !strings.HasPrefix(header, "│"+groupIndent+"▸") {
 		t.Fatalf("group header should be indented under the turn header, got %q", header)
 	}
-	if !strings.HasPrefix(item, itemIndent) {
+	if !strings.HasPrefix(item, "│"+itemIndent) {
 		t.Fatalf("item should hang off the group's guide column, got %q", item)
 	}
-	if strings.HasPrefix(lines[0], " ") {
+	if !strings.HasPrefix(lines[0], "│") {
 		t.Fatalf("turn header should stay at the left margin, got %q", lines[0])
+	}
+}
+
+func TestRoleGutterPreservesHitMapY(t *testing.T) {
+	tr := Transcript{Turns: []Turn{
+		{Role: "agent", Sections: []Section{{Name: "Read", Category: "files", State: SectionDone}}},
+		{Role: "agent", Sections: []Section{{Name: "Write", Category: "files", State: SectionDone}}},
+	}}
+	_, hits := tr.RenderWithHitMap(80, 0)
+	var rows []int
+	for _, hit := range hits {
+		rows = append(rows, hit.Y)
+	}
+	want := []int{1, 2, 5, 6} // same rows as the pre-gutter blocks
+	if !reflect.DeepEqual(rows, want) {
+		t.Fatalf("role gutter moved hit rows: got=%v want=%v", rows, want)
 	}
 }
 
