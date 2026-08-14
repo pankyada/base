@@ -164,6 +164,17 @@ func TestSessionPickerRefusesResumeWhileRunning(t *testing.T) {
 	}
 }
 
+func TestSessionsCommandOpensPickerWhileRunningInsteadOfQueueing(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.running = true
+	m.composer.input.SetValue("/sessions")
+	m.submit()
+	if !m.sessionPicker || len(m.queue) != 0 || len(sender.messages) != 1 {
+		t.Fatalf("running sessions picker=%v queue=%v messages=%d", m.sessionPicker, m.queue, len(sender.messages))
+	}
+}
+
 func TestContinueResumesNewestSessionAndStartsFreshWhenEmpty(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "coding", "tester", prefs.Preferences{})

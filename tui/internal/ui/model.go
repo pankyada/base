@@ -1453,6 +1453,10 @@ func (m *Model) submit() tea.Cmd {
 		return nil
 	}
 	if m.running {
+		if command, _, ok := slashCommand(content); ok && command == "sessions" {
+			m.requestSessions()
+			return nil
+		}
 		m.queue = append(m.queue, content)
 		m.notices.Add(NoticeInfo, "message queued", fmt.Sprintf("%d waiting", len(m.queue)), "ctrl+x clears queue")
 		return nil
