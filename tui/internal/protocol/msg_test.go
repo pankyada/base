@@ -83,6 +83,7 @@ func TestEncodeRevampClientMessages(t *testing.T) {
 		{"set_model", SetModel("gpt-5.4-mini"), `{"type":"set_model","model":"gpt-5.4-mini"}`},
 		{"approval", SetApprovalMode("danger"), `{"type":"set_approval_mode","mode":"danger"}`},
 		{"skills_list", SkillsList(), `{"type":"skills_list"}`},
+		{"commands_list", CommandsList(), `{"type":"commands_list"}`},
 		{"skill_get", SkillGet("linting", "proposed"), `{"type":"skill_get","name":"linting","source":"proposed"}`},
 		{"skill_save", SkillSave("linting", "---\nname: linting\ndescription: x\n---"), `{"type":"skill_save","name":"linting","content":"---\nname: linting\ndescription: x\n---"}`},
 		{"skill_promote", SkillPromote("linting"), `{"type":"skill_promote","name":"linting"}`},
@@ -111,6 +112,9 @@ func TestDecodeRevampServerMessages(t *testing.T) {
 		{`{"type":"stats","context_window":128000,"context_tokens":64000}`, func(m ServerMessage) bool { return m.ContextWindow == 128000 && m.ContextTokens == 64000 }},
 		{`{"type":"models","current":"gpt-5.4-mini","models":[{"id":"gpt-5.4-mini","available":true}]}`, func(m ServerMessage) bool { return m.Current == "gpt-5.4-mini" && len(m.Models) == 1 }},
 		{`{"type":"skills","proposed":[{"name":"x","source":"proposed"}],"installed":[]}`, func(m ServerMessage) bool { return len(m.Proposed) == 1 && m.Proposed[0].Source == "proposed" }},
+		{`{"type":"commands","commands":[{"name":"review","description":"review","template":"Review $ARGUMENTS"}]}`, func(m ServerMessage) bool {
+			return len(m.Commands) == 1 && m.Commands[0].Template == "Review $ARGUMENTS"
+		}},
 		{`{"type":"notice","level":"warn","message":"check","detail":"details"}`, func(m ServerMessage) bool { return m.Level == "warn" && m.Detail == "details" }},
 	}
 	for _, tc := range cases {

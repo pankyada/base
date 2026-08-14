@@ -108,3 +108,32 @@ func TestInstalledSkillCompletesAndDispatchesPrompt(t *testing.T) {
 		t.Fatalf("skill dispatch wire=%s err=%v", wire, err)
 	}
 }
+
+func TestCustomCommandExpandsArgumentsAndCanIgnoreThem(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "commands", Commands: []protocol.CommandSummary{
+		{Name: "review", Description: "review changes", Template: "Review $ARGUMENTS"},
+		{Name: "status", Description: "fixed text", Template: "Show status"},
+	}})
+	m.composer.input.SetValue("/review auth module")
+	m.submit()
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_end"})
+	m.composer.input.SetValue("/status ignored args")
+	m.submit()
+	if len(sender.messages) != 2 {
+		t.Fatalf("sent messages = %d", len(sender.messages))
+	}
+	for i, want := range []string{"Review auth module", "Show status"} {
+		wire, err := json.Marshal(sender.messages[i])
+		var envelope struct {
+			Content string `json:"content"`
+		}
+		if err == nil {
+			err = json.Unmarshal(wire, &envelope)
+		}
+		if err != nil || envelope.Content != want {
+			t.Fatalf("command %d wire=%s content=%q err=%v", i, wire, envelope.Content, err)
+		}
+	}
+}

@@ -10,6 +10,33 @@ export type InputRequestKind = 'text' | 'select' | 'multi_select'
 export type ApprovalMode = 'strict' | 'bash' | 'danger' | 'yolo'
 export type RiskLevel = 'safe' | 'caution' | 'danger'
 
+/**
+ * A unit of generated UI handed to a browser client for rendering inside an
+ * isolated surface. The runtime never executes any of these fields — they are
+ * opaque payloads forwarded to whatever sandbox the client provides.
+ */
+export interface SurfaceSpec {
+  id: string
+  title?: string
+  mode: 'replace' | 'patch'
+  html?: string
+  css?: string
+  js?: string
+  python?: string
+  data?: Record<string, unknown>
+  open?: boolean
+}
+
+/** What the client reports back after attempting to render a SurfaceSpec. */
+export interface SurfaceRenderResult {
+  id: string
+  ok: boolean
+  errors: string[]
+  stdout?: string
+  duration_ms: number
+  bytes: number
+}
+
 export interface ModelInfo {
   id: string
   label: string
@@ -29,6 +56,12 @@ export interface SkillSummary {
   path: string
   source: 'proposed' | 'installed'
   mtime: string
+}
+
+export interface CommandSummary {
+  name: string
+  description: string
+  template: string
 }
 
 export interface TodoItem {
@@ -127,6 +160,7 @@ export type ClientMessage =
   | { type: 'tool_deny'; id: string }
   | { type: 'input_response'; id: string; value: string }
   | { type: 'code_result'; id: string; stdout: string; stderr: string; exit_code: number; files: Record<string, string> }
+  | { type: 'ui_result'; id: string; ok: boolean; errors?: string[]; stdout?: string; duration_ms?: number; bytes?: number }
   | { type: 'project_create'; name: string; description?: string }
   | { type: 'project_list' }
   | { type: 'project_assign'; sessionId: string; projectId: string }
@@ -135,6 +169,7 @@ export type ClientMessage =
   | { type: 'set_model'; model: string }
   | { type: 'set_approval_mode'; mode: ApprovalMode }
   | { type: 'skills_list' }
+  | { type: 'commands_list' }
   | { type: 'skill_get'; name: string; source: 'proposed' | 'installed' }
   | { type: 'skill_save'; name: string; content: string }
   | { type: 'skill_promote'; name: string }
@@ -158,6 +193,7 @@ export type ServerMessage =
   | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[] }
   | { type: 'todos'; todos: TodoItem[] }
   | { type: 'code_execute'; id: string; code: string; language: string; data?: Record<string, unknown> }
+  | { type: 'ui_render'; surface: SurfaceSpec }
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
@@ -165,6 +201,7 @@ export type ServerMessage =
   | { type: 'model_changed'; model: string }
   | { type: 'approval_mode_changed'; mode: ApprovalMode }
   | { type: 'skills'; proposed: SkillSummary[]; installed: SkillSummary[] }
+  | { type: 'commands'; commands: CommandSummary[] }
   | { type: 'skill_content'; name: string; source: string; path: string; content: string }
   | { type: 'skill_result'; action: 'saved' | 'promoted' | 'discarded'; name: string; path?: string }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }

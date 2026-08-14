@@ -68,6 +68,12 @@ type SkillSummary struct {
 	MTime       string `json:"mtime"`
 }
 
+type CommandSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Template    string `json:"template"`
+}
+
 // PendingInput mirrors PendingInput in src/runs/pending.ts.
 type PendingInput struct {
 	ID          string                 `json:"id"`
@@ -135,6 +141,7 @@ type ServerMessage struct {
 	Current   string           `json:"current,omitempty"`   // models
 	Proposed  []SkillSummary   `json:"proposed,omitempty"`
 	Installed []SkillSummary   `json:"installed,omitempty"`
+	Commands  []CommandSummary `json:"commands,omitempty"`
 	Source    string           `json:"source,omitempty"`
 	Path      string           `json:"path,omitempty"`
 	Action    string           `json:"action,omitempty"`
@@ -179,6 +186,7 @@ func (setApprovalModeMsg) isClientMessage() {}
 func (modelsListMsg) isClientMessage()      {}
 func (setModelMsg) isClientMessage()        {}
 func (skillsListMsg) isClientMessage()      {}
+func (commandsListMsg) isClientMessage()    {}
 func (skillGetMsg) isClientMessage()        {}
 func (skillSaveMsg) isClientMessage()       {}
 func (skillPromoteMsg) isClientMessage()    {}
@@ -254,6 +262,12 @@ type skillsListMsg struct {
 }
 
 func SkillsList() ClientMessage { return skillsListMsg{Type: "skills_list"} }
+
+type commandsListMsg struct {
+	Type string `json:"type"`
+}
+
+func CommandsList() ClientMessage { return commandsListMsg{Type: "commands_list"} }
 
 type skillGetMsg struct {
 	Type   string `json:"type"`

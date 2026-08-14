@@ -23,6 +23,7 @@ import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { GraphMemoryProvider } from '../memory/graph-memory.js'
 import { MemoryProvider } from '../memory/interface.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
+import { commandSummaries, loadAllCommands, resolveCommandDirs } from '../skills/commands.js'
 import { registerAll, clearRegistry, registerTool } from '../tools/builtin/index.js'
 import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
@@ -276,6 +277,7 @@ async function main() {
     const pendingApprovals = new Map<string, (approved: boolean) => void>()
     const pendingInputRequests = new Map<string, (value: string) => void>()
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
+    const pendingRenders = new Map<string, (result: any) => void>()
     let mcpEntries: McpEntry[] = []
     let mcpLoaded = false
     let mcpIdleTimer: ReturnType<typeof setTimeout> | undefined
@@ -500,6 +502,13 @@ async function main() {
         return
       }
 
+      if (msg.type === 'commands_list') {
+        // Refresh on request so a command added under .agents/commands appears
+        // without restarting the server.
+        send({ type: 'commands', commands: commandSummaries(loadAllCommands(resolveCommandDirs())) })
+        return
+      }
+
       if (msg.type === 'skill_get') {
         try {
           const skill = readSkill(msg.name, msg.source, connectionProfile)
@@ -620,6 +629,22 @@ async function main() {
         return
       }
 
+      if (msg.type === 'ui_result') {
+        const cb = pendingRenders.get(msg.id)
+        if (cb) {
+          pendingRenders.delete(msg.id)
+          cb({
+            id: msg.id,
+            ok: msg.ok !== false,
+            errors: Array.isArray(msg.errors) ? msg.errors.slice(0, 20).map(String) : [],
+            stdout: typeof msg.stdout === 'string' ? msg.stdout.slice(0, 8000) : undefined,
+            duration_ms: Number(msg.duration_ms) || 0,
+            bytes: Number(msg.bytes) || 0,
+          })
+        }
+        return
+      }
+
       if (msg.type === 'resume') {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
@@ -705,6 +730,10 @@ async function main() {
           onCodeExecute: (id, code, language, data) => new Promise(resolve => {
             pendingCodeExecutions.set(id, resolve)
             send({ type: 'code_execute', id, code, language, data })
+          }),
+          onRenderUI: (surface) => new Promise(resolve => {
+            pendingRenders.set(surface.id, resolve)
+            send({ type: 'ui_render', surface })
           }),
           onStage: (stage, intensity, tier, model, state, cost_usd) => send({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
         }

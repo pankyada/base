@@ -88,6 +88,7 @@ type Model struct {
 	spark              Sparkline
 	proposedSkills     []protocol.SkillSummary
 	installedSkills    []protocol.SkillSummary
+	customCommands     []protocol.CommandSummary
 	skillCursor        int
 	skillPreview       string
 	skillPreviewOffset int
@@ -281,6 +282,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.connected = true
 		m.send(protocol.ModelsList())
 		m.send(protocol.SkillsList())
+		m.send(protocol.CommandsList())
 		m.notices.SetDisconnected(false)
 		if wasDisconnected {
 			m.notices.Add(NoticeInfo, "reconnected", "", "")
@@ -1592,7 +1594,11 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		m.openOverlay("inbox")
 	default:
 		// Built-in commands are handled by the switch above first. This keeps
-		// a skill named "theme" from shadowing the /theme command.
+		// a custom command or skill named "theme" from shadowing /theme.
+		if custom, ok := m.customCommand(command); ok {
+			m.startMessage(strings.ReplaceAll(custom.Template, "$ARGUMENTS", args))
+			return nil, true
+		}
 		if skill, ok := m.installedSkill(command); ok {
 			prompt := fmt.Sprintf("Use the %q skill.", skill.Name)
 			if args != "" {
@@ -1614,6 +1620,15 @@ func (m Model) installedSkill(command string) (protocol.SkillSummary, bool) {
 		}
 	}
 	return protocol.SkillSummary{}, false
+}
+
+func (m Model) customCommand(command string) (protocol.CommandSummary, bool) {
+	for _, item := range m.customCommands {
+		if strings.EqualFold(item.Name, command) {
+			return item, true
+		}
+	}
+	return protocol.CommandSummary{}, false
 }
 
 // taskIDList is the "did you mean" line for task commands.
@@ -1657,12 +1672,20 @@ func (m *Model) scheduleMentionIndex() tea.Cmd {
 }
 
 func (m *Model) recomputeCompletion() {
-	commands := make([]CompletionItem, 0, len(slashOrder))
+	commands := make([]CompletionItem, 0, len(slashOrder)+len(m.customCommands))
 	for _, name := range slashOrder {
 		commands = append(commands, CompletionItem{
 			Label:  "/" + name,
 			Detail: slashCommands[name],
 			Insert: "/" + name,
+			Kind:   CompletionCommand,
+		})
+	}
+	for _, command := range m.customCommands {
+		commands = append(commands, CompletionItem{
+			Label:  "/" + command.Name,
+			Detail: command.Description,
+			Insert: "/" + command.Name,
 			Kind:   CompletionCommand,
 		})
 	}
@@ -1764,6 +1787,9 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if m.skillCursor >= len(m.proposedSkills)+len(m.installedSkills) {
 			m.skillCursor = maxInt(0, len(m.proposedSkills)+len(m.installedSkills)-1)
 		}
+		m.recomputeCompletion()
+	case "commands":
+		m.customCommands = msg.Commands
 		m.recomputeCompletion()
 	case "skill_content":
 		m.skillPreview = msg.Content
