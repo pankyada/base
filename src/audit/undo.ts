@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync } from 'fs'
 import { dirname } from 'path'
+import { createHash } from 'crypto'
 import { loadProfile } from '../profiles/loader.js'
 import { createSession } from '../session/store.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
@@ -15,10 +16,17 @@ export async function undoAuditEntry(entry: AuditEntry, profilePath: string | Pr
   if (kind === 'file_restore') {
     const path = payload.path
     if (typeof path !== 'string' || typeof payload.existed !== 'boolean') return `audit entry ${entry.id} has invalid file inverse`
-    if (!payload.existed) { if (existsSync(path)) unlinkSync(path); return `undid ${entry.id}: removed ${path}` }
+    const expected = payload.after_sha256
+    const legacyWarning = typeof expected === 'string' ? '' : ' (warning: cannot verify current content; legacy undo entry)'
+    if (typeof expected === 'string') {
+      if (!existsSync(path)) return `cannot undo ${entry.id}: ${path} drifted after the journalled write`
+      const actual = createHash('sha256').update(readFileSync(path)).digest('hex')
+      if (actual !== expected) return `cannot undo ${entry.id}: ${path} drifted after the journalled write`
+    }
+    if (!payload.existed) { unlinkSync(path); return `undid ${entry.id}: removed ${path}${legacyWarning}` }
     if (typeof payload.before !== 'string') return `audit entry ${entry.id} has no prior file content`
     mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, Buffer.from(payload.before, 'base64'))
-    return `undid ${entry.id}: restored ${path}`
+    return `undid ${entry.id}: restored ${path}${legacyWarning}`
   }
   if (kind === 'memory_restore') {
     const scope = payload.scope as MemoryScope

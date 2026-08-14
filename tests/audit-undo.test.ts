@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { createHash } from 'crypto'
 import { undoAuditEntry } from '../src/audit/undo.js'
 import type { AuditEntry } from '../src/audit/journal.js'
 
@@ -23,5 +24,19 @@ describe('audit undo', () => {
     const created = join(dir, 'created.txt'); writeFileSync(created, 'new')
     await undoAuditEntry(entry({ path: created, existed: false }), '')
     expect(existsSync(created)).toBe(false)
+  })
+
+  it('refuses a hand-edited file when the post-write hash drifts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'undo-drift-'))
+    const path = join(dir, 'file.txt')
+    writeFileSync(path, 'new')
+    const after_sha256 = createHash('sha256').update('new').digest('hex')
+    writeFileSync(path, 'edited later')
+    await expect(undoAuditEntry(entry({ path, existed: true, before: Buffer.from('old').toString('base64'), after_sha256 }), '')).resolves.toContain('drifted')
+    expect(readFileSync(path, 'utf8')).toBe('edited later')
+
+    writeFileSync(path, 'new')
+    await expect(undoAuditEntry(entry({ path, existed: true, before: Buffer.from('old').toString('base64'), after_sha256 }), '')).resolves.toContain('restored')
+    expect(readFileSync(path, 'utf8')).toBe('old')
   })
 })

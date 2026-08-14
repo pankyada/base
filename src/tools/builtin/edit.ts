@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { ToolDefinition } from '../types.js'
 import { recordHarnessWrite } from '../../triggers/suppression.js'
+import { createHash } from 'crypto'
 
 export const editTool: ToolDefinition = {
   name: 'Edit',
@@ -29,6 +30,7 @@ export const editTool: ToolDefinition = {
       : content.replace(old_string, new_string)
     writeFileSync(file_path, updated, 'utf-8')
     recordHarnessWrite(file_path)
-    return { content: `Replaced ${count} occurrence(s) in ${file_path}`, undo: { kind: 'file_restore', payload: { path: file_path, existed: true, before } } }
+    const after_sha256 = createHash('sha256').update(updated, 'utf8').digest('hex')
+    return { content: `Replaced ${count} occurrence(s) in ${file_path}`, undo: { kind: 'file_restore', payload: { path: file_path, existed: true, before, after_sha256 } } }
   },
 }

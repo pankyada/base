@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs'
 import { dirname } from 'path'
 import { ToolDefinition } from '../types.js'
 import { recordHarnessWrite } from '../../triggers/suppression.js'
+import { createHash } from 'crypto'
 
 export const writeTool: ToolDefinition = {
   name: 'Write',
@@ -21,6 +22,7 @@ export const writeTool: ToolDefinition = {
     mkdirSync(dirname(file_path), { recursive: true })
     writeFileSync(file_path, content, 'utf-8')
     recordHarnessWrite(file_path)
-    return { content: `Written ${content.length} bytes to ${file_path}`, undo: { kind: 'file_restore', payload: { path: file_path, existed, before } } }
+    const after_sha256 = createHash('sha256').update(content, 'utf8').digest('hex')
+    return { content: `Written ${content.length} bytes to ${file_path}`, undo: { kind: 'file_restore', payload: { path: file_path, existed, before, after_sha256 } } }
   },
 }
