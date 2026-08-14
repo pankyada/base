@@ -3,6 +3,7 @@ import type { Profile } from '../profiles/schema.js'
 import { matchesPredicate, type Predicate } from './predicates.js'
 import type { MemoryProvider, MemoryScope } from '../memory/interface.js'
 import type { StageAclOverlay } from '../workflow/stage-acl.js'
+import { effectFor, isMutatingEffect } from './effects.js'
 
 export type ConditionalAcl = { default: AclValue; allow_if?: Predicate[]; deny_if?: Predicate[] }
 export type AclConfig = AclValue | ConditionalAcl
@@ -13,7 +14,6 @@ export interface AclDecision {
   reason: string
 }
 
-const MUTATING_TOOLS = new Set(['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryWrite', 'MemoryDelete', 'Notify'])
 const MEMORY_LIST_CACHE_TTL_MS = 1_000
 const memoryListCache = new WeakMap<object, Map<string, { expiresAt: number; values?: unknown[] }>>()
 
@@ -48,7 +48,7 @@ function configuredValue(value: AclConfig | undefined, input: Record<string, unk
 function modeDecision(toolName: string, decision: AclDecision, mode: ApprovalMode, serverName?: string): AclDecision {
   if (decision.value === 'deny') return decision
   if (mode === 'yolo') return { value: 'allow', decided_by: 'mode', reason: 'yolo mode' }
-  if (mode === 'strict') return { value: serverName ? 'prompt' : MUTATING_TOOLS.has(toolName) ? 'prompt' : 'allow', decided_by: 'mode', reason: 'strict mode' }
+  if (mode === 'strict') return { value: serverName ? 'prompt' : isMutatingEffect(effectFor(toolName)) ? 'prompt' : 'allow', decided_by: 'mode', reason: 'strict mode' }
   if (mode === 'bash') return { value: toolName === 'Bash' || toolName === 'ExecuteCode' ? 'prompt' : 'allow', decided_by: 'mode', reason: 'bash mode' }
   return decision
 }

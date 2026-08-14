@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { resolveAcl } from '../src/tools/acl.js'
+import { EFFECTS, isMutatingEffect } from '../src/tools/effects.js'
 import { classifyStatic, escapesWorkingDir } from '../src/safety/rules.js'
 
 const profile: any = {
@@ -25,6 +26,10 @@ describe('approval mode ACL resolver', () => {
   it('applies the same mode rules to MCP tools', () => {
     expect(resolveAcl('query', profile, 'strict', 'pg')).toBe('prompt')
     expect(resolveAcl('query', profile, 'yolo', 'pg')).toBe('allow')
+  })
+
+  it.each(Object.entries(EFFECTS))('derives strict approval from EFFECTS for %s', (tool, effect) => {
+    expect(resolveAcl(tool, profile, 'strict')).toBe(isMutatingEffect(effect) ? 'prompt' : 'allow')
   })
 })
 
