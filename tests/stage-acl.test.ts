@@ -5,11 +5,13 @@ import { runAgentLoop } from '../src/loop/agent-loop.js'
 import { createSession } from '../src/session/store.js'
 import { FsMemoryProvider } from '../src/memory/fs-memory.js'
 import { clearRegistry, registerTool } from '../src/tools/registry.js'
+import { EFFECTS, effectFor, isMutatingEffect } from '../src/tools/effects.js'
 import type { Stage } from '../src/workflow/types.js'
 
 const stages: Stage[] = ['recon', 'plan', 'design', 'build', 'verify', 'review']
 const modes = ['strict', 'bash', 'danger', 'yolo'] as const
 const readOnlyTools = ['Write', 'Edit', 'Bash', 'ExecuteCode', 'Delegate', 'MemoryDelete']
+const effectTools = Object.keys(EFFECTS)
 
 const profile: any = {
   name: 'stage-acl',
@@ -35,10 +37,22 @@ describe('stage ACL overlays', () => {
           expect(sync.value).toBe(expected ?? resolveAcl(tool, profile, mode, undefined, overlay))
           expect(asyncDecision.value).toBe(expected ?? resolveAcl(tool, profile, mode, undefined, overlay))
         }
-        expect(resolveAcl('WebFetch', profile, mode, undefined, overlay)).toBe('allow')
-        expect(resolveAcl('WebSearch', profile, mode, undefined, overlay)).toBe('allow')
+        for (const tool of effectTools) {
+          const expected = isMutatingEffect(effectFor(tool)) && stage !== 'build' && stage !== 'verify' && stage !== 'review'
+            ? 'deny'
+            : resolveAcl(tool, profile, mode)
+          expect(overlay[tool]).toBe(stage === 'recon' || stage === 'plan' || stage === 'design'
+            ? (isMutatingEffect(effectFor(tool)) ? 'deny' : undefined)
+            : undefined)
+          expect(resolveAcl(tool, profile, mode, undefined, overlay)).toBe(expected)
+        }
       }
     }
+  })
+
+  it('denies DelegateFanout from the generated stage overlay', () => {
+    expect(EFFECTS.DelegateFanout).toBe('destructive')
+    expect(stageAcl('plan').DelegateFanout).toBe('deny')
   })
 
   it('leaves normal ACL behavior unchanged without a stage overlay', () => {
