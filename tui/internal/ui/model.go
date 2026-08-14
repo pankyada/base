@@ -1591,10 +1591,29 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 	case "inbox":
 		m.openOverlay("inbox")
 	default:
+		// Built-in commands are handled by the switch above first. This keeps
+		// a skill named "theme" from shadowing the /theme command.
+		if skill, ok := m.installedSkill(command); ok {
+			prompt := fmt.Sprintf("Use the %q skill.", skill.Name)
+			if args != "" {
+				prompt += " " + args
+			}
+			m.startMessage(prompt)
+			return nil, true
+		}
 		m.notices.Add(NoticeError, "unknown command", "/"+command, slashHelp())
 	}
 	m.reflow()
 	return deferred, true
+}
+
+func (m Model) installedSkill(command string) (protocol.SkillSummary, bool) {
+	for _, skill := range m.installedSkills {
+		if strings.EqualFold(skill.Name, command) {
+			return skill, true
+		}
+	}
+	return protocol.SkillSummary{}, false
 }
 
 // taskIDList is the "did you mean" line for task commands.
@@ -1653,7 +1672,16 @@ func (m *Model) recomputeCompletion() {
 			files = append(files, strings.TrimPrefix(match, "@"))
 		}
 	}
-	m.completion.Recompute(m.composer.Value(), commands, nil, files)
+	skills := make([]CompletionItem, 0, len(m.installedSkills))
+	for _, skill := range m.installedSkills {
+		skills = append(skills, CompletionItem{
+			Label:  "/" + skill.Name,
+			Detail: skill.Description,
+			Insert: "/" + skill.Name,
+			Kind:   CompletionSkill,
+		})
+	}
+	m.completion.Recompute(m.composer.Value(), commands, skills, files)
 }
 
 func (m *Model) clearCompletion() {
@@ -1736,6 +1764,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if m.skillCursor >= len(m.proposedSkills)+len(m.installedSkills) {
 			m.skillCursor = maxInt(0, len(m.proposedSkills)+len(m.installedSkills)-1)
 		}
+		m.recomputeCompletion()
 	case "skill_content":
 		m.skillPreview = msg.Content
 		m.skillPreviewOffset = 0

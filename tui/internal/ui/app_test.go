@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -70,5 +71,40 @@ func TestAppApprovalInputOverlayAndReconnect(t *testing.T) {
 	m = updated.(Model)
 	if !m.connected {
 		t.Fatal("reconnect state missing")
+	}
+}
+
+func TestInstalledSkillCompletesAndDispatchesPrompt(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "skills", Installed: []protocol.SkillSummary{
+		{Name: "code-review", Description: "review code"},
+		{Name: "theme", Description: "skill collision"},
+	}})
+	m.composer.input.SetValue("/")
+	m.recomputeCompletion()
+	if len(m.completion.Items) != len(slashOrder)+1 || m.completion.Items[len(m.completion.Items)-1].Label != "/code-review" {
+		t.Fatalf("skill completion items = %#v", m.completion.Items)
+	}
+	for _, item := range m.completion.Items {
+		if item.Label == "/theme" && item.Kind != CompletionCommand {
+			t.Fatal("built-in /theme should win skill collision")
+		}
+	}
+
+	m.composer.input.SetValue("/code-review auth module")
+	m.submit()
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent messages = %d", len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[0])
+	var envelope struct {
+		Content string `json:"content"`
+	}
+	if err == nil {
+		err = json.Unmarshal(wire, &envelope)
+	}
+	if err != nil || envelope.Content != `Use the "code-review" skill. auth module` {
+		t.Fatalf("skill dispatch wire=%s err=%v", wire, err)
 	}
 }
