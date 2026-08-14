@@ -154,6 +154,7 @@ export type ClientMessage =
   | { type: 'audio_end' }
   | { type: 'barge_in' }
   | { type: 'message'; content: string }
+  | { type: 'plan_request'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
   | { type: 'tool_approve'; id: string }
@@ -206,6 +207,7 @@ export type ServerMessage =
   | { type: 'skill_result'; action: 'saved' | 'promoted' | 'discarded'; name: string; path?: string }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }
   | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number }
+  | { type: 'plan'; content: string }
   | { type: 'pending'; pending: PendingInput[] }
   | { type: 'transcript_partial'; text: string; final: boolean }
   | { type: 'audio_out_start'; codec: 'opus' | 'pcm16'; sample_rate: number }

@@ -20,6 +20,16 @@ import { maybeShadow } from './shadow.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
+export interface PlanPreview {
+  taskId: string
+  body: string
+  intensity: Intensity
+  tier: Tier
+  model: string
+  contract_ok: boolean
+  attempt: number
+}
+
 function triageIsFixed(profile: Profile): boolean {
   const min = profile.workflow?.min_intensity ?? {}
   const max = profile.workflow?.max_intensity ?? {}
@@ -88,7 +98,7 @@ async function shadowCompletion(openai: OpenAI, model: string, prompt: string): 
   return String(response.choices?.[0]?.message?.content ?? '')
 }
 
-async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false): Promise<StageResult> {
+async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true): Promise<StageResult> {
   const modelId = tier === 'critic' ? (profile.models?.roles.critic ?? profile.model.id) : (profile.models?.roles?.[tier] ?? profile.model.id)
   const contract = loadPlaybook(profile.workflow?.playbook ?? 'generic').contract(stage, intensity)
   const seed = buildStageContext(request, prior, contract, stage === 'recon' ? graphSlice : '')
@@ -105,7 +115,7 @@ async function executeStage(request: string, stage: Stage, intensity: Intensity,
   root.usage.cost_usd += staged.usage.cost_usd
   const body = stageBody(staged)
   const validation = validateArtifact(body, contract)
-  writeArtifact(profile, root, stage, body, { intensity, tier, model: modelId, confidence: plan.confidence, contract_ok: validation.ok, attempt, task_id: taskId })
+  if (persistArtifact) writeArtifact(profile, root, stage, body, { intensity, tier, model: modelId, confidence: plan.confidence, contract_ok: validation.ok, attempt, task_id: taskId })
   if (profile.workflow?.knowledge.graph) {
     const knowledge = await extractKnowledge(body, stage, openai, profile)
     const generalized = stage === 'review' && profile.workflow.knowledge.generalization_probe ? generalizationFromReview(body) : { nodes: [], edges: [] }
@@ -116,6 +126,42 @@ async function executeStage(request: string, stage: Stage, intensity: Intensity,
   logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: profile.workflow?.playbook ?? 'generic', attempt, model: modelId, state: escalation.escalate ? 'escalated' : 'done', contract_ok: validation.ok, cost_usd: staged.usage.cost_usd, duration_ms: Date.now() - started, escalated_from: escalation.escalate ? tier : undefined, failed_back_to: failBackTarget(result) ?? undefined, explore })
   events.onStage?.(stage, intensity, tier, modelId, escalation.escalate ? 'escalated' : 'done', staged.usage.cost_usd)
   return result
+}
+
+function cloneSession(session: Session): Session {
+  return JSON.parse(JSON.stringify(session)) as Session
+}
+
+/** Run only recon and plan against an isolated session for interactive rehearsal. */
+export async function runPlanPreview(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal = new AbortController().signal, loop: typeof runAgentLoop = runAgentLoop): Promise<PlanPreview> {
+  const taskId = newTaskId()
+  const playbook = loadPlaybook(profile.workflow?.playbook ?? 'generic')
+  const previewSession = cloneSession(session)
+  const previewContext = { ...context, session: previewSession }
+  const fixedTriage = triageIsFixed(profile)
+  const triage = fixedTriage
+    ? { task_class: playbook.task_classes[0] ?? 'general', recon_intensity: Math.max(1, profile.workflow?.min_intensity.recon ?? 1) as Intensity }
+    : await triageA(request, playbook, openai, profile)
+  const graphSlice = await queryProjectGraph(previewContext.memory, request).catch(() => 'no prior project knowledge')
+  const reconPlan: TaskPlan = {
+    task_class: triage.task_class,
+    blast_radius: 'module',
+    reversibility: 'easy',
+    intensity: { recon: triage.recon_intensity, plan: 1, design: 0, build: 0, verify: 0, review: 0 },
+    confidence: 0.5,
+    why: 'interactive plan request',
+  }
+  const prior: Array<{ stage: Stage; body: string }> = []
+  const reconRouting = resolveTier(profile, 'recon', reconPlan.task_class, undefined, playbook.name)
+  const recon = await executeStage(request, 'recon', Math.max(1, reconPlan.intensity.recon) as Intensity, reconRouting.tier, 1, taskId, reconPlan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
+  prior.push({ stage: 'recon', body: recon.body })
+  const plan = fixedTriage
+    ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
+    : await triageB(request, recon.body, playbook, openai, profile, triage.task_class)
+  const intensity = Math.max(1, plan.intensity.plan) as Intensity
+  const routing = resolveTier(profile, 'plan', plan.task_class, undefined, playbook.name)
+  const result = await executeStage(request, 'plan', intensity, routing.tier, 1, taskId, plan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
+  return { taskId, body: result.body, intensity, tier: routing.tier, model: result.modelId, contract_ok: result.contract_ok, attempt: result.attempt }
 }
 
 export async function runWorkflow(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal = new AbortController().signal, options: WorkflowRunOptions = {}): Promise<void> {

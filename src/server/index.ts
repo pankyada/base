@@ -30,7 +30,8 @@ import { buildSkillIndex } from '../skills/indexer.js'
 import { buildInteractiveSystemPrompt } from './interactive-prompt.js'
 import { listProposed, listInstalled, readSkill, writeSkill, promoteSkill, discardSkill } from '../skills/manage.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
-import { runWorkflow } from '../workflow/runner.js'
+import { runPlanPreview, runWorkflow } from '../workflow/runner.js'
+import { writeArtifact } from '../workflow/artifacts.js'
 import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { listModels } from '../models/registry.js'
 import { project } from '../context/projection.js'
@@ -354,6 +355,78 @@ async function main() {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
     }
 
+    const cloneSession = (): typeof session => JSON.parse(JSON.stringify(session))
+
+    const requestInput = (prompt: string, kind: 'select' | 'text', options?: string[]): Promise<string> => new Promise(resolve => {
+      const id = randomUUID()
+      pendingInputRequests.set(id, resolve)
+      send({ type: 'input_request', id, prompt, kind, options })
+    })
+
+    const handlePlanRequest = async (request: string): Promise<void> => {
+      const runId = randomRunId()
+      runStore.create({ id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream', input: request, status: 'running', started_at: new Date().toISOString() })
+      await ensureMcpClients()
+      const previewSession = cloneSession()
+      const previewMemory = connectionProfile.memory?.provider === 'graph'
+        ? new GraphMemoryProvider(connectionProfile.artifact_dir, previewSession)
+        : new FsMemoryProvider(connectionProfile.artifact_dir, previewSession)
+      if (previewSession.messages.length === 0) {
+        previewSession.messages.push({
+          role: 'system',
+          content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, previewMemory),
+        })
+      }
+      const planEvents: AgentLoopEvents = {
+        onToken: () => {},
+        onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
+        onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
+        onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(resolve => {
+          pendingApprovals.set(id, resolve)
+          send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
+        }),
+        onSessionEnd: () => {},
+        onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
+        onInputRequest: (id, prompt, kind, options) => new Promise<string>(resolve => {
+          pendingInputRequests.set(id, resolve)
+          send({ type: 'input_request', id, prompt, kind, options })
+        }),
+        onTodosUpdate: todos => send({ type: 'todos', todos }),
+        onStage: (stage, intensity, tier, model, state, cost_usd) => send({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
+      }
+      try {
+        const agentTools = await loadAgentTools(connectionProfile)
+        const previewContext: ToolContext = {
+          profile: connectionProfile, session: previewSession, workingDir: connectionProfile.working_dir, memory: previewMemory, skills, mcpEntries,
+          events: planEvents, openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0, agentTools,
+          maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode, channels: connectionChannels, runId,
+          pendingInputs: pendingStore,
+        }
+        const preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
+        send({ type: 'plan', content: preview.body })
+        const choice = (await requestInput('Plan ready — proceed, edit, or cancel?', 'select', ['proceed', 'edit', 'cancel'])).trim().toLowerCase()
+        if (choice === 'cancel') {
+          runStore.update(runId, { status: 'completed', finished_at: new Date().toISOString() })
+          send({ type: 'notice', level: 'info', message: 'plan cancelled', detail: 'no session or artifact changes made' })
+          return
+        }
+        let planBody = preview.body
+        if (choice === 'edit') {
+          const edited = await requestInput('Edit plan, then press enter (blank keeps generated plan).', 'text')
+          if (edited.trim()) planBody = edited.trim()
+        }
+        writeArtifact(connectionProfile, session, 'plan', planBody, {
+          intensity: preview.intensity, tier: preview.tier, model: preview.model, contract_ok: preview.contract_ok, attempt: preview.attempt, task_id: preview.taskId,
+        })
+        send({ type: 'artifacts', sessionId: session.id, artifacts: [{ id: `plan-${preview.taskId}`, kind: 'doc', title: 'Plan', icon: '🗺️', meta: 'approved plan', data: { path: `${connectionProfile.artifact_dir}/workflow/${session.id}/plan.md`, summary: planBody.split('\n')[0] ?? '' } }] })
+        runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
+        ws.emit('message', Buffer.from(JSON.stringify({ type: 'message', content: `${request}\n\nApproved plan:\n${planBody}` })), false)
+      } catch (error: any) {
+        runStore.update(runId, { status: 'failed', error: error.message, finished_at: new Date().toISOString() })
+        send({ type: 'error', message: error.message })
+      }
+    }
+
     const sendSkills = () => send({ type: 'skills', proposed: listProposed(connectionProfile), installed: listInstalled() })
     const sendPending = () => send({
       type: 'pending',
@@ -647,6 +720,11 @@ async function main() {
             bytes: Number(msg.bytes) || 0,
           })
         }
+        return
+      }
+
+      if (msg.type === 'plan_request') {
+        await handlePlanRequest(msg.content)
         return
       }
 

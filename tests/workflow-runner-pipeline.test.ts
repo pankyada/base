@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSession } from '../src/session/store.js'
-import { runWorkflow } from '../src/workflow/runner.js'
+import { runPlanPreview, runWorkflow } from '../src/workflow/runner.js'
+import { existsSync, rmSync } from 'fs'
+import { join } from 'path'
 
 function profile(overrides: Record<string, unknown> = {}): any {
   return {
@@ -39,6 +41,24 @@ function context(profileValue: any, session: any): any {
 }
 
 describe('workflow pipeline', () => {
+  it('runs an isolated recon and plan preview without mutating the session or artifact path', async () => {
+    const p = profile({ workflow: undefined })
+    const session = createSession(p.name, 'test')
+    const before = JSON.stringify(session)
+    const calls: string[] = []
+    const loop = vi.fn(async (_seed: string, _profile: any, staged: any, _ctx: any, _events: any, _openai: any, _signal: any, opts: any) => {
+      calls.push(opts.stage.stage)
+      staged.messages.push({ role: 'assistant', content: opts.stage.stage === 'recon' ? '## Files touched\nnone\n## Prior knowledge\nnone\n## Open questions\nnone' : '## Plan\nsteps\n## Risks\nnone' })
+    })
+    const artifactPath = join(p.artifact_dir, 'workflow', session.id, 'plan.md')
+    rmSync(join(p.artifact_dir, 'workflow', session.id), { recursive: true, force: true })
+    const result = await runPlanPreview('plan this', p, session, context(p, session), events, openaiFor(), new AbortController().signal, loop)
+    expect(calls).toEqual(['recon', 'plan'])
+    expect(result.body).toContain('## Plan')
+    expect(JSON.stringify(session)).toBe(before)
+    expect(existsSync(artifactPath)).toBe(false)
+  })
+
   it('runs recon before later stages and makes L0 stages zero-call', async () => {
     const p = profile()
     const session = createSession(p.name, 'test')
