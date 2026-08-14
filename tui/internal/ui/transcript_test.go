@@ -30,6 +30,15 @@ func TestTranscriptRendersUserAndAgent(t *testing.T) {
 	}
 }
 
+func TestAgentHeaderSeparatesRoleFromTimestamp(t *testing.T) {
+	if got := stripANSI(agentHeader("12:00")); got != "HARNESS ◆ 12:00" {
+		t.Fatalf("agent header = %q", got)
+	}
+	if roleColor("agent") == ColText || ColFaint == ColText {
+		t.Fatal("agent header must keep role/header chrome below prose weight")
+	}
+}
+
 // This is the dead-air gap between sending a message and the first token or
 // tool call — without an indicator here the app looks stalled.
 func TestTranscriptShowsThinkingBeforeFirstTokenOrTool(t *testing.T) {

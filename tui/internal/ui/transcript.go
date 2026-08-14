@@ -87,7 +87,7 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 			continue
 		}
 		// agent
-		header := lipgloss.NewStyle().Foreground(roleColor(t.Role)).Render("HARNESS ◆") + " " + StFaint.Render(t.Time)
+		header := agentHeader(t.Time)
 		parts := []string{header}
 		row += lipgloss.Height(header)
 		sectionPtrs := make([]*Section, len(t.Sections))
@@ -220,6 +220,10 @@ func roleGutter(role, content string) string {
 		BorderLeft(true).
 		BorderForeground(roleColor(role)).
 		Render(content)
+}
+
+func agentHeader(timestamp string) string {
+	return lipgloss.NewStyle().Foreground(roleColor("agent")).Render("HARNESS ◆") + " " + StFaint.Render(timestamp)
 }
 
 // spread inserts a blank line between blocks.
