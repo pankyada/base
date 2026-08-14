@@ -853,3 +853,17 @@ and the provenance header keeps the source of every instruction visible in the
 assembled prompt.
 *Consequences:* Normal operator repositories need no prompt duplication, while
 untrusted checkouts have an explicit kill switch and visible instruction source.
+
+### ADR-67
+**Stage ACL overlays are evaluated before approval-mode defaults** — ✅
+
+*Context:* Workflow stages share the profile-wide ACL, but recon, plan, and
+design are rehearsal stages and must not mutate the workspace. Approval modes
+such as `yolo` otherwise widen missing or prompt ACLs.
+*Decision:* The workflow supplies a read-only overlay for those stages. The ACL
+resolver applies an overlay deny after preserving an explicit profile deny and
+before mode defaults. The overlay cannot grant access, so `yolo` cannot widen a
+plan stage; build, verify, and review remain profile-governed.
+*Consequences:* Stage safety is enforced centrally for interactive, delegated,
+and workflow runs. Profiles without a stage remain behaviorally unchanged, and
+the overlay adds no profile schema or dependency surface.
