@@ -45,7 +45,9 @@ func (c *Completion) Recompute(value string, commands, skills []CompletionItem, 
 		builtinMatches := slashMatches(value)
 		byLabel := make(map[string]CompletionItem, len(commands))
 		for _, item := range commands {
-			byLabel[item.Label] = item
+			if _, exists := byLabel[item.Label]; !exists {
+				byLabel[item.Label] = item
+			}
 		}
 		seen := map[string]bool{}
 		for _, label := range builtinMatches {

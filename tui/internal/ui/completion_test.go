@@ -25,6 +25,17 @@ func TestCompletionRecomputeCombinesCommandsAndSkills(t *testing.T) {
 	}
 }
 
+func TestCompletionCollisionKeepsEarlierCommand(t *testing.T) {
+	var c Completion
+	c.Recompute("/th", []CompletionItem{
+		{Label: "/theme", Detail: "built-in", Insert: "/theme", Kind: CompletionCommand},
+		{Label: "/theme", Detail: "custom", Insert: "/theme", Kind: CompletionCommand},
+	}, nil, nil)
+	if len(c.Items) != 1 || c.Items[0].Detail != "built-in" {
+		t.Fatalf("collision completion = %#v", c.Items)
+	}
+}
+
 func TestCompletionRecomputeMentionsUseActiveQuery(t *testing.T) {
 	var c Completion
 	c.Recompute("fix @a.go and @src/ma", nil, nil, []string{"src/main.go", "src/other.txt"})
