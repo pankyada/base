@@ -20,11 +20,13 @@ import { executeCodeTool } from './execute-code.js'
 import { contextRestoreTool } from './context-restore.js'
 import { recallTool } from './recall.js'
 import { notifyTool } from './notify.js'
+import { webSearchTool } from './web-search.js'
+import type { Profile } from '../../profiles/schema.js'
 import type { ChannelRuntime } from '../../channels/runtime.js'
 
 export { clearRegistry, registerTool } from '../registry.js'
 
-export function registerAll(channels?: ChannelRuntime): void {
+export function registerAll(channels?: ChannelRuntime, profile?: Profile): void {
   registerTool(readTool)
   registerTool(writeTool)
   registerTool(editTool)
@@ -46,4 +48,6 @@ export function registerAll(channels?: ChannelRuntime): void {
   registerTool(contextRestoreTool)
   registerTool(recallTool)
   if (channels?.enabled) registerTool(notifyTool)
+  const apiKeyEnv = profile?.tools?.web_search?.api_key_env
+  if (apiKeyEnv && process.env[apiKeyEnv]?.trim()) registerTool(webSearchTool)
 }

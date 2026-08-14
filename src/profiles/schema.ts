@@ -50,6 +50,7 @@ const BuiltinToolsSchema = z.object({
 }).passthrough()
 
 const McpAcl = z.record(z.string(), AclEntry).default(() => ({ '*': 'prompt' as const }))
+const WebSearchSchema = z.object({ api_key_env: z.string().min(1) })
 
 const StdioMcpServerSchema = z.object({
   name: z.string(),
@@ -261,6 +262,7 @@ export const ProfileSchema = z.object({
       builtin: z.preprocess((val) => val ?? {}, BuiltinToolsSchema),
       custom: z.record(z.string(), AclEntry).default(() => ({ '*': 'prompt' as const })),
       mcp_servers: z.array(McpServerSchema).default([]),
+      web_search: WebSearchSchema.optional(),
     })
   ),
   hooks: z.preprocess(

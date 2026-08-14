@@ -199,7 +199,10 @@ async function main() {
   clearRegistry()
   // Built-ins are process-wide; Notify gets its per-profile runtime through
   // ToolContext, so register it whenever any loaded profile has channels.
-  registerAll([...channelsByProfile.values()].some(runtime => runtime.enabled) ? { enabled: true } as ChannelRuntime : undefined)
+  registerAll(
+    [...channelsByProfile.values()].some(runtime => runtime.enabled) ? { enabled: true } as ChannelRuntime : undefined,
+    profile,
+  )
 
   const customToolsDirs = resolveToolsDirs()
   const customTools = await loadAllCustomTools(customToolsDirs)
