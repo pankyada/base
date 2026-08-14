@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -16,7 +18,7 @@ import (
 	"harness-tui/internal/ws"
 )
 
-var version = "0.1.5"
+var version = "0.2.2"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version")
@@ -67,10 +69,11 @@ func main() {
 	defer serverResult.Cleanup()
 	stdoutInfo, _ := os.Stdout.Stat()
 	interactive := stdoutInfo != nil && stdoutInfo.Mode()&os.ModeCharDevice != 0 && os.Getenv("TERM") != "dumb"
-	ui.BootSplash(os.Stdout, *profile, *noSplash || !interactive)
+	profileName := profileNameFromPath(profilePath)
+	ui.BootSplash(os.Stdout, profileName, *noSplash || !interactive)
 
 	userID := envOr("HARNESS_USER", currentUser())
-	client := ws.New(*port, userID)
+	client := ws.New(*port, userID, profileName)
 	model := ui.NewModel(client, "connecting", userID, prefs.Load(""))
 	model.Configure(ui.Options{NoMotion: *noMotion || os.Getenv("NO_COLOR") != "", NoNotify: *noNotify, NotifyTTY: interactive})
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion())
@@ -81,6 +84,38 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// profileNameFromPath supplies the WebSocket override used when the TUI joins
+// an already-running multi-profile server. Read the YAML name when possible;
+// the filename is only a fallback for malformed or unavailable files.
+func profileNameFromPath(profilePath string) string {
+	if info, err := os.Stat(profilePath); err == nil && info.IsDir() {
+		return "coding"
+	}
+	if file, err := os.Open(profilePath); err == nil {
+		defer file.Close()
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "name:") {
+				continue
+			}
+			name := strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			name = strings.Trim(name, "\"'")
+			if name != "" {
+				return name
+			}
+		}
+	}
+	base := filepath.Base(profilePath)
+	if ext := filepath.Ext(base); ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	if base != "." && base != "" {
+		return base
+	}
+	return "coding"
 }
 
 // resolveProfilePath mirrors src/server/index.ts's default-path logic so the

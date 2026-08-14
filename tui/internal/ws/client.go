@@ -26,9 +26,10 @@ type MalformedMsg struct{ Err error }
 
 // Client owns a single reconnecting connection.
 type Client struct {
-	port   string
-	userID string
-	send   func(tea.Msg) // program.Send, set via Start
+	port    string
+	userID  string
+	profile string
+	send    func(tea.Msg) // program.Send, set via Start
 
 	mu   sync.Mutex
 	conn *websocket.Conn
@@ -37,8 +38,12 @@ type Client struct {
 	once sync.Once
 }
 
-func New(port, userID string) *Client {
-	return &Client{port: port, userID: userID, stop: make(chan struct{}), done: make(chan struct{})}
+func New(port, userID string, profile ...string) *Client {
+	selected := ""
+	if len(profile) > 0 {
+		selected = profile[0]
+	}
+	return &Client{port: port, userID: userID, profile: selected, stop: make(chan struct{}), done: make(chan struct{})}
 }
 
 // Start begins the connect/read loop. send is program.Send.
@@ -63,7 +68,7 @@ func (c *Client) loop() {
 		}
 		c.mu.Lock()
 		c.conn = conn
-		_ = conn.WriteJSON(protocol.Hello(c.userID))
+		_ = conn.WriteJSON(protocol.Hello(c.userID, c.profile))
 		c.mu.Unlock()
 		if c.stopped() {
 			_ = conn.Close()

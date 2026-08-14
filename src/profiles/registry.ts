@@ -34,6 +34,8 @@ export function selectProfile(profiles: Map<string, Profile>, requested?: string
     if (selected) return selected
     throw new Error(`unknown profile "${requested}"; available: ${[...profiles.keys()].sort().join(', ')}`)
   }
+  const coding = profiles.get('coding')
+  if (coding) return coding
   const name = [...profiles.keys()].sort()[0]
   return profiles.get(name)!
 }

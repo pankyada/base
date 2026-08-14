@@ -56,6 +56,16 @@ func TestEncodeClientHello(t *testing.T) {
 	}
 }
 
+func TestEncodeClientHelloIncludesProfileOverride(t *testing.T) {
+	b, err := json.Marshal(Hello("alice", "data-analyst"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"type":"hello","user_id":"alice","profile":"data-analyst"}` {
+		t.Fatalf("got %s", b)
+	}
+}
+
 func TestEncodeMessage(t *testing.T) {
 	b, _ := json.Marshal(Message("do it"))
 	if string(b) != `{"type":"message","content":"do it"}` {

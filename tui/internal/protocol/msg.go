@@ -159,8 +159,9 @@ type ClientMessage interface {
 }
 
 type helloMsg struct {
-	Type   string `json:"type"`
-	UserID string `json:"user_id"`
+	Type    string `json:"type"`
+	UserID  string `json:"user_id"`
+	Profile string `json:"profile,omitempty"`
 }
 
 func (helloMsg) isClientMessage()           {}
@@ -187,8 +188,12 @@ func (compactMsg) isClientMessage()         {}
 func (pendingListMsg) isClientMessage()     {}
 func (pendingAnswerMsg) isClientMessage()   {}
 
-func Hello(userID string) ClientMessage {
-	return helloMsg{Type: "hello", UserID: userID}
+func Hello(userID string, profile ...string) ClientMessage {
+	msg := helloMsg{Type: "hello", UserID: userID}
+	if len(profile) > 0 {
+		msg.Profile = profile[0]
+	}
+	return msg
 }
 
 type messageMsg struct {
