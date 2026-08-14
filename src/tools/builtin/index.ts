@@ -21,6 +21,7 @@ import { contextRestoreTool } from './context-restore.js'
 import { recallTool } from './recall.js'
 import { notifyTool } from './notify.js'
 import { webSearchTool } from './web-search.js'
+import { webFetchTool } from './web-fetch.js'
 import type { Profile } from '../../profiles/schema.js'
 import type { ChannelRuntime } from '../../channels/runtime.js'
 
@@ -45,6 +46,7 @@ export function registerAll(channels?: ChannelRuntime, profile?: Profile): void 
   registerTool(todoWriteTool)
   registerTool(todoReadTool)
   registerTool(executeCodeTool)
+  registerTool(webFetchTool)
   registerTool(contextRestoreTool)
   registerTool(recallTool)
   if (channels?.enabled) registerTool(notifyTool)

@@ -4,6 +4,7 @@ const EFFECTS: Record<string, ToolEffect> = {
   Read: 'read', Grep: 'read', Glob: 'read', MemoryRead: 'read', MemoryList: 'read', Recall: 'read', Stats: 'read', Skill: 'read', TodoRead: 'read',
   Write: 'write', Edit: 'write', MemoryWrite: 'write', TodoWrite: 'write',
   Notify: 'outbound',
+  WebFetch: 'outbound', WebSearch: 'outbound',
   Bash: 'destructive', ExecuteCode: 'destructive', MemoryDelete: 'destructive', Delegate: 'destructive', DelegateFanout: 'destructive',
 }
 

@@ -74,6 +74,7 @@ describe('WebSearch tool', () => {
     vi.stubEnv('BRAVE_KEY', 'secret')
     registerAll(undefined, configured)
     expect(resolveTool('WebSearch')).toBeDefined()
+    expect(resolveTool('WebFetch')).toBeDefined()
   })
 
   it('parses the profile key environment setting', () => {

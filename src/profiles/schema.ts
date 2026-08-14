@@ -45,6 +45,8 @@ const BuiltinToolsSchema = z.object({
   Stats: AclEntry.default('allow'),
   Delegate: AclEntry.default('prompt'),
   ExecuteCode: AclEntry.default('allow'),
+  WebFetch: AclEntry.default('prompt'),
+  WebSearch: AclEntry.default('prompt'),
   ContextRestore: AclEntry.default('allow'),
   Notify: AclEntry.default('allow'),
 }).passthrough()
@@ -118,6 +120,7 @@ export const MODE_DEFAULTS: Record<string, Partial<Record<string, 'allow' | 'pro
     Bash: 'allow', Read: 'allow', Write: 'allow', Edit: 'allow',
     Grep: 'allow', Glob: 'allow', Skill: 'allow', Stats: 'allow',
     Delegate: 'allow', AskUser: 'allow',
+    WebFetch: 'allow', WebSearch: 'allow',
     MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow', Recall: 'allow',
     TodoWrite: 'allow', TodoRead: 'allow',
     ExecuteCode: 'allow',
@@ -127,18 +130,21 @@ export const MODE_DEFAULTS: Record<string, Partial<Record<string, 'allow' | 'pro
     Read: 'allow', ExecuteCode: 'allow', AskUser: 'allow',
     MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow', Recall: 'allow',
     TodoWrite: 'allow', TodoRead: 'allow',
+    WebFetch: 'allow', WebSearch: 'allow',
   },
   assistant: {
     Bash: 'deny', Write: 'deny', Edit: 'deny', Delegate: 'deny', ExecuteCode: 'deny',
     Read: 'allow', AskUser: 'allow',
     MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow', Recall: 'allow',
     TodoWrite: 'allow', TodoRead: 'allow',
+    WebFetch: 'deny', WebSearch: 'deny',
   },
   production: {
     Bash: 'deny', Write: 'deny', Edit: 'deny', Delegate: 'deny', ExecuteCode: 'deny',
     Read: 'allow', AskUser: 'allow',
     MemoryRead: 'allow', MemoryWrite: 'allow', MemoryList: 'allow', MemoryDelete: 'allow', Recall: 'allow',
     TodoWrite: 'allow', TodoRead: 'allow',
+    WebFetch: 'deny', WebSearch: 'deny',
   },
 }
 

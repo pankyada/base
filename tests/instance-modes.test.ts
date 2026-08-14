@@ -48,6 +48,8 @@ describe('applyModeDefaults', () => {
     expect(result.tools.builtin.Edit).toBe('allow')
     expect(result.tools.builtin.Delegate).toBe('allow')
     expect(result.tools.builtin.ExecuteCode).toBe('allow')
+    expect(result.tools.builtin.WebFetch).toBe('allow')
+    expect(result.tools.builtin.WebSearch).toBe('allow')
   })
 
   it('analyst mode: Bash/Write/Edit/Delegate are deny, ExecuteCode/Read/Memory/Todo are allow', () => {
@@ -61,6 +63,8 @@ describe('applyModeDefaults', () => {
     expect(result.tools.builtin.Read).toBe('allow')
     expect(result.tools.builtin.MemoryWrite).toBe('allow')
     expect(result.tools.builtin.TodoWrite).toBe('allow')
+    expect(result.tools.builtin.WebFetch).toBe('allow')
+    expect(result.tools.builtin.WebSearch).toBe('allow')
   })
 
   it('assistant mode: additionally denies ExecuteCode', () => {
@@ -70,6 +74,8 @@ describe('applyModeDefaults', () => {
     expect(result.tools.builtin.Bash).toBe('deny')
     expect(result.tools.builtin.MemoryRead).toBe('allow')
     expect(result.tools.builtin.TodoRead).toBe('allow')
+    expect(result.tools.builtin.WebFetch).toBe('deny')
+    expect(result.tools.builtin.WebSearch).toBe('deny')
   })
 
   it('production mode: danger tools deny, unlisted tools default to prompt', () => {
@@ -83,6 +89,8 @@ describe('applyModeDefaults', () => {
     expect(result.tools.builtin.Glob).toBe('prompt')
     expect(result.tools.builtin.Stats).toBe('prompt')
     expect(result.tools.builtin.Skill).toBe('prompt')
+    expect(result.tools.builtin.WebFetch).toBe('deny')
+    expect(result.tools.builtin.WebSearch).toBe('deny')
   })
 
   it('mode wins over profile explicit setting on conflict', () => {
