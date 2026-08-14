@@ -20,27 +20,53 @@ import (
 
 var version = "0.3.0"
 
-func main() {
-	showVersion := flag.Bool("version", false, "print version")
-	profile := flag.String("profile", "", "profile YAML path")
-	port := flag.String("port", envOr("HARNESS_PORT", "7337"), "harness server port")
-	noSplash := flag.Bool("no-splash", false, "disable boot splash")
-	noMotion := flag.Bool("no-motion", false, "disable motion")
-	noNotify := flag.Bool("no-notify", false, "disable terminal notifications")
-	reconfigure := flag.Bool("reconfigure", false, "re-run first-run setup, backing up the existing profile")
-	flag.Parse()
+type launchOptions struct {
+	showVersion     bool
+	profile         string
+	port            string
+	noSplash        bool
+	noMotion        bool
+	noNotify        bool
+	reconfigure     bool
+	continueSession bool
+	resumeID        string
+}
 
-	if *showVersion {
+func parseLaunchFlags(args []string) (launchOptions, error) {
+	options := launchOptions{port: envOr("HARNESS_PORT", "7337")}
+	flags := flag.NewFlagSet("harness-tui", flag.ContinueOnError)
+	flags.BoolVar(&options.showVersion, "version", false, "print version")
+	flags.StringVar(&options.profile, "profile", "", "profile YAML path")
+	flags.StringVar(&options.port, "port", options.port, "harness server port")
+	flags.BoolVar(&options.noSplash, "no-splash", false, "disable boot splash")
+	flags.BoolVar(&options.noMotion, "no-motion", false, "disable motion")
+	flags.BoolVar(&options.noNotify, "no-notify", false, "disable terminal notifications")
+	flags.BoolVar(&options.reconfigure, "reconfigure", false, "re-run first-run setup, backing up the existing profile")
+	flags.BoolVar(&options.continueSession, "continue", false, "resume the newest session on connect")
+	flags.StringVar(&options.resumeID, "resume", "", "resume a session by id on connect")
+	if err := flags.Parse(args); err != nil {
+		return launchOptions{}, err
+	}
+	return options, nil
+}
+
+func main() {
+	options, err := parseLaunchFlags(os.Args[1:])
+	if err != nil {
+		os.Exit(2)
+	}
+
+	if options.showVersion {
 		fmt.Printf("harness-tui %s\n", version)
 		return
 	}
 
-	profilePath, err := resolveProfilePath(*profile)
+	profilePath, err := resolveProfilePath(options.profile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if *reconfigure {
+	if options.reconfigure {
 		backup, err := setup.Reconfigure(profilePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -61,7 +87,7 @@ func main() {
 		}
 	}
 
-	serverResult, err := server.EnsureServer(*port, profilePath)
+	serverResult, err := server.EnsureServer(options.port, profilePath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -70,12 +96,18 @@ func main() {
 	stdoutInfo, _ := os.Stdout.Stat()
 	interactive := stdoutInfo != nil && stdoutInfo.Mode()&os.ModeCharDevice != 0 && os.Getenv("TERM") != "dumb"
 	profileName := profileNameFromPath(profilePath)
-	ui.BootSplash(os.Stdout, profileName, *noSplash || !interactive)
+	ui.BootSplash(os.Stdout, profileName, options.noSplash || !interactive)
 
 	userID := envOr("HARNESS_USER", currentUser())
-	client := ws.New(*port, userID, profileName)
+	client := ws.New(options.port, userID, profileName)
 	model := ui.NewModel(client, "connecting", userID, prefs.Load(""))
-	model.Configure(ui.Options{NoMotion: *noMotion || os.Getenv("NO_COLOR") != "", NoNotify: *noNotify, NotifyTTY: interactive})
+	model.Configure(ui.Options{
+		NoMotion:        options.noMotion || os.Getenv("NO_COLOR") != "",
+		NoNotify:        options.noNotify,
+		NotifyTTY:       interactive,
+		ContinueSession: options.continueSession,
+		ResumeID:        options.resumeID,
+	})
 	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion())
 	client.Start(program.Send)
 	defer client.Close()

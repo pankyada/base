@@ -164,6 +164,35 @@ func TestSessionPickerRefusesResumeWhileRunning(t *testing.T) {
 	}
 }
 
+func TestContinueResumesNewestSessionAndStartsFreshWhenEmpty(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.Configure(Options{ContinueSession: true})
+	updated, _ := m.Update(ws.ConnectedMsg{})
+	m = updated.(Model)
+	m.handleServerMessage(protocol.ServerMessage{Type: "sessions", Sessions: []protocol.SessionSummary{
+		{ID: "old", CreatedAt: "2026-08-12T10:00:00Z"},
+		{ID: "new", CreatedAt: "2026-08-13T10:00:00Z"},
+	}})
+	if len(sender.messages) < 5 {
+		t.Fatalf("continue messages=%d", len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[len(sender.messages)-1])
+	if err != nil || string(wire) != `{"type":"resume","sessionId":"new"}` {
+		t.Fatalf("continue resume=%s err=%v", wire, err)
+	}
+
+	emptySender := &recordingSender{}
+	empty := NewModel(emptySender, "coding", "tester", prefs.Preferences{})
+	empty.Configure(Options{ContinueSession: true})
+	updated, _ = empty.Update(ws.ConnectedMsg{})
+	empty = updated.(Model)
+	empty.handleServerMessage(protocol.ServerMessage{Type: "sessions"})
+	if len(emptySender.messages) != 4 || len(empty.notices.Items) == 0 || !strings.Contains(empty.notices.Items[len(empty.notices.Items)-1].Message, "no past sessions") {
+		t.Fatalf("empty continue messages=%d notices=%#v", len(emptySender.messages), empty.notices.Items)
+	}
+}
+
 func TestModelPickerFiltersAndAcceptsCustomID(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,9 +25,11 @@ type MessageSender interface {
 }
 
 type Options struct {
-	NoMotion  bool
-	NoNotify  bool
-	NotifyTTY bool
+	NoMotion        bool
+	NoNotify        bool
+	NotifyTTY       bool
+	ContinueSession bool
+	ResumeID        string
 }
 
 type Model struct {
@@ -75,6 +78,10 @@ type Model struct {
 	sessionPicker      bool
 	sessionCursor      int
 	sessionOptions     []protocol.SessionSummary
+	continueSession    bool
+	resumeID           string
+	resumeRequested    bool
+	continueLookup     bool
 	workingDir         string
 	activeTool         string
 	activeToolStarted  time.Time
@@ -216,6 +223,8 @@ func (m *Model) Configure(options Options) {
 	m.noMotion = options.NoMotion
 	m.noNotify = options.NoNotify
 	m.notifyTTY = options.NotifyTTY
+	m.continueSession = options.ContinueSession
+	m.resumeID = options.ResumeID
 	m.transcript.Motion = !options.NoMotion
 }
 
@@ -286,6 +295,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.send(protocol.ModelsList())
 		m.send(protocol.SkillsList())
 		m.send(protocol.CommandsList())
+		if !m.resumeRequested {
+			if m.resumeID != "" {
+				m.send(protocol.Resume(m.resumeID))
+				m.resumeRequested = true
+			} else if m.continueSession {
+				m.send(protocol.SessionList(""))
+				m.resumeRequested = true
+				m.continueLookup = true
+			}
+		}
 		m.notices.SetDisconnected(false)
 		if wasDisconnected {
 			m.notices.Add(NoticeInfo, "reconnected", "", "")
@@ -1700,6 +1719,12 @@ func (m *Model) requestSessions() {
 	m.reflow()
 }
 
+func sortSessions(sessions []protocol.SessionSummary) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt > sessions[j].CreatedAt
+	})
+}
+
 func (m *Model) scheduleMentionIndex() tea.Cmd {
 	value := m.composer.Value()
 	if _, ok := activeMentionQuery(value); !ok {
@@ -1836,6 +1861,16 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.recomputeCompletion()
 	case "sessions":
 		m.sessionOptions = append([]protocol.SessionSummary{}, msg.Sessions...)
+		sortSessions(m.sessionOptions)
+		if m.continueLookup {
+			m.continueLookup = false
+			if len(m.sessionOptions) == 0 {
+				m.notices.Add(NoticeInfo, "no past sessions", "starting a fresh session", "send a message to begin")
+			} else {
+				m.send(protocol.Resume(m.sessionOptions[0].ID))
+			}
+			break
+		}
 		if m.sessionCursor >= len(m.sessionOptions) {
 			m.sessionCursor = maxInt(0, len(m.sessionOptions)-1)
 		}

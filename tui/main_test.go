@@ -28,3 +28,13 @@ func TestProfileNameFromPathFallsBackToFilename(t *testing.T) {
 		t.Fatalf("profile name = %q, want research", got)
 	}
 }
+
+func TestParseLaunchFlagsSupportsSessionResume(t *testing.T) {
+	options, err := parseLaunchFlags([]string{"--continue", "--resume", "sess-1", "--no-splash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.continueSession || options.resumeID != "sess-1" || !options.noSplash {
+		t.Fatalf("launch options = %#v", options)
+	}
+}
