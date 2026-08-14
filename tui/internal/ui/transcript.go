@@ -86,6 +86,13 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 			row = turnStart + lipgloss.Height(rendered) + 1
 			continue
 		}
+		if t.Role == "plan" {
+			header := StInfo.Render("PLAN ◇") + " " + StFaint.Render(t.Time)
+			rendered := roleGutter(t.Role, lipgloss.JoinVertical(lipgloss.Left, header, renderAgentText(t.Text, turnWidth)))
+			blocks = append(blocks, rendered)
+			row = turnStart + lipgloss.Height(rendered) + 1
+			continue
+		}
 		// agent
 		header := agentHeader(t.Time)
 		parts := []string{header}

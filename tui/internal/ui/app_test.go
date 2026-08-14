@@ -31,6 +31,39 @@ func TestAppMessageToolAndEndFlow(t *testing.T) {
 	}
 }
 
+func TestPlanRequestStageArtifactSelectAndProceedFlow(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	if _, handled := m.handleSlash("/plan refactor auth"); !handled {
+		t.Fatal("/plan should be handled")
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("plan messages=%d", len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[0])
+	if err != nil || string(wire) != `{"type":"plan_request","content":"refactor auth"}` {
+		t.Fatalf("plan request=%s err=%v", wire, err)
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "stage", Stage: "recon", State: "start"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "stage", Stage: "plan", State: "done"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "plan", Content: "## Plan\nstep one\n## Risks\nnone"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "input_request", ID: "plan-choice", Kind: "select", Prompt: "Plan ready", Options: []string{"proceed", "edit", "cancel"}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.pendingInput != nil || len(sender.messages) != 2 {
+		t.Fatalf("plan choice pending=%v messages=%d", m.pendingInput, len(sender.messages))
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "artifacts", Artifacts: []protocol.Artifact{{ID: "plan-1", Kind: "doc", Title: "Plan", Icon: "🗺️", Meta: "approved plan"}}})
+	m.reflow()
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "PLAN") || !strings.Contains(view, "step one") || !strings.Contains(view, "approved plan") {
+		t.Fatalf("plan flow view missing content: %s", view)
+	}
+	if m.transcript.Turns[len(m.transcript.Turns)-1].Role != "plan" {
+		t.Fatalf("last turn role=%q", m.transcript.Turns[len(m.transcript.Turns)-1].Role)
+	}
+}
+
 func TestAppApprovalInputOverlayAndReconnect(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

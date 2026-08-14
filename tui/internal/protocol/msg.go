@@ -173,6 +173,7 @@ type helloMsg struct {
 
 func (helloMsg) isClientMessage()           {}
 func (messageMsg) isClientMessage()         {}
+func (planRequestMsg) isClientMessage()     {}
 func (cancelMsg) isClientMessage()          {}
 func (resumeMsg) isClientMessage()          {}
 func (toolApproveMsg) isClientMessage()     {}
@@ -211,6 +212,15 @@ type messageMsg struct {
 
 func Message(content string) ClientMessage {
 	return messageMsg{Type: "message", Content: content}
+}
+
+type planRequestMsg struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
+}
+
+func PlanRequest(content string) ClientMessage {
+	return planRequestMsg{Type: "plan_request", Content: content}
 }
 
 type setApprovalModeMsg struct {

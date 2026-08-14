@@ -108,6 +108,8 @@ func roleColor(role string) lipgloss.Color {
 		return ColPurple
 	case "task":
 		return ColTeal
+	case "plan":
+		return ColInfo
 	case "memory":
 		return ColInfo
 	case "local":

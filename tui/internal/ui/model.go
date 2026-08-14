@@ -1530,6 +1530,13 @@ func (m *Model) startAgentMessage(content string) {
 	m.send(protocol.Message(content))
 }
 
+func (m *Model) startPlanMessage(content string) {
+	now := time.Now()
+	m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "user", Text: content, Time: now.Format("15:04")})
+	m.running = true
+	m.send(protocol.PlanRequest(content))
+}
+
 // handleSlash dispatches every "/command" the composer can submit. The
 // convention, for any command whose values come from a small fixed set
 // (model, approval, theme, density): a bare "/command" opens that value's
@@ -1576,6 +1583,12 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		}
 	case "compact":
 		m.send(protocol.Compact())
+	case "plan":
+		if strings.TrimSpace(args) == "" {
+			m.notices.Add(NoticeError, "what should be planned?", "/plan <request>", "")
+			break
+		}
+		m.startPlanMessage(args)
 	case "theme":
 		if args == "" {
 			m.openOverlay("theme")
@@ -1952,6 +1965,8 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 	case "stage":
 		m.stageCosts[msg.Stage] += msg.CostUSD
 		m.workflowStages[msg.Stage] = StageItem{Stage: msg.Stage, State: msg.State, Cost: m.stageCosts[msg.Stage]}
+	case "plan":
+		m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "plan", Text: msg.Content, Time: time.Now().Format("15:04")})
 	case "session_end":
 		m.running = false
 		m.activeTool = ""
