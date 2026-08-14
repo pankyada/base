@@ -138,6 +138,8 @@ type Model struct {
 	pendingOptionCursor int
 	pendingSelected     map[int]bool
 	pendingAnswerInput  textinput.Model
+	undoEntries         []protocol.UndoEntry
+	undoCursor          int
 
 	// Rail render and hit map are produced together in reflow so a click can
 	// never be resolved against a different layout than the one on screen.
@@ -1057,6 +1059,9 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlayTab == "inbox" {
 		return m.updateInboxTab(msg)
 	}
+	if m.overlayTab == "undo" {
+		return m.updateUndoTab(msg)
+	}
 	if msg.String() == "right" {
 		m.cycleOverlay(1)
 	} else if msg.String() == "left" {
@@ -1404,6 +1409,9 @@ func (m *Model) primeOverlayTab() {
 		m.pendingAnswerInput.Blur()
 		m.pendingCursor = minInt(m.pendingCursor, maxInt(0, len(m.pendingQueue)-1))
 		m.send(protocol.PendingList())
+	case "undo":
+		m.undoCursor = firstAvailableUndo(m.undoEntries, 0)
+		m.send(protocol.UndoList())
 	}
 }
 
@@ -1661,6 +1669,8 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		}
 	case "inbox":
 		m.openOverlay("inbox")
+	case "undo":
+		m.openOverlay("undo")
 	case "sessions":
 		m.requestSessions()
 	default:
@@ -1864,6 +1874,9 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if m.pendingCursor >= len(m.pendingQueue) {
 			m.pendingCursor = maxInt(0, len(m.pendingQueue)-1)
 		}
+	case "undo_entries":
+		m.undoEntries = append([]protocol.UndoEntry{}, msg.Undo...)
+		m.undoCursor = firstAvailableUndo(m.undoEntries, m.undoCursor)
 	case "artifacts":
 		m.artifacts = append(m.artifacts, msg.Artifacts...)
 	case "skills":
@@ -2189,6 +2202,8 @@ func (m Model) View() string {
 			body = tasksTab(m.tasks, m.taskCursor, m.taskStates(), m.tasksDetected, taskConfigPath(m.workingDir), m.taskEditing, m.taskEditor.View(), m.taskEditorError, m.width)
 		} else if m.overlayTab == "inbox" {
 			body = pendingInboxViewState(m.pendingQueue, m.pendingCursor, m.pendingAnswering, m.pendingAnswerInput.Value(), m.pendingOptionCursor, m.pendingSelected, m.width, m.height)
+		} else if m.overlayTab == "undo" {
+			body = undoPanelView(m.undoEntries, m.undoCursor, m.width, m.height)
 		}
 		return Center(background, tabsView(m.overlayTab, m.width, m.height, body), m.width, m.height)
 	}

@@ -98,6 +98,17 @@ type PendingInput struct {
 	AnsweredVia string                 `json:"answered_via,omitempty"`
 }
 
+type UndoEntry struct {
+	ID        string `json:"id"`
+	TS        string `json:"ts"`
+	Tool      string `json:"tool"`
+	Target    string `json:"target"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Available bool   `json:"available"`
+	Applied   bool   `json:"applied"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // ServerMessage is a flat envelope over every server->client message.
 // Only the fields relevant to msg.Type are populated.
 type ServerMessage struct {
@@ -150,6 +161,7 @@ type ServerMessage struct {
 	Tier      string           `json:"tier,omitempty"`
 	State     string           `json:"state,omitempty"`
 	Pending   []PendingInput   `json:"pending,omitempty"`
+	Undo      []UndoEntry      `json:"entries,omitempty"`
 }
 
 // DecodeServer parses one server->client frame.
@@ -196,6 +208,8 @@ func (skillsMineMsg) isClientMessage()      {}
 func (compactMsg) isClientMessage()         {}
 func (pendingListMsg) isClientMessage()     {}
 func (pendingAnswerMsg) isClientMessage()   {}
+func (undoListMsg) isClientMessage()        {}
+func (undoApplyMsg) isClientMessage()       {}
 
 func Hello(userID string, profile ...string) ClientMessage {
 	msg := helloMsg{Type: "hello", UserID: userID}
@@ -256,6 +270,19 @@ type pendingListMsg struct {
 }
 
 func PendingList() ClientMessage { return pendingListMsg{Type: "pending_list"} }
+
+type undoListMsg struct {
+	Type string `json:"type"`
+}
+
+func UndoList() ClientMessage { return undoListMsg{Type: "undo_list"} }
+
+type undoApplyMsg struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+func UndoApply(id string) ClientMessage { return undoApplyMsg{Type: "undo_apply", ID: id} }
 
 type pendingAnswerMsg struct {
 	Type      string `json:"type"`

@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var overlayTabs = []string{"model", "approval", "theme", "density", "skills", "tasks", "inbox"}
+var overlayTabs = []string{"model", "approval", "theme", "density", "skills", "tasks", "inbox", "undo"}
 
 var overlayTabHints = map[string]string{
 	"model":    "↑/↓ choose · / filter · enter apply · tab next · esc close",
@@ -16,6 +16,7 @@ var overlayTabHints = map[string]string{
 	"skills":   "↑/↓ select · enter open · e edit · p promote · d discard · m mine · r refresh",
 	"tasks":    "↑/↓ select · enter run/stop · e edit · d detect · a ask agent · r reload",
 	"inbox":    "↑/↓ select · enter answer · tab next · esc close",
+	"undo":     "↑/↓ select available · enter restore · tab next · esc close",
 }
 
 // tabsView frames the overlay: a tab strip, a rule, the active tab's body, and

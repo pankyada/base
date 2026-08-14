@@ -64,6 +64,36 @@ func TestPlanRequestStageArtifactSelectAndProceedFlow(t *testing.T) {
 	}
 }
 
+func TestUndoPanelListsUnavailableAndAppliesAvailableEntry(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	if _, handled := m.handleSlash("/undo"); !handled {
+		t.Fatal("/undo should be handled")
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("undo list messages=%d", len(sender.messages))
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "undo_entries", Undo: []protocol.UndoEntry{
+		{ID: "expired", Tool: "Write", Target: "old.go", Available: false, Reason: "undo window has expired"},
+		{ID: "current", Tool: "Edit", Target: "main.go", Available: true},
+	}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(sender.messages) != 2 {
+		t.Fatalf("undo apply messages=%d", len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[1])
+	if err != nil || string(wire) != `{"type":"undo_apply","id":"current"}` {
+		t.Fatalf("undo apply wire=%s err=%v", wire, err)
+	}
+	view := stripANSI(undoPanelView(nil, 0, 100, 30))
+	if !strings.Contains(view, "nothing to undo in this session") {
+		t.Fatalf("empty undo state missing: %s", view)
+	}
+}
+
 func TestAppApprovalInputOverlayAndReconnect(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})
