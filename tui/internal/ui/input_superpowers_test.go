@@ -79,6 +79,17 @@ func TestCompletionOwnsTabAndAcceptsWithoutOpeningOverlay(t *testing.T) {
 	}
 }
 
+func TestCompletionRecomputesWhileTypingSlashQuery(t *testing.T) {
+	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
+	for _, r := range []rune{'/', 't', 'h'} {
+		updated, _ := m.Update(press(r))
+		m = updated.(Model)
+	}
+	if m.composer.Value() != "/th" || !m.completion.Open || len(m.completion.Items) != 1 || m.completion.Items[0].Label != "/theme" {
+		t.Fatalf("typed completion value=%q open=%v items=%#v", m.composer.Value(), m.completion.Open, m.completion.Items)
+	}
+}
+
 func TestCompletionEnterAcceptsAndEscDismisses(t *testing.T) {
 	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
 	m.composer.input.SetValue("/th")
