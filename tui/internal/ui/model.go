@@ -136,6 +136,7 @@ type Model struct {
 	attachments        []Attachment
 	localCancel        context.CancelFunc
 	lastLocal          *localResultMsg
+	lastAction         *ActionResult
 	density            string // "full" | "normal" | "compact" — prose fold aggressiveness
 	themeCursor        int
 	densityCursor      int
@@ -384,7 +385,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action != tea.MouseActionRelease || msg.Button != tea.MouseButtonLeft {
 			return m, nil
 		}
-		topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, time.Now(), m.width, m.stageItems()))
+		branch := ""
+		if m.git.Repo {
+			branch = m.git.Branch
+		}
+		topBarHeight := lipgloss.Height(topBar(m.profile, m.sessionID, m.connected, branch, time.Now(), m.width, m.stageItems()))
 		if m.railShown() && msg.X >= m.width-railWidth {
 			// Rail coordinates: the block starts at the rail column, and its
 			// content starts after the left border and PaddingLeft(2).
@@ -432,6 +437,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.localCancel = nil
 		result := msg
 		m.lastLocal = &result
+		command := msg.Command
+		m.lastAction = actionResult("local", "!"+command, msg.Output, msg.Code == 0)
+		m.lastAction.RetryFunc = func(model *Model) tea.Cmd {
+			cmd, cancel := runLocalCommand(command, model.workingDir)
+			model.localCancel = cancel
+			return cmd
+		}
 		m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "local", Text: localView(msg), Time: time.Now().Format("15:04")})
 		m.reflow()
 		return m, nil
@@ -491,6 +503,28 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpOpen = false
 		m.reflow()
 		return m, nil
+	}
+	if m.lastAction != nil && m.composer.Value() == "" {
+		switch msg.String() {
+		case "u":
+			if m.lastAction.UndoID != "" {
+				m.send(protocol.UndoApply(m.lastAction.UndoID))
+				return m, nil
+			}
+		case "r":
+			if m.lastAction.RetryFunc != nil {
+				return m, m.lastAction.RetryFunc(&m)
+			}
+		case "l":
+			if m.lastAction.LogsTab != "" {
+				m.openOverlay(m.lastAction.LogsTab)
+				return m, nil
+			}
+		case "esc":
+			m.lastAction = nil
+			m.reflow()
+			return m, nil
+		}
 	}
 	switch {
 	case matches(msg, m.keys.Quit):
@@ -2241,9 +2275,12 @@ func (m Model) View() string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, body, m.railBlock)
 	}
 	parts := []string{
-		topBar(m.profile, m.sessionID, m.connected, time.Now(), m.width, m.stageItems()),
-		body,
+		topBar(m.profile, m.sessionID, m.connected, m.topBarBranch(), time.Now(), m.width, m.stageItems()),
 	}
+	if banner := actionBar(m.lastAction, m.width); banner != "" {
+		parts = append(parts, banner)
+	}
+	parts = append(parts, body)
 	if hint := scrollHint(m.follow, m.viewport.Height, m.contentLines, m.viewport.YOffset, m.width); hint != "" {
 		parts = append(parts, hint)
 	}
@@ -2306,4 +2343,11 @@ func (m Model) View() string {
 		return Center(background, tabsView(m.overlayTab, m.width, m.height, body), m.width, m.height)
 	}
 	return background
+}
+
+func (m Model) topBarBranch() string {
+	if !m.git.Repo {
+		return ""
+	}
+	return m.git.Branch
 }

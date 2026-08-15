@@ -18,7 +18,7 @@ type StageItem struct {
 // Live run state (READY/RUNNING, tokens, cost) belongs to the status bar,
 // which sits next to the composer where the eye already is; rendering the
 // badge in both places just asked the user which one to believe.
-func topBar(profile, sessionID string, connected bool, now time.Time, width int, workflow ...[]StageItem) string {
+func topBar(profile, sessionID string, connected bool, branch string, now time.Time, width int, workflow ...[]StageItem) string {
 	dot := StErr.Render("● offline")
 	if connected {
 		dot = StOK.Render("● online")
@@ -29,6 +29,9 @@ func topBar(profile, sessionID string, connected bool, now time.Time, width int,
 		StFaint.Render(shortID(sessionID)),
 		dot,
 		StDim.Render(now.Format("15:04")),
+	}
+	if branch != "" {
+		segments = append(segments, StAccentB.Render("⎇ "+branch))
 	}
 	base := fitBar(width, segments)
 	if len(workflow) == 0 || len(workflow[0]) == 0 {

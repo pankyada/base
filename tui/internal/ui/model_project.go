@@ -147,6 +147,13 @@ var gitReportsOutput = map[string]bool{"diff": true, "log": true}
 
 func (m Model) handleGitAction(msg gitActionMsg) (tea.Model, tea.Cmd) {
 	m.gitBusy = ""
+	result := msg.Output
+	if strings.TrimSpace(result) == "" && msg.Err != nil {
+		result = msg.Err.Error()
+	}
+	m.lastAction = actionResult("git", "git "+msg.Action, result, msg.Code == 0)
+	action := msg.Action
+	m.lastAction.RetryFunc = func(model *Model) tea.Cmd { return model.startGitAction(action, "") }
 	switch {
 	case gitReportsOutput[msg.Action] && msg.Code == 0:
 		body := msg.Output
@@ -247,6 +254,10 @@ func (m Model) handleTaskExit(msg taskExitMsg) (tea.Model, tea.Cmd) {
 	run.Done = true
 	run.Code = msg.Code
 	run.Err = msg.Err
+	m.lastAction = actionResult("task", run.Label, actionExitResult(msg.Code), msg.Code == 0)
+	taskID := run.ID
+	m.lastAction.RetryFunc = func(model *Model) tea.Cmd { return model.toggleTask(taskID) }
+	m.lastAction.LogsTab = "tasks"
 	if msg.Code == 0 {
 		m.notices.Add(NoticeInfo, "task finished", run.Label+" · exit 0", "")
 	} else {

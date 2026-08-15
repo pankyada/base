@@ -7,7 +7,7 @@ import (
 )
 
 func TestStageStripRendersSkippedAndEscalatedStates(t *testing.T) {
-	out := stripANSI(topBar("coding", "sess-1", true, time.Now(), 120, []StageItem{
+	out := stripANSI(topBar("coding", "sess-1", true, "", time.Now(), 120, []StageItem{
 		{Stage: "recon", State: "done"},
 		{Stage: "plan", State: "skipped"},
 		{Stage: "build", State: "escalated", Cost: 0.12},

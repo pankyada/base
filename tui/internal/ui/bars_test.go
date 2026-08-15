@@ -10,7 +10,7 @@ import (
 
 func TestBarsFitNarrowWidths(t *testing.T) {
 	for _, width := range []int{10, 20, 40, 80} {
-		if got := lipgloss.Width(topBar("devops", "123456789", true, time.Now(), width)); got > width {
+		if got := lipgloss.Width(topBar("devops", "123456789", true, "", time.Now(), width)); got > width {
 			t.Errorf("top bar width = %d, want <= %d", got, width)
 		}
 		if got := lipgloss.Width(statusBar(true, "claude-3-5-sonnet", "danger", 123, 456, 0.0123, 1000, 10000, 1, width, 0)); got > width {
@@ -51,12 +51,12 @@ func TestStatusBadgeIsStableWhenReady(t *testing.T) {
 
 func TestTopBarShowsIdentityAndStaysWithinWidth(t *testing.T) {
 	for _, width := range []int{20, 40, 80, 120} {
-		out := topBar("devops", "sess-123456789", true, time.Now(), width)
+		out := topBar("devops", "sess-123456789", true, "", time.Now(), width)
 		if got := lipgloss.Width(out); got > width {
 			t.Fatalf("top bar width = %d, want <= %d", got, width)
 		}
 	}
-	wide := stripANSI(topBar("devops", "sess-1", true, time.Now(), 120))
+	wide := stripANSI(topBar("devops", "sess-1", true, "", time.Now(), 120))
 	for _, want := range []string{"harness", "devops", "sess-1", "online"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("top bar should carry identity %q: %s", want, wide)
@@ -68,6 +68,17 @@ func TestTopBarShowsIdentityAndStaysWithinWidth(t *testing.T) {
 		if strings.Contains(wide, unwanted) {
 			t.Fatalf("top bar should not duplicate run status %q: %s", unwanted, wide)
 		}
+	}
+}
+
+func TestTopBarShowsBranchOnlyWhenProvided(t *testing.T) {
+	withBranch := stripANSI(topBar("devops", "sess-1", true, "feature/palette", time.Now(), 120))
+	if !strings.Contains(withBranch, "feature/palette") {
+		t.Fatalf("top bar missing branch: %s", withBranch)
+	}
+	withoutBranch := stripANSI(topBar("devops", "sess-1", true, "", time.Now(), 120))
+	if strings.Contains(withoutBranch, "feature/palette") {
+		t.Fatalf("top bar rendered branch without repo: %s", withoutBranch)
 	}
 }
 
