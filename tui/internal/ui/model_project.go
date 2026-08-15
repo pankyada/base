@@ -153,7 +153,12 @@ func (m Model) handleGitAction(msg gitActionMsg) (tea.Model, tea.Cmd) {
 	}
 	m.lastAction = actionResult("git", "git "+msg.Action, result, msg.Code == 0)
 	action := msg.Action
-	m.lastAction.RetryFunc = func(model *Model) tea.Cmd { return model.startGitAction(action, "") }
+	m.lastAction.RetryFunc = func(model *Model) tea.Cmd {
+		if _, needsConfirm := gitNeedsConfirm[action]; needsConfirm {
+			model.gitConfirm = action
+		}
+		return model.startGitAction(action, "")
+	}
 	switch {
 	case gitReportsOutput[msg.Action] && msg.Code == 0:
 		body := msg.Output
