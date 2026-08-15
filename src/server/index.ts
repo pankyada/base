@@ -29,8 +29,8 @@ import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { buildInteractiveSystemPrompt } from './interactive-prompt.js'
 import { listProposed, listInstalled, readSkill, writeSkill, promoteSkill, discardSkill } from '../skills/manage.js'
-import { runAgentLoop } from '../loop/agent-loop.js'
-import { runPlanPreview, runWorkflow } from '../workflow/runner.js'
+import { runPlanPreview } from '../workflow/runner.js'
+import { runApprovedPlanFollowOn, runInteractiveTurn } from './turn-runner.js'
 import { writeArtifact } from '../workflow/artifacts.js'
 import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { listModels } from '../models/registry.js'
@@ -417,12 +417,18 @@ async function main() {
           const edited = await requestInput('Edit plan, then press enter (blank keeps generated plan).', 'text')
           if (edited.trim()) planBody = edited.trim()
         }
-        writeArtifact(connectionProfile, session, 'plan', planBody, {
-          intensity: preview.intensity, tier: preview.tier, model: preview.model, contract_ok: preview.contract_ok, attempt: preview.attempt, task_id: preview.taskId,
-        })
+        await runApprovedPlanFollowOn(
+          request,
+          planBody,
+          () => writeArtifact(connectionProfile, session, 'plan', planBody, {
+            intensity: preview.intensity, tier: preview.tier, model: preview.model, contract_ok: preview.contract_ok, attempt: preview.attempt, task_id: preview.taskId,
+          }),
+          approvedMessage => {
+            ws.emit('message', Buffer.from(JSON.stringify({ type: 'message', content: approvedMessage, skipWorkflow: true })), false)
+          },
+        )
         send({ type: 'artifacts', sessionId: session.id, artifacts: [{ id: `plan-${preview.taskId}`, kind: 'doc', title: 'Plan', icon: '🗺️', meta: 'approved plan', data: { path: `${connectionProfile.artifact_dir}/workflow/${session.id}/plan.md`, summary: planBody.split('\n')[0] ?? '' } }] })
         runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
-        ws.emit('message', Buffer.from(JSON.stringify({ type: 'message', content: `${request}\n\nApproved plan:\n${planBody}` })), false)
       } catch (error: any) {
         runStore.update(runId, { status: 'failed', error: error.message, finished_at: new Date().toISOString() })
         send({ type: 'error', message: error.message })
@@ -849,11 +855,7 @@ async function main() {
 
         const runSignal = abortController.signal
         try {
-          if (connectionProfile.workflow?.enabled) {
-            await runWorkflow(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal)
-          } else {
-            await runAgentLoop(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal)
-          }
+          await runInteractiveTurn(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal, msg.skipWorkflow)
           runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
           if (runSignal.aborted) {
             saveSession(session)

@@ -153,7 +153,7 @@ export type ClientMessage =
   | { type: 'audio_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
   | { type: 'audio_end' }
   | { type: 'barge_in' }
-  | { type: 'message'; content: string }
+  | { type: 'message'; content: string; skipWorkflow?: boolean }
   | { type: 'plan_request'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
