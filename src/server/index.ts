@@ -45,6 +45,7 @@ import { isParkSignal } from '../runs/park.js'
 import { resumeExpiredInput, resumePendingInput } from '../runs/resume.js'
 import { loadVoiceProviders } from '../voice/loader.js'
 import { registerVoiceProvider, resolveVoiceProvider } from '../voice/registry.js'
+import { registerServer, serverRecordFor, unregisterServer } from './process-registry.js'
 import { VoiceInput } from '../voice/input.js'
 import { VoiceTurn } from '../voice/session.js'
 import { VoiceOutput } from '../voice/output.js'
@@ -262,6 +263,11 @@ async function main() {
     },
   })
   httpServer.listen(PORT, () => {
+    try {
+      registerServer(serverRecordFor(PORT, profile.name, [...profiles.keys()], process.cwd()))
+    } catch (error: any) {
+      console.warn(`[server] unable to write process registry: ${error.message}`)
+    }
     console.log(`Harness server on ws://localhost:${PORT} [profile: ${profile.name}]`)
     console.log(`REST endpoints: http://localhost:${PORT} (/run, /stream, /health)`)
     if (!apiKey) {
@@ -919,7 +925,11 @@ async function main() {
     ws.on('error', (e) => console.error('ws error:', e.message))
   })
 
-  process.on('SIGINT', async () => {
+  let shuttingDown = false
+  const shutdown = async () => {
+    if (shuttingDown) return
+    shuttingDown = true
+    unregisterServer(PORT)
     console.log('\nShutting down...')
     await Promise.all(schedulers.map(scheduler => scheduler.stop()))
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
@@ -927,7 +937,9 @@ async function main() {
     httpServer.close()
     await Promise.all([...channelsByProfile.values()].map(runtime => runtime.stop()))
     process.exit(0)
-  })
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
 
 main().catch(e => { console.error(e); process.exit(1) })

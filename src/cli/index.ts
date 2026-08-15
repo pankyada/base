@@ -5,6 +5,7 @@ import { ClientMessage, ServerMessage } from '../types.js'
 import pkg from '../../package.json' with { type: 'json' }
 import { routingStats } from '../analysis/cli.js'
 import { runAuditCommand } from './audit.js'
+import { runServerCommand } from './server.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(`harness ${pkg.version}`)
@@ -27,6 +28,11 @@ if (process.argv[2] === 'stats' && process.argv[3] === 'routing') {
 
 if (process.argv[2] === 'audit') {
   process.exitCode = await runAuditCommand(process.argv.slice(3))
+  process.exit()
+}
+
+if (process.argv[2] === 'server') {
+  process.exitCode = await runServerCommand(process.argv.slice(3))
   process.exit()
 }
 
