@@ -14,12 +14,12 @@ func TestCompletionRecomputeCombinesCommandsAndSkills(t *testing.T) {
 	}
 	skills := []CompletionItem{{Label: "/code-review", Detail: "review code", Insert: "/code-review", Kind: CompletionSkill}}
 	var c Completion
-	c.Recompute("/", commands, skills, nil)
+	c.Recompute("/", append(commands, skills...), nil)
 	if !c.Open || len(c.Items) != 3 || c.Items[0].Label != "/tasks" || c.Items[2].Kind != CompletionSkill {
 		t.Fatalf("completion = %#v", c)
 	}
 
-	c.Recompute("/ta", commands, skills, nil)
+	c.Recompute("/ta", append(commands, skills...), nil)
 	if len(c.Items) != 1 || c.Items[0].Label != "/tasks" {
 		t.Fatalf("filtered completion = %#v", c.Items)
 	}
@@ -30,7 +30,7 @@ func TestCompletionCollisionKeepsEarlierCommand(t *testing.T) {
 	c.Recompute("/th", []CompletionItem{
 		{Label: "/theme", Detail: "built-in", Insert: "/theme", Kind: CompletionCommand},
 		{Label: "/theme", Detail: "custom", Insert: "/theme", Kind: CompletionCommand},
-	}, nil, nil)
+	}, nil)
 	if len(c.Items) != 1 || c.Items[0].Detail != "built-in" {
 		t.Fatalf("collision completion = %#v", c.Items)
 	}
@@ -38,7 +38,7 @@ func TestCompletionCollisionKeepsEarlierCommand(t *testing.T) {
 
 func TestCompletionRecomputeMentionsUseActiveQuery(t *testing.T) {
 	var c Completion
-	c.Recompute("fix @a.go and @src/ma", nil, nil, []string{"src/main.go", "src/other.txt"})
+	c.Recompute("fix @a.go and @src/ma", nil, []string{"src/main.go", "src/other.txt"})
 	if !c.Open || len(c.Items) != 1 || c.Items[0].Label != "@src/main.go" {
 		t.Fatalf("mention completion = %#v", c)
 	}
@@ -51,13 +51,13 @@ func TestCompletionRecomputeMentionsUseActiveQuery(t *testing.T) {
 func TestCompletionAcceptReplacesOnlyActiveToken(t *testing.T) {
 	var c Completion
 	commands := []CompletionItem{{Label: "/theme", Insert: "/theme", Kind: CompletionCommand}}
-	c.Recompute("/th", commands, nil, nil)
+	c.Recompute("/th", commands, nil)
 	got, ok := c.Accept("/th")
 	if !ok || got != "/theme" {
 		t.Fatalf("accepted command = %q, ok=%v", got, ok)
 	}
 
-	c.Recompute("fix @a.go and @src/ma", nil, nil, []string{"src/main.go"})
+	c.Recompute("fix @a.go and @src/ma", nil, []string{"src/main.go"})
 	got, ok = c.Accept("fix @a.go and @src/ma")
 	if !ok || got != "fix @a.go and @src/main.go" {
 		t.Fatalf("accepted file = %q, ok=%v", got, ok)
@@ -111,7 +111,7 @@ func TestCompletionViewHasKindsWidthAndRowCap(t *testing.T) {
 
 func TestCompletionZeroItemsClosed(t *testing.T) {
 	var c Completion
-	c.Recompute("/missing", []CompletionItem{{Label: "/theme"}}, nil, nil)
+	c.Recompute("/missing", []CompletionItem{{Label: "/theme"}}, nil)
 	if c.Open || c.View(20) != "" {
 		t.Fatalf("empty completion = %#v", c)
 	}

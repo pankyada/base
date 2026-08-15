@@ -24,6 +24,19 @@ type MessageSender interface {
 	Send(protocol.ClientMessage)
 }
 
+type invocableKind uint8
+
+const (
+	invocableSkill invocableKind = iota
+	invocableCommand
+)
+
+type invocable struct {
+	kind    invocableKind
+	skill   protocol.SkillSummary
+	command protocol.CommandSummary
+}
+
 type Options struct {
 	NoMotion        bool
 	NoNotify        bool
@@ -1677,16 +1690,17 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 	default:
 		// Built-in commands are handled by the switch above first. This keeps
 		// a custom command or skill named "theme" from shadowing /theme.
-		if custom, ok := m.customCommand(command); ok {
-			m.startMessage(strings.ReplaceAll(custom.Template, "$ARGUMENTS", args))
-			return nil, true
-		}
-		if skill, ok := m.installedSkill(command); ok {
-			prompt := fmt.Sprintf("Use the %q skill.", skill.Name)
-			if args != "" {
-				prompt += " " + args
+		if item, ok := m.resolveInvocable(command); ok {
+			switch item.kind {
+			case invocableCommand:
+				m.startMessage(strings.ReplaceAll(item.command.Template, "$ARGUMENTS", args))
+			case invocableSkill:
+				prompt := fmt.Sprintf("Use the %q skill.", item.skill.Name)
+				if args != "" {
+					prompt += " " + args
+				}
+				m.startMessage(prompt)
 			}
-			m.startMessage(prompt)
 			return nil, true
 		}
 		m.notices.Add(NoticeError, "unknown command", "/"+command, slashHelp())
@@ -1695,22 +1709,28 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 	return deferred, true
 }
 
-func (m Model) installedSkill(command string) (protocol.SkillSummary, bool) {
-	for _, skill := range m.installedSkills {
-		if strings.EqualFold(skill.Name, command) {
-			return skill, true
+func (m Model) resolveInvocable(command string) (invocable, bool) {
+	for _, item := range m.invocableItems() {
+		name := item.skill.Name
+		if item.kind == invocableCommand {
+			name = item.command.Name
 		}
-	}
-	return protocol.SkillSummary{}, false
-}
-
-func (m Model) customCommand(command string) (protocol.CommandSummary, bool) {
-	for _, item := range m.customCommands {
-		if strings.EqualFold(item.Name, command) {
+		if strings.EqualFold(name, command) {
 			return item, true
 		}
 	}
-	return protocol.CommandSummary{}, false
+	return invocable{}, false
+}
+
+func (m Model) invocableItems() []invocable {
+	items := make([]invocable, 0, len(m.customCommands)+len(m.installedSkills))
+	for _, command := range m.customCommands {
+		items = append(items, invocable{kind: invocableCommand, command: command})
+	}
+	for _, skill := range m.installedSkills {
+		items = append(items, invocable{kind: invocableSkill, skill: skill})
+	}
+	return items
 }
 
 // taskIDList is the "did you mean" line for task commands.
@@ -1768,9 +1788,9 @@ func (m *Model) scheduleMentionIndex() tea.Cmd {
 }
 
 func (m *Model) recomputeCompletion() {
-	commands := make([]CompletionItem, 0, len(slashOrder)+len(m.customCommands))
+	invocables := make([]CompletionItem, 0, len(slashOrder)+len(m.customCommands)+len(m.installedSkills))
 	for _, name := range slashOrder {
-		commands = append(commands, CompletionItem{
+		invocables = append(invocables, CompletionItem{
 			Label:  "/" + name,
 			Detail: slashCommands[name],
 			Insert: "/" + name,
@@ -1778,7 +1798,7 @@ func (m *Model) recomputeCompletion() {
 		})
 	}
 	for _, command := range m.customCommands {
-		commands = append(commands, CompletionItem{
+		invocables = append(invocables, CompletionItem{
 			Label:  "/" + command.Name,
 			Detail: command.Description,
 			Insert: "/" + command.Name,
@@ -1791,16 +1811,15 @@ func (m *Model) recomputeCompletion() {
 			files = append(files, strings.TrimPrefix(match, "@"))
 		}
 	}
-	skills := make([]CompletionItem, 0, len(m.installedSkills))
 	for _, skill := range m.installedSkills {
-		skills = append(skills, CompletionItem{
+		invocables = append(invocables, CompletionItem{
 			Label:  "/" + skill.Name,
 			Detail: skill.Description,
 			Insert: "/" + skill.Name,
 			Kind:   CompletionSkill,
 		})
 	}
-	m.completion.Recompute(m.composer.Value(), commands, skills, files)
+	m.completion.Recompute(m.composer.Value(), invocables, files)
 }
 
 func (m *Model) clearCompletion() {

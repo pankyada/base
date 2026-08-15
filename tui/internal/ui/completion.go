@@ -32,7 +32,7 @@ type Completion struct {
 // Recompute builds one completion list from the active token. Trigger parsing
 // stays in slashQuery and activeMentionQuery so rendering and acceptance share
 // the same boundary rules as the older inline hints.
-func (c *Completion) Recompute(value string, commands, skills []CompletionItem, files []string) {
+func (c *Completion) Recompute(value string, invocables []CompletionItem, files []string) {
 	c.Open = false
 	c.Items = nil
 	c.Cursor = 0
@@ -43,8 +43,8 @@ func (c *Completion) Recompute(value string, commands, skills []CompletionItem, 
 		// source of truth. The query helper also permits skills/custom commands
 		// that have no built-in match yet.
 		builtinMatches := slashMatches(value)
-		byLabel := make(map[string]CompletionItem, len(commands))
-		for _, item := range commands {
+		byLabel := make(map[string]CompletionItem, len(invocables))
+		for _, item := range invocables {
 			if _, exists := byLabel[item.Label]; !exists {
 				byLabel[item.Label] = item
 			}
@@ -56,14 +56,7 @@ func (c *Completion) Recompute(value string, commands, skills []CompletionItem, 
 				seen[label] = true
 			}
 		}
-		for _, item := range commands {
-			if seen[item.Label] || !strings.HasPrefix(item.Label, "/"+query) {
-				continue
-			}
-			c.Items = append(c.Items, item)
-			seen[item.Label] = true
-		}
-		for _, item := range skills {
+		for _, item := range invocables {
 			if seen[item.Label] || !strings.HasPrefix(item.Label, "/"+query) {
 				continue
 			}
