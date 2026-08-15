@@ -498,6 +498,17 @@ is text-only. Both are harness-shaped gaps; neither needs a vendor in core.
 
 ---
 
+### ✅ 24. TUI/runtime parity
+
+The TUI/runtime parity surface shipped, then received a correctness and security
+hardening pass covering effect-derived ACLs, workflow-stage propagation, plan
+approval routing, undo staleness, and unified slash invocables.
+
+**Design:** [`tui-parity-plan.md`](superpowers/specs/2026-08-14-tui-parity-plan.md) ·
+[`tui-parity-fixes-plan.md`](superpowers/specs/2026-08-15-tui-parity-fixes-plan.md)
+
+---
+
 ## Suggested sequencing
 
 ```
