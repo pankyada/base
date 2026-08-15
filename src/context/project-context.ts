@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { isAbsolute, join, relative, resolve } from 'path'
 import { getGitRoot } from '../skills/loader.js'
+import { realpathForContainment } from '../tools/predicates.js'
 
 const CONTEXT_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const
 const DEFAULT_MAX_BYTES = 32 * 1024
@@ -16,7 +17,7 @@ function safeContextFile(root: string, filename: string): string | null {
   try {
     if (!existsSync(path) || !statSync(path).isFile()) return null
     const resolvedRoot = realpathSync(root)
-    const resolvedFile = realpathSync(path)
+    const resolvedFile = realpathForContainment(path)
     return isWithin(resolvedRoot, resolvedFile) ? resolvedFile : null
   } catch {
     return null

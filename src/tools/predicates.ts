@@ -44,7 +44,7 @@ export function matchesPredicate(predicate: Predicate, input: Record<string, unk
 }
 
 /** Resolve existing symlinks while still allowing a new file beneath a safe root. */
-function realpathForContainment(candidate: string): string {
+export function realpathForContainment(candidate: string): string {
   const suffix: string[] = []
   let current = candidate
   while (true) {
