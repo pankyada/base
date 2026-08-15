@@ -24,12 +24,11 @@ export function getGitRoot(cwd = process.cwd()): string | null {
   }
 }
 
-export function resolveSkillsDirs(): string[] {
-  const cwd = process.cwd()
+export function resolveSkillsDirs(cwd = process.cwd()): string[] {
   const candidates: string[] = [
     join(homedir(), '.agents', 'skills'),
   ]
-  const gitRoot = getGitRoot()
+  const gitRoot = getGitRoot(cwd)
   if (gitRoot) candidates.push(join(gitRoot, '.agents', 'skills'))
   candidates.push(join(resolve(cwd, '..'), '.agents', 'skills'))
   candidates.push(join(cwd, '.agents', 'skills'))

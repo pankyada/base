@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs'
-import { homedir } from 'os'
 import { isAbsolute, join, relative, resolve } from 'path'
-import { getGitRoot } from '../skills/loader.js'
+import { resolveSkillsDirs } from '../skills/loader.js'
 import { realpathForContainment } from '../tools/predicates.js'
 
 const CONTEXT_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const
@@ -26,12 +25,7 @@ function safeContextFile(root: string, filename: string): string | null {
 
 /** Resolve project instruction files from broadest to most-specific roots. */
 export function resolveContextFiles(cwd = process.cwd()): string[] {
-  const roots = [
-    homedir(),
-    getGitRoot(cwd),
-    resolve(cwd, '..'),
-    cwd,
-  ].filter((root): root is string => Boolean(root))
+  const roots = resolveSkillsDirs(cwd).map(dir => resolve(dir, '..', '..'))
 
   const byName = new Map<string, string>()
   for (const root of roots) {
