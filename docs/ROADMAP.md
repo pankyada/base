@@ -509,6 +509,135 @@ approval routing, undo staleness, and unified slash invocables.
 
 ---
 
+## Track: web surface (#25–#29)
+
+The backend grew twenty-seven subsystems; the web client still speaks the protocol
+of #8. Five items turn it into the control plane, with three faces — **analyst**,
+**operator**, **assistant** — over one runtime, one token system, one component kit.
+
+Posture is **single operator, localhost**. No login, no multi-tenancy — which makes
+the transport the only boundary, so #25 makes that boundary real before anything is
+built on it.
+
+**Master design:** [`web-surface-design.md`](superpowers/specs/2026-08-16-web-surface-design.md)
+**Plan (all phases):** [`web-surface.md`](superpowers/plans/2026-08-16-web-surface.md)
+
+Measured gap at time of writing:
+
+| Evidence | Location |
+|---|---|
+| Nine artifact widgets are stubs returning `<div>BarChart Widget</div>` | `web/widgets/GenWidget.tsx:4-12` |
+| 17 of 35 `ServerMessage` variants dropped by the reducer | `web/components/HarnessApp.tsx:90-157` |
+| `cost_usd` / `context_tokens` / `context_window` arrive and are discarded | `web/components/HarnessApp.tsx:127` |
+| `ui_render` surfaces produced by the runtime, never mounted | `src/tools/builtin/render-ui.ts:81` |
+| `user_id` hardcoded; `yolo` asserted by the browser | `web/hooks/useHarnessWS.ts:27-30` |
+| No `Origin` validation on WS upgrade | `src/server/index.ts` (absent) |
+| Telemetry / usage / audit / routing stats have no HTTP surface | `src/telemetry/`, `src/usage/`, `src/audit/`, `src/analysis/` |
+
+---
+
+### ❌ 25. Transport hardening & read APIs
+
+**Ships first, and is worth shipping even if nothing else in this track does** —
+the exposure exists whether or not the web client is used.
+
+WebSocket upgrades are exempt from same-origin policy and the server checks no
+`Origin`. Any page the operator visits can open `ws://localhost:7337`, send
+`hello { yolo: true }`, and drive a `developer`-mode profile with `Bash`, with no
+approval prompt because the browser asserts its own bypass.
+
+**To build:**
+- `src/server/origin.ts` — exact-match allowlist (`HARNESS_ALLOWED_ORIGINS`), applied to the WS upgrade and to REST before route matching; explicit browserless branch for TUI/CLI
+- `hello.yolo` ignored; approval mode resolves server-side as `profile ⊓ env ⊓ mode ceiling`, and `set_approval_mode` is clamped to that ceiling
+- Read-only HTTP layer: `GET /metrics`, `/usage`, `/audit`, `/memory`, `/triggers`, `/sessions/:id/messages`, `/stats/routing` — thin wrappers over `queryEvents`, `readUsage`, `listAudit`, `MemoryProvider`, and `aggregateRouting`
+- `src/telemetry/aggregate.ts` — pure aggregation for `/metrics`
+- `src/datasets/` + `POST /datasets` — the only new write endpoint in the track; server-generated ids, fixed root, extension allowlist, size cap, provenance-`untrusted`
+
+**Why:** every dashboard below reads state that exists on disk and has no HTTP
+surface. And a localhost-only posture is only a posture if the transport holds.
+
+**Design:** [`web-read-api-design.md`](superpowers/specs/2026-08-16-web-read-api-design.md)
+
+---
+
+### ❌ 26. Web protocol parity
+
+**To build:**
+- `web/lib/protocol.ts` generated from `src/types.ts` with a CI freshness check — the hand-copied duplicate in `web/lib/types.ts` is the root cause of the drift
+- Exhaustive reducer: every variant handled or explicitly ignored with a reason; `never`-checked default so a new variant breaks the build
+- State keyed by `run_id` — concurrent runs currently interleave into one transcript
+- Surfaces for `stage`, `plan`, `notice`, `models`, `approval_mode_changed`, `skills`, `commands`, `pending`, `undo_entries`
+- Context gauge, live cost ticker, stage strip, toast stack, model switcher, cancel, compact
+- Design tokens v2: chart series ramp, sequential/diverging ramps, status colours, density steps — both themes, test-enforced
+- Transcript rehydration on reload via `GET /sessions/:id/messages`
+
+**Why:** the reducer's silent `default:` branch is what let seventeen messages go
+unnoticed. Generating the types makes the gap a build failure instead of a
+discovery.
+
+---
+
+### ❌ 27. Generative surfaces & widget kit
+
+Two rendering paths, kept on purpose: the **fixed kit** for anything that must be
+themed, exported, and pinned; the **generative surface** for bespoke UI no kind
+covers. Surfaces are the escape hatch, not the default — a surface cannot be
+re-themed, exported to CSV, or diffed.
+
+**To build:**
+- `SurfaceHost` — opaque-origin sandboxed iframe (`allow-scripts` without `allow-same-origin`), strict CSP, `connect-src 'none'`, allowlisted `postMessage` bridge, `ui_result` diagnostics back to the agent, 10s render timeout, permanent escape-attempt corpus
+- `Plot` shell + eight marks: `metrics`, `bar`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `box`, plus `correlation`, `table`, `diff`, `filetree`, `terminal`, `doc`
+- Honesty rules in the kit: zero baseline unless explicitly opted out (which draws an axis-break marker), `null` as gap never zero, stable series colours, >8 series collapse
+- `DataTable` — sort, filter, pin, virtualization, CSV export of the filtered view
+- Notebook cells: `ExecutionResult.files` rendered inline (images) or as download chips — **matplotlib output is currently invisible**
+- Pyodide fixes: pass `executor.allowed_packages` (hardcoded `[]` today at `HarnessApp.tsx:375`), lazy boot with progress, worker thread
+
+**Why:** `mode: analyst` shipped its runtime half and none of its surface half.
+
+**Design:** [`analyst-workbench-design.md`](superpowers/specs/2026-08-16-analyst-workbench-design.md)
+
+---
+
+### ❌ 28. Analyst workbench
+
+**To build:**
+- Dataset drawer — upload, schema card (dtype, null %, distinct, mini distribution per column), preview grid, context injection into the next message, untrusted-provenance badge
+- Canvas — pin any artifact with its provenance (session, tool call, generating code); reorder, resize, refresh in place; a failed refresh keeps the last good render and badges staleness
+- Export — table→CSV (formula-injection safe), canvas→PNG/PDF, session→self-contained HTML bundle
+- Three-pane desktop-first layout; workspace tabs become Artifacts · Surfaces · Canvas
+
+**Why:** an analyst agent that cannot receive a CSV, show a chart, or hand back a
+file is a chat window.
+
+**Design:** [`analyst-workbench-design.md`](superpowers/specs/2026-08-16-analyst-workbench-design.md)
+
+---
+
+### ❌ 29. Operator console & assistant surface
+
+Everything #17–#23 built is invisible in a browser. Two faces close that.
+
+**To build (operator, `/ops`):**
+- Run board with lanes, live overlay, and `waiting_input` visually distinct from `running`
+- Approval centre — `risk`/`reason` displayed including the provenance gate's quoted tainting source, per-tool argument previews, an approval *queue* (unattended runs stack them), and "always allow" that reports what the server actually granted
+- Deferred-ask inbox with TTL countdown; undo drawer grouped by run with staleness and explicit `force`
+- Audit table with a first-class `tainted` filter — the review workflow #22 was built for and has had no interface
+- Observability: cost/day by profile, tool volume with ok-rate and p95, model mix, stage funnel, routing efficacy from `aggregateRouting`
+- Budget meter per run; budget-exceeded as its own terminal state, not a generic failure
+
+**To build (assistant, `/home`):**
+- Brief cards: needs-you, overnight, next fires, spend, expiring beliefs, tainted-turn attention
+- Memory explorer with a temporal timeline — supersession as one belief replacing another, open intervals as ongoing arrows, never invented end dates; edits route through `MemoryWrite` so ACL/provenance/audit apply
+- Trigger console showing the fire/skip ratio — #20's central claim (the no-change path is free) is invisible anywhere else
+- Skills review queue and channels view over the existing protocol messages
+
+**Why:** the ops charts are the widget kit's first internal consumer. If the kit
+cannot draw the harness's own metrics, it is not ready for the analyst.
+
+**Design:** [`operator-assistant-console-design.md`](superpowers/specs/2026-08-16-operator-assistant-console-design.md)
+
+---
+
 ## Suggested sequencing
 
 ```
@@ -547,6 +676,22 @@ Unattended track — **boundary guard shipped; next up is #17**:
 keeps that safe when the agent is reading other people's content. Shipping the
 first without the second is the one ordering mistake in this track that produces
 a genuinely dangerous build.
+
+Web surface track — **next up is #25**:
+
+```
+#25 transport hardening + read APIs   ← ships alone; fixes a live exposure
+  ↓
+#26 protocol parity ──────────┐
+  ↓                           │  #26 and #27 are the floor for the three faces
+#27 surfaces + widget kit ────┘
+  ↓
+#28 analyst workbench      #29 operator console + assistant surface
+```
+
+**#25 is not optional and does not wait for the UI.** The cross-site WebSocket
+hole and the browser-asserted `yolo` flag are exploitable today, independent of
+whether anyone opens the web client. Everything after it is additive product work.
 
 ---
 
