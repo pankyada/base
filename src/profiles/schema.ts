@@ -47,6 +47,7 @@ const BuiltinToolsSchema = z.object({
   ExecuteCode: AclEntry.default('allow'),
   WebFetch: AclEntry.default('prompt'),
   WebSearch: AclEntry.default('prompt'),
+  RenderUI: AclEntry.default('allow'),
   ContextRestore: AclEntry.default('allow'),
   Notify: AclEntry.default('allow'),
 }).passthrough()

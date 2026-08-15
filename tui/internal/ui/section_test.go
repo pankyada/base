@@ -222,3 +222,15 @@ func TestFirstLinesCapsAndCounts(t *testing.T) {
 		t.Fatalf("firstLines = %q", got)
 	}
 }
+
+func TestFailureRenderCapsFrameWithoutTruncatingStoredDetail(t *testing.T) {
+	body := strings.Repeat("failure detail\n", 200000)
+	section := Section{Name: "Bash", State: SectionError, Body: body}
+	rendered := stripANSI(section.Render(80, 0, false))
+	if section.Body != body {
+		t.Fatal("failure detail was truncated in storage")
+	}
+	if len(rendered) > errorRenderMaxBytes+1024 || !strings.Contains(rendered, "full detail retained") {
+		t.Fatalf("failure render was not capped: %d bytes", len(rendered))
+	}
+}

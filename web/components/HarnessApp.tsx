@@ -98,12 +98,18 @@ export function reducer(state: State, action: Action): State {
         }
       }
       if (msg.type === 'tool_start') {
-        return { ...state, messages: [...state.messages, { id: Math.random().toString(), role: 'tool-call', name: msg.name, input: msg.input, status: 'running' }] }
+        return { ...state, messages: [...state.messages, { id: Math.random().toString(), role: 'tool-call', toolCallID: msg.id, name: msg.name, input: msg.input, status: 'running' }] }
+      }
+      if (msg.type === 'tool_parked') {
+        const m = [...state.messages]
+        const idx = m.findLastIndex(x => x.role === 'tool-call' && x.toolCallID === msg.id && x.status === 'running')
+        if (idx >= 0) m[idx] = { ...m[idx], status: 'waiting', pending: true }
+        return { ...state, messages: m }
       }
       if (msg.type === 'tool_end') {
         const m = [...state.messages]
-        const idx = m.findLastIndex(x => x.role === 'tool-call' && x.name === msg.name && x.status === 'running')
-        if (idx >= 0) m[idx] = { ...m[idx], status: 'done', result: msg.result }
+        const idx = m.findLastIndex(x => x.role === 'tool-call' && x.toolCallID === msg.id && (x.status === 'running' || x.status === 'waiting'))
+        if (idx >= 0) m[idx] = { ...m[idx], status: msg.ok === false ? 'error' : 'done', pending: false, result: msg.result }
         return { ...state, messages: m }
       }
       if (msg.type === 'tool_prompt') {

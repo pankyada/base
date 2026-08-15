@@ -134,13 +134,13 @@ export async function runAgentLoop(
       const approval = resumeApproval
       resumeApproval = undefined
       if (approval.approved) {
-        events.onToolStart(approval.name, approval.input)
         const result = await executeOneTool({ id: approval.toolCallId, name: approval.name, args: JSON.stringify(approval.input) }, approval.input, approval.isMcp, { decision: 'prompt', decided_by: 'human', reason: 'human approved prompt' })
-        events.onToolEnd(result.name, result.content)
+        events.onToolEnd(result.tool_call_id, result.name, result.content, result.ok)
         session.messages.push({ role: 'tool', tool_call_id: result.tool_call_id, content: result.content } as any)
         session.tool_calls.push({ id: result.tool_call_id, name: result.name, input: result.input, result: result.content, ok: result.ok, ts: new Date().toISOString() })
       } else {
         const content = `User denied tool "${approval.name}".`
+        events.onToolEnd(approval.toolCallId, approval.name, content, false)
         session.messages.push({ role: 'tool', tool_call_id: approval.toolCallId, content } as any)
         session.tool_calls.push({ id: approval.toolCallId, name: approval.name, input: approval.input, result: content, ok: false, ts: new Date().toISOString() })
       }
@@ -308,14 +308,14 @@ export async function runAgentLoop(
       if (pendingBatch.length === 0) return
       // Fire onToolStart in LLM-specified order before parallel execution
       for (const { tc, input } of pendingBatch) {
-        events.onToolStart(tc.name, input)
+        events.onToolStart(tc.id, tc.name, input)
       }
       const batchResults = await Promise.all(
         pendingBatch.map(({ tc, input, isMcp, decision }) => executeOneTool(tc, input, isMcp, decision))
       )
       // Fire onToolEnd in LLM-specified order after all complete
       for (const r of batchResults) {
-        events.onToolEnd(r.name, r.content)
+        events.onToolEnd(r.tool_call_id, r.name, r.content, r.ok)
       }
       for (let b = 0; b < pendingBatch.length; b++) {
         toolResults[pendingBatch[b].idx] = batchResults[b]
@@ -357,8 +357,11 @@ export async function runAgentLoop(
           content: `Tool "${tc.name}" is denied by profile ACL.`,
           name: tc.name, input, ok: false, isMcp, provenance: 'trusted',
         }
+        events.onToolStart(tc.id, tc.name, input)
+        events.onToolEnd(tc.id, tc.name, toolResults[i].content, false)
       } else if (acl === 'prompt') {
         await flushBatch()
+        events.onToolStart(tc.id, tc.name, input)
         if (context.unattended && context.pendingInputs && context.runId && context.channels?.enabled) {
           const created = new Date()
           const pending = context.pendingInputs.create({
@@ -383,7 +386,10 @@ export async function runAgentLoop(
             buttons: [{ id: 'allow', label: 'Allow' }, { id: 'deny', label: 'Deny' }, { id: 'always', label: 'Always' }],
             correlation_id: pending.id,
           })
-          if (delivered.ok) throw new ParkSignal(pending.id)
+          if (delivered.ok) {
+            events.onToolParked?.(tc.id, tc.name, input)
+            throw new ParkSignal(pending.id)
+          }
           context.pendingInputs.cancel(pending.id)
         }
         const approved = await events.onToolPrompt(tc.id, tc.name, input, risk, reason)
@@ -394,19 +400,19 @@ export async function runAgentLoop(
             content: `User denied tool "${tc.name}".`,
             name: tc.name, input, ok: false, isMcp, provenance: 'trusted',
           }
+          events.onToolEnd(tc.id, tc.name, toolResults[i].content, false)
         } else {
-          events.onToolStart(tc.name, input)
           const r = await executeOneTool(tc, input, isMcp, finalDecision.decided_by === 'gate' ? finalDecision : { decision: 'prompt', decided_by: 'human', reason: 'human approved prompt' })
-          events.onToolEnd(r.name, r.content)
+          events.onToolEnd(r.tool_call_id, r.name, r.content, r.ok)
           toolResults[i] = r
         }
       } else {
         // allow — add to pending batch
         if (isMcp || ['Bash', 'ExecuteCode', 'Read', 'MemoryRead', 'Delegate', 'DelegateFanout'].includes(baseName)) {
           await flushBatch()
-          events.onToolStart(tc.name, input)
+          events.onToolStart(tc.id, tc.name, input)
           const r = await executeOneTool(tc, input, isMcp, finalDecision)
-          events.onToolEnd(r.name, r.content)
+          events.onToolEnd(r.tool_call_id, r.name, r.content, r.ok)
           toolResults[i] = r
         } else {
           pendingBatch.push({ tc, input, isMcp, idx: i, decision: { ...finalDecision, decision: 'allow' } })

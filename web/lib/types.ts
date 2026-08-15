@@ -43,7 +43,7 @@ export interface TelemetryEvent {
 }
 
 export type ClientMessage =
-  | { type: 'hello'; user_id: string; wasm_supported?: boolean; yolo?: boolean }
+  | { type: 'hello'; user_id: string; protocol_version?: number; wasm_supported?: boolean; yolo?: boolean }
   | { type: 'message'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
@@ -60,8 +60,9 @@ export type ClientMessage =
 
 export type ServerMessage =
   | { type: 'token'; content: string }
-  | { type: 'tool_start'; name: string; input: Record<string, unknown> }
-  | { type: 'tool_end'; name: string; result: string }
+  | { type: 'tool_start'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_end'; id: string; name: string; result: string; ok?: boolean }
+  | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'session_ready'; sessionId: string; profile: string; yolo: boolean }
   | { type: 'session_end'; sessionId: string }
@@ -128,6 +129,7 @@ export interface UIMessage {
   name?: string;
   input?: Record<string, unknown>;
   result?: string;
-  status?: 'running' | 'done' | 'error';
+  toolCallID?: string;
+  status?: 'running' | 'waiting' | 'done' | 'error';
   pending?: boolean;
 }

@@ -3,6 +3,8 @@ package protocol
 
 import "encoding/json"
 
+const ProtocolVersion = 2
+
 // TodoItem mirrors TodoItem in src/types.ts.
 type TodoItem struct {
 	ID       string `json:"id"`
@@ -116,13 +118,15 @@ type ServerMessage struct {
 	Type string `json:"type"`
 
 	Content string                 `json:"content,omitempty"` // token
-	Name    string                 `json:"name,omitempty"`    // tool_start/end/prompt
+	Name    string                 `json:"name,omitempty"`    // tool_start/end/prompt/parked
 	Risk    string                 `json:"risk,omitempty"`    // tool_prompt
 	Reason  string                 `json:"reason,omitempty"`  // tool_prompt/notice
 	Level   string                 `json:"level,omitempty"`   // notice
 	Detail  string                 `json:"detail,omitempty"`  // notice
 	Input   map[string]interface{} `json:"input,omitempty"`   // tool_start/prompt
 	Result  string                 `json:"result,omitempty"`  // tool_end
+	OK      *bool                  `json:"ok,omitempty"`      // tool_end; nil for pre-status servers
+	RunID   string                 `json:"run_id,omitempty"`  // turn-scoped server messages
 
 	ID      string   `json:"id,omitempty"`      // tool_prompt/input_request
 	Prompt  string   `json:"prompt,omitempty"`  // input_request
@@ -134,6 +138,7 @@ type ServerMessage struct {
 	Model      string `json:"model,omitempty"`       // session_ready
 	WorkingDir string `json:"working_dir,omitempty"` // session_ready
 	Yolo       bool   `json:"yolo,omitempty"`        // session_ready
+	ProtocolVersion int `json:"protocol_version,omitempty"` // hello/session_ready
 
 	TokensIn      int     `json:"tokens_in,omitempty"`      // stats
 	TokensOut     int     `json:"tokens_out,omitempty"`     // stats
@@ -181,6 +186,7 @@ type ClientMessage interface {
 type helloMsg struct {
 	Type    string `json:"type"`
 	UserID  string `json:"user_id"`
+	ProtocolVersion int `json:"protocol_version"`
 	Profile string `json:"profile,omitempty"`
 }
 
@@ -213,7 +219,7 @@ func (undoListMsg) isClientMessage()        {}
 func (undoApplyMsg) isClientMessage()       {}
 
 func Hello(userID string, profile ...string) ClientMessage {
-	msg := helloMsg{Type: "hello", UserID: userID}
+	msg := helloMsg{Type: "hello", UserID: userID, ProtocolVersion: ProtocolVersion}
 	if len(profile) > 0 {
 		msg.Profile = profile[0]
 	}

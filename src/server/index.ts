@@ -37,7 +37,7 @@ import { listModels } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
-import { ClientMessage, ServerMessage } from '../types.js'
+import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type InputRequestKind } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
@@ -60,6 +60,10 @@ const PORT = parseInt(process.env.HARNESS_PORT ?? '7337')
 
 function randomRunId(): string {
   return randomUUID().replace(/-/g, '').slice(0, 8)
+}
+
+function makeRunEmitter(runId: string, send: (message: ServerMessage) => void): (message: { type: ServerMessage['type'] } & Record<string, unknown>) => void {
+  return message => send({ ...message, run_id: runId } as ServerMessage)
 }
 
 function readSessionCount(artifactDir: string): number {
@@ -290,6 +294,17 @@ async function main() {
     const pendingInputRequests = new Map<string, (value: string) => void>()
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     const pendingRenders = new Map<string, (result: any) => void>()
+
+    const resolvePendingClientWork = (reason: string): void => {
+      for (const [id, resolve] of pendingCodeExecutions) {
+        resolve({ id, stdout: '', stderr: reason, exit_code: 1, files: {}, duration_ms: 0 })
+      }
+      pendingCodeExecutions.clear()
+      for (const [id, resolve] of pendingRenders) {
+        resolve({ id, ok: false, errors: [reason], duration_ms: 0, bytes: 0 })
+      }
+      pendingRenders.clear()
+    }
     let mcpEntries: McpEntry[] = []
     let mcpLoaded = false
     let mcpIdleTimer: ReturnType<typeof setTimeout> | undefined
@@ -364,14 +379,15 @@ async function main() {
 
     const cloneSession = (): typeof session => JSON.parse(JSON.stringify(session))
 
-    const requestInput = (prompt: string, kind: 'select' | 'text', options?: string[]): Promise<string> => new Promise(resolve => {
-      const id = randomUUID()
+    const requestInput = (runId: string, prompt: string, kind: InputRequestKind, options?: string[], id: string = randomUUID()): Promise<string> => new Promise(resolve => {
       pendingInputRequests.set(id, resolve)
-      send({ type: 'input_request', id, prompt, kind, options })
+      makeRunEmitter(runId, send)({ type: 'input_request', id, prompt, kind, options })
     })
 
     const handlePlanRequest = async (request: string): Promise<void> => {
       const runId = randomRunId()
+	  const sendForRun = makeRunEmitter(runId, send)
+	  sendForRun({ type: 'turn_start' })
       runStore.create({ id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream', input: request, status: 'running', started_at: new Date().toISOString() })
       await ensureMcpClients()
       const previewSession = cloneSession()
@@ -386,20 +402,18 @@ async function main() {
       }
       const planEvents: AgentLoopEvents = {
         onToken: () => {},
-        onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
-        onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
+        onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
+        onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
+        onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
         onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(resolve => {
           pendingApprovals.set(id, resolve)
-          send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
+          sendForRun({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
         }),
         onSessionEnd: () => {},
-        onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
-        onInputRequest: (id, prompt, kind, options) => new Promise<string>(resolve => {
-          pendingInputRequests.set(id, resolve)
-          send({ type: 'input_request', id, prompt, kind, options })
-        }),
-        onTodosUpdate: todos => send({ type: 'todos', todos }),
-        onStage: (stage, intensity, tier, model, state, cost_usd) => send({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
+        onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
+        onInputRequest: (id, prompt, kind, options) => requestInput(runId, prompt, kind, options, id),
+        onTodosUpdate: todos => sendForRun({ type: 'todos', todos }),
+        onStage: (stage, intensity, tier, model, state, cost_usd) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
       }
       try {
         const agentTools = await loadAgentTools(connectionProfile)
@@ -410,17 +424,17 @@ async function main() {
           pendingInputs: pendingStore,
         }
         const preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
-        send({ type: 'plan', content: preview.body })
-        const choice = (await requestInput('Plan ready — proceed, edit, or cancel?', 'select', ['proceed', 'edit', 'cancel'])).trim().toLowerCase()
+        sendForRun({ type: 'plan', content: preview.body })
+        const choice = (await requestInput(runId, 'Plan ready — proceed, edit, or cancel?', 'select', ['proceed', 'edit', 'cancel'])).trim().toLowerCase()
         if (choice !== 'proceed' && choice !== 'edit') {
           runStore.update(runId, { status: 'completed', finished_at: new Date().toISOString() })
-          send({ type: 'notice', level: 'info', message: 'plan cancelled', detail: 'no session or artifact changes made' })
-          send({ type: 'session_end', sessionId: session.id })
+          sendForRun({ type: 'notice', level: 'info', message: 'plan cancelled', detail: 'no session or artifact changes made' })
+          sendForRun({ type: 'session_end', sessionId: session.id })
           return
         }
         let planBody = preview.body
         if (choice === 'edit') {
-          const edited = await requestInput('Edit plan, then press enter (blank keeps generated plan).', 'text')
+          const edited = await requestInput(runId, 'Edit plan, then press enter (blank keeps generated plan).', 'text')
           if (edited.trim()) planBody = edited.trim()
         }
         await runApprovedPlanFollowOn(
@@ -433,11 +447,11 @@ async function main() {
             ws.emit('message', Buffer.from(JSON.stringify({ type: 'message', content: approvedMessage, skipWorkflow: true })), false)
           },
         )
-        send({ type: 'artifacts', sessionId: session.id, artifacts: [{ id: `plan-${preview.taskId}`, kind: 'doc', title: 'Plan', icon: '🗺️', meta: 'approved plan', data: { path: `${connectionProfile.artifact_dir}/workflow/${session.id}/plan.md`, summary: planBody.split('\n')[0] ?? '' } }] })
+        sendForRun({ type: 'artifacts', sessionId: session.id, artifacts: [{ id: `plan-${preview.taskId}`, kind: 'doc', title: 'Plan', icon: '🗺️', meta: 'approved plan', data: { path: `${connectionProfile.artifact_dir}/workflow/${session.id}/plan.md`, summary: planBody.split('\n')[0] ?? '' } }] })
         runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
       } catch (error: any) {
         runStore.update(runId, { status: 'failed', error: error.message, finished_at: new Date().toISOString() })
-        send({ type: 'error', message: error.message })
+        sendForRun({ type: 'error', message: error.message })
       }
     }
 
@@ -462,6 +476,10 @@ async function main() {
       }
 
       if (msg.type === 'hello') {
+		if (msg.protocol_version !== PROTOCOL_VERSION) {
+		  send({ type: 'error', message: `Unsupported protocol version ${msg.protocol_version ?? 1}; client must use version ${PROTOCOL_VERSION}.` })
+		  return
+		}
         // Only honour hello before the session has any messages
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
@@ -470,7 +488,7 @@ async function main() {
           const error = await activateProfile(msg.profile, msg.yolo ?? false)
           if (error) { send({ type: 'error', message: error }); return }
         }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false })
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false, protocol_version: PROTOCOL_VERSION })
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -479,7 +497,7 @@ async function main() {
       if (msg.type === 'set_profile') {
         const error = await activateProfile(msg.profile)
         if (error) { send({ type: 'error', message: error }); return }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: false })
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: false, protocol_version: PROTOCOL_VERSION })
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -542,28 +560,34 @@ async function main() {
       }
 
       if (msg.type === 'pending_answer') {
+        const pending = pendingStore.get(msg.pending_id)
+        if (!pending) {
+          send({ type: 'error', message: 'This request has expired or was already answered.' })
+          return
+        }
+        const resumedRunId = pending.run_id
+		const sendForRun = makeRunEmitter(resumedRunId, send)
+		sendForRun({ type: 'turn_start' })
         const result = await resumePendingInput(msg.pending_id, msg.value, 'ws', {
           pendingStore, runStore, abortRegistry,
           resolveProfile: name => profiles.get(name) ?? null,
           channels: connectionChannels,
           events: {
-            onToken: t => send({ type: 'token', content: t }),
-            onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
-            onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
+            onToken: t => sendForRun({ type: 'token', content: t }),
+            onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
+            onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
+            onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
             onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(resolve => {
               pendingApprovals.set(id, resolve)
-              send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
+              sendForRun({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
             }),
-            onSessionEnd: id => send({ type: 'session_end', sessionId: id }),
-            onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
-            onInputRequest: (id, prompt, kind, options) => new Promise<string>(resolve => {
-              pendingInputRequests.set(id, resolve)
-              send({ type: 'input_request', id, prompt, kind, options })
-            }),
+            onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
+            onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
+            onInputRequest: (id, prompt, kind, options) => requestInput(resumedRunId, prompt, kind, options, id),
           },
         })
         if (result.status === 'failed' || result.status === 'ignored') {
-          send({ type: 'error', message: result.status === 'failed' ? result.error : result.reason })
+          sendForRun({ type: 'error', message: result.status === 'failed' ? result.error : result.reason })
         }
         sendPending()
         return
@@ -709,6 +733,7 @@ async function main() {
 		pendingApprovals.clear()
 		for (const resolve of pendingInputRequests.values()) resolve('')
 		pendingInputRequests.clear()
+        resolvePendingClientWork('Client cancelled the request.')
         return
       }
 
@@ -778,6 +803,8 @@ async function main() {
 
       if (msg.type === 'message') {
         const runId = randomRunId()
+        const sendForRun = makeRunEmitter(runId, send)
+        sendForRun({ type: 'turn_start' })
         runStore.create({
           id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream',
           input: msg.content, status: 'running', started_at: new Date().toISOString(),
@@ -803,47 +830,45 @@ async function main() {
           : null
         voiceOutput?.start()
         const events: AgentLoopEvents = {
-          onToken: t => { send({ type: 'token', content: t }); voiceOutput?.push(t) },
-          onToolStart: (n, i) => send({ type: 'tool_start', name: n, input: i }),
-          onToolEnd: (n, r) => send({ type: 'tool_end', name: n, result: r }),
+          onToken: t => { sendForRun({ type: 'token', content: t }); voiceOutput?.push(t) },
+          onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
+          onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
+          onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
           onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(res => {
             pendingApprovals.set(id, res)
-            send({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
+            sendForRun({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
           }),
           onSessionEnd: (id) => {
             voiceOutput?.end()
             saveSession(session)
-            send({ type: 'session_end', sessionId: id })
+            sendForRun({ type: 'session_end', sessionId: id })
             closeMcpWhenIdle()
           },
           onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => {
-            send({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens })
+            sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens })
           },
           onSafetyNotice: (classifierModel) => {
             if (safetyDisclosed) return
             safetyDisclosed = true
-            send({ type: 'notice', level: 'info', message: `ambiguous tools classified by ${classifierModel}`, detail: 'verdicts are cached · set safety.enabled: false or use /approval bash to opt out' })
+            sendForRun({ type: 'notice', level: 'info', message: `ambiguous tools classified by ${classifierModel}`, detail: 'verdicts are cached · set safety.enabled: false or use /approval bash to opt out' })
           },
-          onNotice: (level, message, detail) => send({ type: 'notice', level, message, detail }),
+          onNotice: (level, message, detail) => sendForRun({ type: 'notice', level, message, detail }),
           onArtifacts: (sessionId, artifacts) => {
-            send({ type: 'artifacts', sessionId, artifacts })
+            sendForRun({ type: 'artifacts', sessionId, artifacts })
           },
-          onInputRequest: (id, prompt, kind, options) => new Promise<string>(res => {
-            pendingInputRequests.set(id, res)
-            send({ type: 'input_request', id, prompt, kind, options })
-          }),
+          onInputRequest: (id, prompt, kind, options) => requestInput(runId, prompt, kind, options, id),
           onTodosUpdate: (todos) => {
-            send({ type: 'todos', todos })
+            sendForRun({ type: 'todos', todos })
           },
           onCodeExecute: (id, code, language, data) => new Promise(resolve => {
             pendingCodeExecutions.set(id, resolve)
-            send({ type: 'code_execute', id, code, language, data })
+            sendForRun({ type: 'code_execute', id, code, language, data })
           }),
           onRenderUI: (surface) => new Promise(resolve => {
             pendingRenders.set(surface.id, resolve)
-            send({ type: 'ui_render', surface })
+            sendForRun({ type: 'ui_render', surface })
           }),
-          onStage: (stage, intensity, tier, model, state, cost_usd) => send({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
+          onStage: (stage, intensity, tier, model, state, cost_usd) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
         }
         await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
@@ -865,7 +890,7 @@ async function main() {
           runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
           if (runSignal.aborted) {
             saveSession(session)
-            send({ type: 'session_end', sessionId: session.id })
+            sendForRun({ type: 'session_end', sessionId: session.id })
           }
         } catch (e: any) {
           voiceOutput?.end()
@@ -876,11 +901,11 @@ async function main() {
           }
           runStore.update(runId, { status: 'failed', error: e.message, finished_at: new Date().toISOString() })
           if (e.name !== 'AbortError') {
-            send({ type: 'error', message: e.message })
+            sendForRun({ type: 'error', message: e.message })
           }
 		  if (runSignal.aborted) {
 		    saveSession(session)
-		    send({ type: 'session_end', sessionId: session.id })
+		    sendForRun({ type: 'session_end', sessionId: session.id })
 		  }
         }
       }
@@ -888,6 +913,11 @@ async function main() {
 
     ws.on('close', () => {
       openSockets.delete(ws)
+	  for (const resolve of pendingApprovals.values()) resolve(false)
+	  pendingApprovals.clear()
+	  for (const resolve of pendingInputRequests.values()) resolve('')
+	  pendingInputRequests.clear()
+      resolvePendingClientWork('Client disconnected before completion.')
       saveSession(session)
       const connectionDelta = {
         input: session.usage.input - usageAtConnectionStart.input,

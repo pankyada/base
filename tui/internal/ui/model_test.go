@@ -112,6 +112,73 @@ func TestModelHandlesDisconnectAndServerError(t *testing.T) {
 	}
 }
 
+func TestToolEndUsesExplicitFailureStatus(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_start", Name: "Grep"})
+	failed := false
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_end", Name: "Grep", Result: "grep timed out", OK: &failed})
+	sections := m.currentAgent().Sections
+	if len(sections) != 1 || sections[0].State != SectionError {
+		t.Fatalf("sections = %#v", sections)
+	}
+}
+
+func TestToolEndMatchesItsCallIDWhenSameToolRunsInParallel(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_start", ID: "grep-a", Name: "Grep", Input: map[string]interface{}{"path": "a"}})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_start", ID: "grep-b", Name: "Grep", Input: map[string]interface{}{"path": "b"}})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_end", ID: "grep-a", Name: "Grep", Result: "a:hit", OK: boolPtr(true)})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_end", ID: "grep-b", Name: "Grep", Result: "b:hit", OK: boolPtr(true)})
+	sections := m.currentAgent().Sections
+	if len(sections) != 2 || sections[0].Body != "a:hit" || sections[1].Body != "b:hit" {
+		t.Fatalf("sections = %#v", sections)
+	}
+}
+
+func TestParkedToolResumesItsExistingSection(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_start", ID: "tool-1", Name: "Bash", Input: map[string]interface{}{"command": "rm"}})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_parked", ID: "tool-1", Name: "Bash"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_end", ID: "tool-1", Name: "Bash", Result: "ran", OK: boolPtr(true)})
+	sections := m.currentAgent().Sections
+	if len(sections) != 1 || sections[0].State != SectionDone || sections[0].AwaitingApproval || sections[0].Body != "ran" {
+		t.Fatalf("sections = %#v", sections)
+	}
+}
+
+func TestModelIgnoresStaleRunCompletion(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.running = true
+	m.activeRunID = "new-run"
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_end", RunID: "old-run"})
+	if !m.running || m.activeRunID != "new-run" {
+		t.Fatalf("stale completion changed active turn: running=%v run=%q", m.running, m.activeRunID)
+	}
+}
+
+func TestServerErrorCompletesRunningToolAsFailed(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_start", ID: "tool-1", Name: "Grep"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "error", Message: "budget exceeded"})
+	section := m.currentAgent().Sections[0]
+	if section.State != SectionError || section.Body != "budget exceeded" || m.activeTool != "" {
+		t.Fatalf("section=%#v active=%q", section, m.activeTool)
+	}
+}
+
+func TestToolFailureKeepsItsFullDetailForExpansion(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_start", ID: "tool-1", Name: "Grep"})
+	full := strings.Repeat("failure detail\n", 50)
+	m.handleServerMessage(protocol.ServerMessage{Type: "tool_end", ID: "tool-1", Name: "Grep", Result: full, OK: boolPtr(false)})
+	section := m.currentAgent().Sections[0]
+	if section.Body != full {
+		t.Fatalf("error detail was truncated: got %d bytes, want %d", len(section.Body), len(full))
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
 func TestModelQueuesBusyMessagesAndDrainsAfterSessionEnd(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

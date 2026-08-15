@@ -147,8 +147,10 @@ export interface OutcomeEvent extends Omit<TelemetryEvent, 'kind'> {
   total_cost_usd: number
 }
 
+export const PROTOCOL_VERSION = 2
+
 export type ClientMessage =
-  | { type: 'hello'; user_id: string; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean }
+  | { type: 'hello'; user_id: string; protocol_version?: number; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean }
   | { type: 'set_profile'; profile: string }
   | { type: 'audio_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
   | { type: 'audio_end' }
@@ -183,20 +185,22 @@ export type ClientMessage =
   | { type: 'undo_apply'; id: string; force?: boolean }
 
 export type ServerMessage =
-  | { type: 'token'; content: string }
-  | { type: 'tool_start'; name: string; input: Record<string, unknown> }
-  | { type: 'tool_end'; name: string; result: string }
-  | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string }
-  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; yolo: boolean }
-  | { type: 'session_end'; sessionId: string }
+  | { type: 'turn_start'; run_id: string }
+  | { type: 'token'; content: string; run_id?: string }
+  | { type: 'tool_start'; id: string; name: string; input: Record<string, unknown>; run_id?: string }
+  | { type: 'tool_end'; id: string; name: string; result: string; ok?: boolean; run_id?: string }
+  | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown>; run_id?: string }
+  | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; run_id?: string }
+  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; yolo: boolean; protocol_version?: number }
+  | { type: 'session_end'; sessionId: string; run_id?: string }
   | { type: 'session_resumed'; sessionId: string }
-  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number }
-  | { type: 'error'; message: string }
-  | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[] }
-  | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[] }
-  | { type: 'todos'; todos: TodoItem[] }
-  | { type: 'code_execute'; id: string; code: string; language: string; data?: Record<string, unknown> }
-  | { type: 'ui_render'; surface: SurfaceSpec }
+  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; run_id?: string }
+  | { type: 'error'; message: string; run_id?: string }
+  | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[]; run_id?: string }
+  | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[]; run_id?: string }
+  | { type: 'todos'; todos: TodoItem[]; run_id?: string }
+  | { type: 'code_execute'; id: string; code: string; language: string; data?: Record<string, unknown>; run_id?: string }
+  | { type: 'ui_render'; surface: SurfaceSpec; run_id?: string }
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
@@ -207,8 +211,8 @@ export type ServerMessage =
   | { type: 'commands'; commands: CommandSummary[] }
   | { type: 'skill_content'; name: string; source: string; path: string; content: string }
   | { type: 'skill_result'; action: 'saved' | 'promoted' | 'discarded'; name: string; path?: string }
-  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string }
-  | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number }
+  | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string; detail?: string; run_id?: string }
+  | { type: 'stage'; stage: Stage; intensity: Intensity; tier: Tier; model: string; state: 'start' | 'done' | 'escalated' | 'skipped'; cost_usd?: number; run_id?: string }
   | { type: 'plan'; content: string }
   | { type: 'pending'; pending: PendingInput[] }
   | { type: 'undo_entries'; entries: UndoEntry[] }

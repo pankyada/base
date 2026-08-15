@@ -17,6 +17,7 @@ import { askUserTool } from './ask-user.js'
 import { todoWriteTool } from './todo-write.js'
 import { todoReadTool } from './todo-read.js'
 import { executeCodeTool } from './execute-code.js'
+import { renderUiTool } from './render-ui.js'
 import { contextRestoreTool } from './context-restore.js'
 import { recallTool } from './recall.js'
 import { notifyTool } from './notify.js'
@@ -47,6 +48,7 @@ export function registerAll(channels?: ChannelRuntime, profile?: Profile): void 
   registerTool(todoReadTool)
   registerTool(executeCodeTool)
   registerTool(webFetchTool)
+  registerTool(renderUiTool)
   registerTool(contextRestoreTool)
   registerTool(recallTool)
   if (channels?.enabled) registerTool(notifyTool)

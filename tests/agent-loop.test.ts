@@ -223,7 +223,7 @@ describe('runAgentLoop', () => {
     await runAgentLoop('go', profile, session, ctx, {
       onToken: vi.fn(),
       onToolStart: vi.fn(),
-      onToolEnd: (n, r) => toolEnds.push(r),
+      onToolEnd: (_id, _n, r) => toolEnds.push(r),
       onToolPrompt: vi.fn(),
       onSessionEnd: vi.fn(),
     }, openai as any)
@@ -258,15 +258,108 @@ describe('runAgentLoop', () => {
       ])) } },
     }
 
+    const onToolStart = vi.fn()
+    const onToolParked = vi.fn()
     await expect(runAgentLoop('do it', profile, session, {
       profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [],
       approvalMode: 'strict', unattended: true, runId: 'run-approval', pendingInputs, channels,
     } as any, {
-      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+      onToken: vi.fn(), onToolStart, onToolEnd: vi.fn(), onToolParked, onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
     }, openai as any)).rejects.toBeInstanceOf(ParkSignal)
 
     expect(pendingInputs.list()[0]).toMatchObject({ purpose: 'approval', tool_call_id: 'approval-tool', state: 'open' })
     expect(channels.send).toHaveBeenCalledOnce()
+    expect(onToolStart).toHaveBeenCalledWith('approval-tool', 'Bash', { command: 'rm' })
+    expect(onToolParked).toHaveBeenCalledWith('approval-tool', 'Bash', { command: 'rm' })
+  })
+
+  it('marks a failed tool result as unsuccessful in the emitted lifecycle event', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Broken: 'allow' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    registerTool({ name: 'Broken', description: 'fails', parameters: {}, execute: async () => { throw new Error('permission denied') } })
+    const onToolEnd = vi.fn()
+    const openai = {
+      chat: { completions: { create: vi.fn()
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'broken-1', function: { name: 'Broken', arguments: '{}' } }] } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ]))
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { content: 'done' } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ])) } },
+    }
+
+    await runAgentLoop('run', profile, session, {
+      profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [],
+    } as any, {
+      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd, onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+    }, openai as any)
+
+    expect(onToolEnd).toHaveBeenCalledWith('broken-1', 'Broken', 'Error: permission denied', false)
+  })
+
+  it('emits an explicit failed lifecycle for an ACL-denied tool', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Denied: 'deny' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    const onToolStart = vi.fn()
+    const onToolEnd = vi.fn()
+    const openai = {
+      chat: { completions: { create: vi.fn()
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'denied-1', function: { name: 'Denied', arguments: '{}' } }] } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ]))
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { content: 'done' } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ])) } },
+    }
+
+    await runAgentLoop('run', profile, session, {
+      profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [],
+    } as any, {
+      onToken: vi.fn(), onToolStart, onToolEnd, onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+    }, openai as any)
+
+    expect(onToolStart).toHaveBeenCalledWith('denied-1', 'Denied', {})
+    expect(onToolEnd).toHaveBeenCalledWith('denied-1', 'Denied', 'Tool "Denied" is denied by profile ACL.', false)
+  })
+
+  it('keeps an approval lifecycle visible when the user denies it', async () => {
+    const session = createSession('test', 'testuser')
+    const profile: any = {
+      name: 'test', model: { id: 'gpt-4o', base_url: '', api_key_env: '' },
+      tools: { builtin: { Prompted: 'prompt' }, mcp_servers: [] }, hooks: { pre_tool: [], post_tool: [], on_stop: [] }, improvement: { enabled: false },
+    }
+    const onToolStart = vi.fn()
+    const onToolEnd = vi.fn()
+    const openai = {
+      chat: { completions: { create: vi.fn()
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'prompted-1', function: { name: 'Prompted', arguments: '{}' } }] } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ]))
+        .mockReturnValueOnce(makeStream([
+          { choices: [{ delta: { content: 'done' } }] },
+          { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+        ])) } },
+    }
+
+    await runAgentLoop('run', profile, session, {
+      profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [], approvalMode: 'strict',
+    } as any, {
+      onToken: vi.fn(), onToolStart, onToolEnd, onToolPrompt: vi.fn().mockResolvedValue(false), onSessionEnd: vi.fn(),
+    }, openai as any)
+
+    expect(onToolStart).toHaveBeenCalledWith('prompted-1', 'Prompted', {})
+    expect(onToolEnd).toHaveBeenCalledWith('prompted-1', 'Prompted', 'User denied tool "Prompted".', false)
   })
 
   it('executes approved tool when resuming parked approval', async () => {
@@ -282,15 +375,19 @@ describe('runAgentLoop', () => {
       { choices: [{ delta: { content: 'continued' } }] },
       { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
     ])
+    const onToolStart = vi.fn()
+    const onToolEnd = vi.fn()
     await runAgentLoop('', profile, session, {
       profile, session, workingDir: tmp, memory: new FsMemoryProvider(tmp, session), skills: [],
     } as any, {
-      onToken: vi.fn(), onToolStart: vi.fn(), onToolEnd: vi.fn(), onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
+      onToken: vi.fn(), onToolStart, onToolEnd, onToolPrompt: vi.fn(), onSessionEnd: vi.fn(),
     }, openai as any, undefined, {
       appendUser: false,
       resumeApproval: { toolCallId: 'approval-tool', approved: true, name: 'Bash', input: { command: 'rm' }, isMcp: false },
     })
     expect(executed).toHaveBeenCalledWith({ command: 'rm' }, expect.anything())
+    expect(onToolStart).not.toHaveBeenCalled()
+    expect(onToolEnd).toHaveBeenCalledWith('approval-tool', 'Bash', 'ran', true)
     expect((session.messages as any[]).find(message => message.role === 'tool')?.content).toBe('ran')
   })
 })

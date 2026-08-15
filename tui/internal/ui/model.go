@@ -97,7 +97,9 @@ type Model struct {
 	continueLookup     bool
 	workingDir         string
 	activeTool         string
+	activeToolID       string
 	activeToolStarted  time.Time
+	activeRunID        string
 	noMotion           bool
 	noNotify           bool
 	notifyTTY          bool
@@ -1540,6 +1542,7 @@ func (m *Model) startMessage(content string) {
 		Turn{Role: "agent", Time: now.Format("15:04"), Started: now},
 	)
 	m.running = true
+	m.activeRunID = ""
 	m.send(protocol.Message(payload))
 }
 
@@ -1850,6 +1853,13 @@ func (m *Model) stageItems() []StageItem {
 }
 
 func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
+	if msg.Type == "turn_start" {
+		m.activeRunID = msg.RunID
+		return
+	}
+	if msg.RunID != "" && msg.RunID != m.activeRunID {
+		return
+	}
 	switch msg.Type {
 	case "session_ready":
 		m.contextWarned = false
@@ -1965,26 +1975,49 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 	case "tool_start":
 		m.running = true
 		m.activeTool = msg.Name
+		m.activeToolID = msg.ID
 		m.activeToolStarted = time.Now()
 		agent := m.currentAgent()
 		category, _ := categorize(msg.Name)
-		agent.Sections = append(agent.Sections, Section{Name: msg.Name, Arg: summarizeInput(msg.Name, msg.Input, m.workingDir), State: SectionRunning, Motion: m.transcript.Motion, RevealAt: -1, Category: category})
+		agent.Sections = append(agent.Sections, Section{ID: msg.ID, Name: msg.Name, Arg: summarizeInput(msg.Name, msg.Input, m.workingDir), State: SectionRunning, Motion: m.transcript.Motion, RevealAt: -1, Category: category})
 	case "tool_end":
 		agent := m.currentAgent()
 		for i := len(agent.Sections) - 1; i >= 0; i-- {
 			section := &agent.Sections[i]
-			if section.Name == msg.Name && section.State == SectionRunning {
-				section.Body = truncateToolResult(msg.Result)
-				section.Metric = summarizeResult(msg.Name, msg.Result)
-				section.State = SectionDone
-				if strings.HasPrefix(msg.Result, "Error:") {
+			if (section.State == SectionRunning || section.AwaitingApproval) && ((msg.ID != "" && section.ID == msg.ID) || (section.ID == "" && section.Name == msg.Name)) {
+				section.AwaitingApproval = false
+				failed := msg.OK != nil && !*msg.OK
+				if failed {
 					section.State = SectionError
+					section.Body = msg.Result
+					section.Metric = ""
+				} else {
+					section.State = SectionDone
+					section.Body = truncateToolResult(msg.Result)
+					section.Metric = summarizeResult(msg.Name, msg.Result)
 				}
 				break
 			}
 		}
-		if m.activeTool == msg.Name {
+		if (msg.ID != "" && m.activeToolID == msg.ID) || (msg.ID == "" && m.activeTool == msg.Name) {
 			m.activeTool = ""
+			m.activeToolID = ""
+			m.activeToolStarted = time.Time{}
+		}
+	case "tool_parked":
+		agent := m.currentAgent()
+		for i := len(agent.Sections) - 1; i >= 0; i-- {
+			section := &agent.Sections[i]
+			if section.State == SectionRunning && section.ID == msg.ID {
+				section.State = SectionDone
+				section.AwaitingApproval = true
+				section.Metric = "awaiting approval"
+				break
+			}
+		}
+		if m.activeToolID == msg.ID {
+			m.activeTool = ""
+			m.activeToolID = ""
 			m.activeToolStarted = time.Time{}
 		}
 	case "stats":
@@ -2006,6 +2039,8 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 	case "session_end":
 		m.running = false
 		m.activeTool = ""
+		m.activeToolID = ""
+		m.activeRunID = ""
 		m.activeToolStarted = time.Time{}
 		agent := m.currentAgent()
 		if !agent.Started.IsZero() {
@@ -2027,13 +2062,24 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		}
 	case "error":
 		m.running = false
+		m.activeTool = ""
+		m.activeToolID = ""
+		for i := range m.currentAgent().Sections {
+			section := &m.currentAgent().Sections[i]
+			if section.State == SectionRunning {
+				section.State = SectionError
+				if section.Body == "" {
+					section.Body = msg.Message
+				}
+			}
+		}
 		m.addServerError(msg.Message)
 	case "tool_prompt":
 		m.pendingApproval = &ApprovalRequest{ID: msg.ID, Name: msg.Name, Input: msg.Input, Risk: msg.Risk, Reason: msg.Reason}
 		agent := m.currentAgent()
 		for i := len(agent.Sections) - 1; i >= 0; i-- {
 			section := &agent.Sections[i]
-			if section.Name == msg.Name && section.State == SectionRunning {
+			if section.State == SectionRunning && ((msg.ID != "" && section.ID == msg.ID) || (section.ID == "" && section.Name == msg.Name)) {
 				section.AwaitingApproval = true
 				break
 			}

@@ -65,8 +65,8 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
 
       const subEvents: AgentLoopEvents = {
         onToken: t => context.events.onToken(t),
-        onToolStart: (n, i) => context.events.onToolStart(n, i),
-        onToolEnd: (n, r) => context.events.onToolEnd(n, r),
+        onToolStart: (id, n, i) => context.events.onToolStart(id, n, i),
+        onToolEnd: (id, n, r, ok) => context.events.onToolEnd(id, n, r, ok),
         onToolPrompt: (id, n, i) => context.events.onToolPrompt(id, n, i),
         onSessionEnd: () => {},
         onStats: context.events.onStats,

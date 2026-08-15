@@ -76,8 +76,8 @@ export const delegateTool: ToolDefinition = {
         // Forward all sub-agent events to parent WebSocket
         const subEvents: AgentLoopEvents = {
           onToken: t => context.events.onToken(t),
-          onToolStart: (n, i) => context.events.onToolStart(n, i),
-          onToolEnd: (n, r) => context.events.onToolEnd(n, r),
+          onToolStart: (id, n, i) => context.events.onToolStart(id, n, i),
+          onToolEnd: (id, n, r, ok) => context.events.onToolEnd(id, n, r, ok),
           onToolPrompt: (id, n, i) => context.events.onToolPrompt(id, n, i),
           onSessionEnd: () => { /* no-op — parent manages its own session end */ },
           onStats: (a, b, c) => context.events.onStats?.(a, b, c),

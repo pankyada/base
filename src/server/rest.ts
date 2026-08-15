@@ -206,8 +206,9 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
 
   const events: AgentLoopEvents = {
     onToken: t => sse('token', { content: t }),
-    onToolStart: (n, i) => sse('tool_start', { name: n, input: i }),
-    onToolEnd: (n, r) => sse('tool_end', { name: n, result: r }),
+    // A prompted tool may be immediately denied below; tool_start marks its lifecycle, not execution.
+    onToolStart: (id, n, i) => sse('tool_start', { id, name: n, input: i }),
+    onToolEnd: (id, n, r, ok) => sse('tool_end', { id, name: n, result: r, ok }),
     onToolPrompt: async () => false,
     onSessionEnd: () => {},
     onStats: (tokens_in, tokens_out, cost_usd) => sse('stats', { tokens_in, tokens_out, cost_usd }),
@@ -479,8 +480,9 @@ async function handleAcpMessages(
 
   const events: AgentLoopEvents = {
     onToken: t => sse('message', { type: 'token', content: t }),
-    onToolStart: (n, i) => sse('message', { type: 'tool_start', name: n, input: i }),
-    onToolEnd: (n, r) => sse('message', { type: 'tool_end', name: n, result: r }),
+    // A prompted tool may be immediately denied below; tool_start marks its lifecycle, not execution.
+    onToolStart: (id, n, i) => sse('message', { type: 'tool_start', id, name: n, input: i }),
+    onToolEnd: (id, n, r, ok) => sse('message', { type: 'tool_end', id, name: n, result: r, ok }),
     onToolPrompt: async () => false,
     onSessionEnd: () => {},
     onStats: () => {},

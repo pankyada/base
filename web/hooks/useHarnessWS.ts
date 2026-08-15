@@ -25,6 +25,7 @@ export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void,
       sock.send(JSON.stringify({
         type: 'hello',
         user_id: 'web-user',
+        protocol_version: 2,
         wasm_supported: true,
         yolo: optsRef.current.yolo ?? false,
       }))

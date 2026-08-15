@@ -50,6 +50,7 @@ const (
 
 // Section is one collapsible activity within an agent turn.
 type Section struct {
+	ID               string // server tool-call ID; disambiguates parallel same-name calls
 	Name             string // tool name, e.g. "read"
 	Arg              string // one-line arg summary
 	Metric           string // e.g. "(142 lines)" or "+6 -2"
@@ -121,18 +122,19 @@ const (
 	sectionFixedOverhead = 20 // glyph(3) + name(13) + metric gap(2) + chevron gap+char(2)
 	sectionMetricMax     = 12
 	errorPreviewLines    = 4
+	errorRenderMaxBytes  = 64 * 1024
+	errorRenderMaxLines  = 256
 )
 
 // Render draws the section at the given content width and spinner frame.
 // allExpanded forces the body open (the ^O toggle).
 func (s Section) Render(width, frame int, allExpanded bool) string {
 	chev := "▸"
-	open := (s.Expanded || allExpanded) && s.Body != ""
+	open := (s.Expanded || allExpanded || s.State == SectionError) && s.Body != ""
 	if open {
 		chev = "▾"
 	}
-	// A failure is the one case where output belongs on screen unasked — enough
-	// to say what broke, with the rest still behind the chevron.
+	// Failures open immediately; pathological bodies are capped only while rendering.
 	preview := !open && s.State == SectionError && s.Body != ""
 	metric := truncate(s.Metric, sectionMetricMax)
 	// The arg fills its column so the metric and chevron land on the right edge
@@ -154,12 +156,15 @@ func (s Section) Render(width, frame int, allExpanded bool) string {
 		return head
 	}
 	bodyText := s.Body
+	if s.State == SectionError {
+		bodyText = capFailureRender(s.Body)
+	}
 	if preview {
 		bodyText = firstLines(s.Body, errorPreviewLines)
 	}
 	if open && s.Motion && s.RevealAt >= 0 {
 		visible := frame - s.RevealAt + 1
-		bodyLines := strings.Split(s.Body, "\n")
+		bodyLines := strings.Split(bodyText, "\n")
 		if visible < len(bodyLines) {
 			visible = maxInt(1, visible)
 			bodyText = strings.Join(bodyLines[:visible], "\n") + "\n" + StFaint.Render("… expanding")
@@ -176,6 +181,34 @@ func (s Section) Render(width, frame int, allExpanded bool) string {
 		PaddingLeft(1).
 		Render(bodyText)
 	return lipgloss.JoinVertical(lipgloss.Left, head, body)
+}
+
+// capFailureRender bounds reflow work without changing the detail retained in
+// Section.Body for inspection or export.
+func capFailureRender(text string) string {
+	if len(text) <= errorRenderMaxBytes {
+		if strings.Count(text, "\n") <= errorRenderMaxLines {
+			return text
+		}
+	}
+	end, lines := 0, 0
+	for end < len(text) && end < errorRenderMaxBytes && lines < errorRenderMaxLines {
+		next := strings.IndexByte(text[end:], '\n')
+		if next < 0 {
+			end = minInt(len(text), end+errorRenderMaxBytes)
+			break
+		}
+		next += end + 1
+		if next > errorRenderMaxBytes {
+			break
+		}
+		end = next
+		lines++
+	}
+	if end == 0 {
+		end = minInt(len(text), errorRenderMaxBytes)
+	}
+	return text[:end] + "\n… failure output capped in this frame; full detail retained."
 }
 
 // --- small helpers (shared across ui package) ---

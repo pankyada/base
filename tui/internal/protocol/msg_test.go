@@ -51,7 +51,7 @@ func TestEncodeClientHello(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != `{"type":"hello","user_id":"alice"}` {
+	if string(b) != `{"type":"hello","user_id":"alice","protocol_version":2}` {
 		t.Fatalf("got %s", b)
 	}
 }
@@ -61,7 +61,7 @@ func TestEncodeClientHelloIncludesProfileOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != `{"type":"hello","user_id":"alice","profile":"data-analyst"}` {
+	if string(b) != `{"type":"hello","user_id":"alice","protocol_version":2,"profile":"data-analyst"}` {
 		t.Fatalf("got %s", b)
 	}
 }

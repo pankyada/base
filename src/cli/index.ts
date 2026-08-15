@@ -48,7 +48,7 @@ const rl = readline.createInterface({
 const send = (msg: ClientMessage) => ws.send(JSON.stringify(msg))
 
 ws.on('open', () => {
-  send({ type: 'hello', user_id: process.env.HARNESS_USER ?? userInfo().username })
+  send({ type: 'hello', user_id: process.env.HARNESS_USER ?? userInfo().username, protocol_version: 2 })
   console.log(`Connected to harness (ws://localhost:${PORT})`)
   console.log('Commands: /exit  /cancel  /resume <session-id>')
   prompt()

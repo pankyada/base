@@ -14,7 +14,7 @@ func TestPreferencesRoundTrip(t *testing.T) {
 		ApprovalModeByProfile: map[string]string{"coding": "danger"},
 		ModelByProfile:        map[string]string{"coding": "gpt-5.4-mini"},
 		Theme:                 "amber",
-		RailVisible:           true,
+		RailHidden:            true,
 		OverlayTab:            "skills",
 		SeenNotices:           map[string]bool{"first-run": true},
 	}

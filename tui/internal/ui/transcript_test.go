@@ -258,9 +258,7 @@ func TestRenderWithHitMapRowsMatchRenderedLines(t *testing.T) {
 	}
 }
 
-// A failure has to say what broke without the whole tail of output coming with
-// it — the rest stays behind the chevron like any other body.
-func TestTranscriptErrorShowsCappedPreview(t *testing.T) {
+func TestTranscriptErrorShowsFullDetail(t *testing.T) {
 	body := "line-1\nline-2\nline-3\nline-4\nline-5\nline-6\nline-7"
 	tr := Transcript{Turns: []Turn{{
 		Role:     "agent",
@@ -270,15 +268,8 @@ func TestTranscriptErrorShowsCappedPreview(t *testing.T) {
 	if !strings.Contains(out, "line-1") {
 		t.Fatalf("error preview should show the head of the output, got %q", out)
 	}
-	if strings.Contains(out, "line-7") {
-		t.Fatalf("error preview should stop short of the whole body, got %q", out)
-	}
-	if !strings.Contains(out, "3 more lines") {
-		t.Fatalf("error preview should say how much is hidden, got %q", out)
-	}
-	tr.AllExpanded = true
-	if !strings.Contains(stripANSI(tr.Render(80, 0)), "line-7") {
-		t.Fatal("expanding should reveal the rest of the error body")
+	if !strings.Contains(out, "line-7") {
+		t.Fatalf("error should show its full detail, got %q", out)
 	}
 }
 
