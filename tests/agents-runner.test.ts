@@ -3,6 +3,8 @@ import { Ajv } from 'ajv'
 import { runSubAgent, SubAgentParams } from '../src/agents/runner.js'
 import { runAgentLoop } from '../src/loop/agent-loop.js'
 import { createMcpClients, destroyMcpClients } from '../src/mcp/client.js'
+import { resolveAcl } from '../src/tools/acl.js'
+import { stageAcl } from '../src/workflow/stage-acl.js'
 
 vi.mock('../src/loop/agent-loop.js', () => ({ runAgentLoop: vi.fn() }))
 vi.mock('../src/mcp/client.js', () => ({
@@ -112,6 +114,33 @@ describe('runSubAgent', () => {
     expect(JSON.parse(result)).toEqual({ findings: 'Paris is the capital.' })
     expect(runAgentLoop).toHaveBeenCalledOnce()
     expect(destroyMcpClients).toHaveBeenCalledOnce()
+  })
+
+  it('passes the active stage ACL into a named sub-agent loop', async () => {
+    let subLoopAcl: string | undefined
+    vi.mocked(runAgentLoop).mockImplementation(async (_msg, subProfile, _session, _context, _events, _openai, _signal, opts) => {
+      subLoopAcl = resolveAcl('Write', subProfile as any, 'yolo', undefined, opts?.stage && opts.stage.stage !== 'triage' ? stageAcl(opts.stage.stage) : undefined)
+    })
+
+    await runSubAgent(makeParams({
+      context: {
+        ...makeParams().context,
+        stage: { task_id: 'task', stage_id: 'stage', stage: 'plan', attempt: 1, intensity: 1, tier: 'cheap' },
+      },
+    }))
+
+    expect(subLoopAcl).toBe('deny')
+  })
+
+  it('does not apply a workflow stage ACL to a sub-agent outside a stage', async () => {
+    let subLoopAcl: string | undefined
+    vi.mocked(runAgentLoop).mockImplementation(async (_msg, subProfile, _session, _context, _events, _openai, _signal, opts) => {
+      subLoopAcl = resolveAcl('Write', subProfile as any, 'yolo', undefined, opts?.stage && opts.stage.stage !== 'triage' ? stageAcl(opts.stage.stage) : undefined)
+    })
+
+    await runSubAgent(makeParams())
+
+    expect(subLoopAcl).toBe('allow')
   })
 
   it('returns error when sub-agent output is not valid JSON', async () => {

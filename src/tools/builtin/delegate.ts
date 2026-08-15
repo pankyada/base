@@ -99,7 +99,16 @@ export const delegateTool: ToolDefinition = {
           taintSources: context.taintSources,
         }
 
-        await runAgentLoop(task, subProfile, subSession, subContext, subEvents, subOpenai, context.signal)
+        await runAgentLoop(
+          task,
+          subProfile,
+          subSession,
+          subContext,
+          subEvents,
+          subOpenai,
+          context.signal,
+          context.stage ? { stage: context.stage } : undefined,
+        )
 
         // Extract final assistant text
         const messages = subSession.messages as Array<{ role: string; content?: string | null }>

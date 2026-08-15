@@ -91,7 +91,12 @@ export async function runAgentLoop(
     let ok = true
     try {
       if (!toolDef) throw new Error(`Tool "${tc.name}" not found in registry`)
-      const returned = await toolDef.execute(input, { ...context, currentToolCallId: tc.id, taintSources: session.taint_sources })
+      const returned = await toolDef.execute(input, {
+        ...context,
+        currentToolCallId: tc.id,
+        taintSources: session.taint_sources,
+        stage: opts?.stage,
+      })
       const structured = typeof returned === 'string' ? { content: returned } : returned
       result = structured.content
       const fallback = defaultProvenance(tc.name, input, context, isMcp)

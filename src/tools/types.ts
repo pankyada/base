@@ -60,6 +60,7 @@ export interface ToolContext {
   budget?: RunBudget
   unattended?: boolean
   taintSources?: string[]
+  stage?: StageTag
 }
 
 export interface ToolDefinition {

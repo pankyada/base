@@ -87,7 +87,16 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         agentTools: [], // sub-agents don't inherit parent's agent registry
       }
 
-      await runAgentLoop(userMessage, subProfile, subSession, subContext, subEvents, subOpenai, context.signal)
+      await runAgentLoop(
+        userMessage,
+        subProfile,
+        subSession,
+        subContext,
+        subEvents,
+        subOpenai,
+        context.signal,
+        context.stage ? { stage: context.stage } : undefined,
+      )
 
       // 5–6. Output parsing + validation (shared util)
       const messages = subSession.messages as Array<{ role: string; content?: string | null }>
