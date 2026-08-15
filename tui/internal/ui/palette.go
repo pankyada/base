@@ -84,6 +84,11 @@ func paletteEntries(m Model) []paletteEntry {
 			entries = append(entries, gitPaletteEntry("pull", "pull upstream changes", "pull"))
 		}
 	}
+	for i := range entries {
+		if entries[i].action != nil {
+			entries[i].insert = ""
+		}
+	}
 	entries = paletteRecentFirst(entries, m.paletteRecent)
 	if m.overlayTab == "tasks" || m.overlayTab == "skills" {
 		want := invocableTask

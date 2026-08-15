@@ -63,6 +63,18 @@ func TestActionBarKeyGatingAndDismissal(t *testing.T) {
 	}
 }
 
+func TestActionBarUnavailableKeysAreConsumed(t *testing.T) {
+	m := NewModel(nil, "coding", "user", prefs.Preferences{})
+	m.lastAction = &ActionResult{Label: "git log", Result: "done", OK: true}
+	for _, key := range []rune{'u', 'r', 'l'} {
+		updated, _ := m.Update(keyRune(key))
+		m = updated.(Model)
+		if got := m.composer.Value(); got != "" {
+			t.Fatalf("unavailable %q inserted %q", string(key), got)
+		}
+	}
+}
+
 func TestActionBarRendersOnlyApplicableHints(t *testing.T) {
 	got := stripANSI(actionBar(&ActionResult{Label: "git stage", Result: "done", OK: true}, 80))
 	if !strings.Contains(got, "git stage") || strings.Contains(got, "[u]") || strings.Contains(got, "[r]") {

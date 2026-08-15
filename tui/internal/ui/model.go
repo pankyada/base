@@ -509,17 +509,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "u":
 			if m.lastAction.UndoID != "" {
 				m.send(protocol.UndoApply(m.lastAction.UndoID))
-				return m, nil
 			}
+			return m, nil
 		case "r":
 			if m.lastAction.RetryFunc != nil {
 				return m, m.lastAction.RetryFunc(&m)
 			}
+			return m, nil
 		case "l":
 			if m.lastAction.LogsTab != "" {
 				m.openOverlay(m.lastAction.LogsTab)
-				return m, nil
 			}
+			return m, nil
 		case "esc":
 			m.lastAction = nil
 			m.reflow()
