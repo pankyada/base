@@ -39,7 +39,7 @@ import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { ClientMessage, ServerMessage } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
-import { applyUndoEntry, listUndoEntries } from './undo-handlers.js'
+import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
 import { isParkSignal } from '../runs/park.js'
 import { resumeExpiredInput, resumePendingInput } from '../runs/resume.js'
@@ -529,8 +529,8 @@ async function main() {
       }
 
       if (msg.type === 'undo_apply') {
-        const result = await applyUndoEntry(userId, session.id, msg.id, connectionProfile)
-        send({ type: 'notice', level: result.startsWith('undid ') ? 'info' : 'warn', message: result })
+        const notice = await undoNotice(userId, session.id, msg.id, connectionProfile, msg.force)
+        send({ type: 'notice', level: notice.level, message: notice.message })
         send({ type: 'undo_entries', entries: listUndoEntries(userId, session.id) })
         return
       }

@@ -51,9 +51,22 @@ export async function applyUndoEntry(user: string, sessionId: string, id: string
   const entry = listAudit(user).find(candidate => candidate.id === id)
   if (!entry || entry.session_id !== sessionId || !entry.undo || !entry.ok) return `undo entry ${id} is unavailable in this session`
   if (appliedUndoEntries.has(id)) return `undo entry ${id} was already applied`
-  const result = await undoAuditEntry(entry, profile, { force })
-  if (result.startsWith('undid ')) appliedUndoEntries.add(id)
-  return result
+  try {
+    const result = await undoAuditEntry(entry, profile, { force })
+    if (result.startsWith('undid ')) appliedUndoEntries.add(id)
+    return result
+  } catch (error: any) {
+    return `undo entry ${id} failed: ${error?.message ?? String(error)}`
+  }
+}
+
+export async function undoNotice(user: string, sessionId: string, id: string, profile: Profile, force = false): Promise<{ level: 'info' | 'warn'; message: string }> {
+  try {
+    const message = await applyUndoEntry(user, sessionId, id, profile, force)
+    return { level: message.startsWith('undid ') ? 'info' : 'warn', message }
+  } catch (error: any) {
+    return { level: 'warn', message: `undo entry ${id} failed: ${error?.message ?? String(error)}` }
+  }
 }
 
 export function resetAppliedUndoEntries(): void {
