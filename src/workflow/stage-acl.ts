@@ -4,6 +4,8 @@ import type { Stage } from './types.js'
 
 export type StageAclOverlay = Partial<Record<string, AclValue>>
 
+// Fixed tools come from EFFECTS; named sub-agents inherit this overlay through
+// their sub-loop context instead of being duplicated as profile-specific names.
 const READ_ONLY_TOOLS: StageAclOverlay = Object.fromEntries(
   Object.keys(EFFECTS)
     .filter(tool => isMutatingEffect(effectFor(tool)))
