@@ -9,7 +9,9 @@ import type { AuditEntry } from './journal.js'
 import type { MemoryRecord, MemoryScope } from '../memory/interface.js'
 import type { Profile } from '../profiles/schema.js'
 
-export async function undoAuditEntry(entry: AuditEntry, profilePath: string | Profile): Promise<string> {
+export interface UndoOptions { force?: boolean }
+
+export async function undoAuditEntry(entry: AuditEntry, profilePath: string | Profile, options: UndoOptions = {}): Promise<string> {
   if (!entry.undo) return `audit entry ${entry.id} is not undoable`
   if (entry.undo.expires_at && Date.parse(entry.undo.expires_at) <= Date.now()) return `audit entry ${entry.id} undo window has expired`
   const { kind, payload } = entry.undo
@@ -17,16 +19,21 @@ export async function undoAuditEntry(entry: AuditEntry, profilePath: string | Pr
     const path = payload.path
     if (typeof path !== 'string' || typeof payload.existed !== 'boolean') return `audit entry ${entry.id} has invalid file inverse`
     const expected = payload.after_sha256
-    const legacyWarning = typeof expected === 'string' ? '' : ' (warning: cannot verify current content; legacy undo entry)'
+    const legacy = typeof expected !== 'string'
+    if (legacy && !options.force) return `cannot undo ${entry.id}: legacy undo entry cannot verify current content; retry with force`
     if (typeof expected === 'string') {
       if (!existsSync(path)) return `cannot undo ${entry.id}: ${path} drifted after the journalled write`
       const actual = createHash('sha256').update(readFileSync(path)).digest('hex')
       if (actual !== expected) return `cannot undo ${entry.id}: ${path} drifted after the journalled write`
     }
-    if (!payload.existed) { unlinkSync(path); return `undid ${entry.id}: removed ${path}${legacyWarning}` }
+    if (!payload.existed) {
+      if (!existsSync(path)) return `nothing to undo ${entry.id}: ${path} is already absent`
+      unlinkSync(path)
+      return `undid ${entry.id}: removed ${path}${legacy ? ' (forced legacy restore)' : ''}`
+    }
     if (typeof payload.before !== 'string') return `audit entry ${entry.id} has no prior file content`
     mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, Buffer.from(payload.before, 'base64'))
-    return `undid ${entry.id}: restored ${path}${legacyWarning}`
+    return `undid ${entry.id}: restored ${path}${legacy ? ' (forced legacy restore)' : ''}`
   }
   if (kind === 'memory_restore') {
     const scope = payload.scope as MemoryScope

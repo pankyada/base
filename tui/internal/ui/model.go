@@ -140,6 +140,7 @@ type Model struct {
 	pendingAnswerInput  textinput.Model
 	undoEntries         []protocol.UndoEntry
 	undoCursor          int
+	undoForceID         string
 
 	// Rail render and hit map are produced together in reflow so a click can
 	// never be resolved against a different layout than the one on screen.
@@ -1877,6 +1878,9 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 	case "undo_entries":
 		m.undoEntries = append([]protocol.UndoEntry{}, msg.Undo...)
 		m.undoCursor = firstAvailableUndo(m.undoEntries, m.undoCursor)
+		if m.undoForceID != "" && (m.undoCursor < 0 || m.undoCursor >= len(m.undoEntries) || m.undoEntries[m.undoCursor].ID != m.undoForceID) {
+			m.undoForceID = ""
+		}
 	case "artifacts":
 		m.artifacts = append(m.artifacts, msg.Artifacts...)
 	case "skills":

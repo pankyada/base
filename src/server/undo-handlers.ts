@@ -10,6 +10,7 @@ export interface UndoEntryView {
   target: string
   expires_at?: string
   available: boolean
+  forceable: boolean
   applied: boolean
   reason?: string
 }
@@ -31,24 +32,26 @@ export function listUndoEntries(user: string, sessionId: string): UndoEntryView[
     .map(entry => {
       const applied = appliedUndoEntries.has(entry.id)
       const expired = Boolean(entry.undo?.expires_at && Date.parse(entry.undo.expires_at) <= Date.now())
+      const legacy = entry.undo?.kind === 'file_restore' && typeof entry.undo.payload.after_sha256 !== 'string'
       return {
         id: entry.id,
         ts: entry.ts,
         tool: entry.tool,
         target: targetFor(entry),
         expires_at: entry.undo?.expires_at,
-        available: !applied && !expired,
+        available: !applied && !expired && !legacy,
+        forceable: !applied && !expired && legacy,
         applied,
-        ...(applied ? { reason: 'already applied' } : expired ? { reason: 'undo window has expired' } : {}),
+        ...(applied ? { reason: 'already applied' } : expired ? { reason: 'undo window has expired' } : legacy ? { reason: 'cannot verify current content; enter twice to force restore' } : {}),
       }
     })
 }
 
-export async function applyUndoEntry(user: string, sessionId: string, id: string, profile: Profile): Promise<string> {
+export async function applyUndoEntry(user: string, sessionId: string, id: string, profile: Profile, force = false): Promise<string> {
   const entry = listAudit(user).find(candidate => candidate.id === id)
   if (!entry || entry.session_id !== sessionId || !entry.undo || !entry.ok) return `undo entry ${id} is unavailable in this session`
   if (appliedUndoEntries.has(id)) return `undo entry ${id} was already applied`
-  const result = await undoAuditEntry(entry, profile)
+  const result = await undoAuditEntry(entry, profile, { force })
   if (result.startsWith('undid ')) appliedUndoEntries.add(id)
   return result
 }

@@ -180,7 +180,7 @@ export type ClientMessage =
   | { type: 'pending_list' }
   | { type: 'pending_answer'; pending_id: string; value: string }
   | { type: 'undo_list' }
-  | { type: 'undo_apply'; id: string }
+  | { type: 'undo_apply'; id: string; force?: boolean }
 
 export type ServerMessage =
   | { type: 'token'; content: string }
@@ -235,6 +235,7 @@ export interface UndoEntry {
   target: string
   expires_at?: string
   available: boolean
+  forceable: boolean
   applied: boolean
   reason?: string
 }

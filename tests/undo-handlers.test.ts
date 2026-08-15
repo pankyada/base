@@ -2,11 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { createHash } from 'crypto'
 import { applyUndoEntry, listUndoEntries, resetAppliedUndoEntries } from '../src/server/undo-handlers.js'
 import type { AuditEntry } from '../src/audit/journal.js'
 
 function fixture(id: string, sessionId: string, user: string, payload: Record<string, unknown>, expires_at?: string): AuditEntry {
   return { id, ts: new Date(Date.now() - (id === 'old' ? 1000 : 0)).toISOString(), session_id: sessionId, user, profile: 'coding', tool: 'Write', input_digest: 'x', effect: 'write', decision: 'allow', decided_by: 'default', decided_reason: 'test', tainted: false, ok: true, undo: { kind: 'file_restore', payload, expires_at } }
+}
+
+function afterHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex')
 }
 
 describe('undo handlers', () => {
@@ -28,7 +33,7 @@ describe('undo handlers', () => {
     const target = join(home, 'file.txt')
     writeFileSync(target, 'new')
     const entries = [
-      fixture('new', 'session-1', user, { path: target, existed: true, before: Buffer.from('old').toString('base64') }),
+      fixture('new', 'session-1', user, { path: target, existed: true, before: Buffer.from('old').toString('base64'), after_sha256: afterHash('new') }),
       fixture('old', 'session-1', user, { path: join(home, 'old.txt'), existed: false }, new Date(Date.now() - 1_000).toISOString()),
       fixture('other-session', 'session-2', user, { path: join(home, 'other.txt'), existed: false }),
       fixture('other-user', 'session-1', 'bob', { path: join(home, 'bob.txt'), existed: false }),

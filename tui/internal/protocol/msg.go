@@ -105,6 +105,7 @@ type UndoEntry struct {
 	Target    string `json:"target"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 	Available bool   `json:"available"`
+	Forceable bool   `json:"forceable"`
 	Applied   bool   `json:"applied"`
 	Reason    string `json:"reason,omitempty"`
 }
@@ -278,11 +279,15 @@ type undoListMsg struct {
 func UndoList() ClientMessage { return undoListMsg{Type: "undo_list"} }
 
 type undoApplyMsg struct {
-	Type string `json:"type"`
-	ID   string `json:"id"`
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Force bool   `json:"force,omitempty"`
 }
 
-func UndoApply(id string) ClientMessage { return undoApplyMsg{Type: "undo_apply", ID: id} }
+func UndoApply(id string, force ...bool) ClientMessage {
+	forced := len(force) > 0 && force[0]
+	return undoApplyMsg{Type: "undo_apply", ID: id, Force: forced}
+}
 
 type pendingAnswerMsg struct {
 	Type      string `json:"type"`

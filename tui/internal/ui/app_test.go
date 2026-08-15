@@ -94,6 +94,32 @@ func TestUndoPanelListsUnavailableAndAppliesAvailableEntry(t *testing.T) {
 	}
 }
 
+func TestUndoPanelRequiresTwoEnterPressesForLegacyForce(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	if _, handled := m.handleSlash("/undo"); !handled {
+		t.Fatal("/undo should be handled")
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "undo_entries", Undo: []protocol.UndoEntry{
+		{ID: "legacy", Tool: "Write", Target: "gone.go", Available: false, Forceable: true, Reason: "cannot verify"},
+	}})
+	baseline := len(sender.messages)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(sender.messages) != baseline || m.undoForceID != "legacy" {
+		t.Fatalf("first force confirmation messages=%d armed=%q", len(sender.messages), m.undoForceID)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if len(sender.messages) != baseline+1 {
+		t.Fatalf("second force confirmation messages=%d", len(sender.messages))
+	}
+	wire, err := json.Marshal(sender.messages[baseline])
+	if err != nil || string(wire) != `{"type":"undo_apply","id":"legacy","force":true}` {
+		t.Fatalf("forced undo wire=%s err=%v", wire, err)
+	}
+}
+
 func TestAppApprovalInputOverlayAndReconnect(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})
