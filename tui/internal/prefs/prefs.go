@@ -18,11 +18,12 @@ type Preferences struct {
 	// RailHidden is stored inverted so the zero value means "rail on screen":
 	// a fresh or lost prefs file opens with the rail visible, and only an
 	// explicit ^b hide is persisted.
-	RailHidden   bool            `json:"rail_hidden"`
-	OverlayTab   string          `json:"overlay_tab"`
-	DensityMode  string          `json:"density_mode"`
-	RailSections map[string]bool `json:"rail_sections"`
-	SeenNotices  map[string]bool `json:"seen_notices"`
+	RailHidden     bool            `json:"rail_hidden"`
+	OverlayTab     string          `json:"overlay_tab"`
+	DensityMode    string          `json:"density_mode"`
+	RailSections   map[string]bool `json:"rail_sections"`
+	SeenNotices    map[string]bool `json:"seen_notices"`
+	RecentCommands []string        `json:"recent_commands"`
 }
 
 func pathForHome(home string) string {

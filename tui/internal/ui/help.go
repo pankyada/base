@@ -22,7 +22,7 @@ func helpView(keys KeyMap, width, height int) string {
 		"",
 		sectionHeader("transcript", inner), helpBinding(keys.PageUp), helpBinding(keys.PageDown), helpBinding(keys.HalfPageUp), helpBinding(keys.HalfPageDown), helpBinding(keys.ExpandAll), "end  bottom",
 		"",
-		sectionHeader("panels", inner), helpBinding(keys.Overlay), helpBinding(keys.Rail), helpBinding(keys.AcceptCompletion),
+		sectionHeader("panels", inner), helpBinding(keys.Overlay), helpBinding(keys.Rail), helpBinding(keys.AcceptCompletion), helpBinding(keys.Palette),
 		"",
 		sectionHeader("project", inner),
 		"click     run a task, or stage/commit/push in the rail",

@@ -29,6 +29,9 @@ type invocableKind uint8
 const (
 	invocableSkill invocableKind = iota
 	invocableCommand
+	invocableTask
+	invocablePanel
+	invocableGitAction
 )
 
 type invocable struct {
@@ -88,6 +91,10 @@ type Model struct {
 	modelFilter        string
 	modelCustom        bool
 	modelInput         textinput.Model
+	paletteOpen        bool
+	paletteCursor      int
+	paletteInput       textinput.Model
+	paletteRecent      []string
 	sessionPicker      bool
 	sessionCursor      int
 	sessionOptions     []protocol.SessionSummary
@@ -177,6 +184,10 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 	modelInput := textinput.New()
 	modelInput.Prompt = "custom id › "
 	modelInput.CharLimit = 200
+	paletteInput := textinput.New()
+	paletteInput.Prompt = "› "
+	paletteInput.Placeholder = "search commands"
+	paletteInput.CharLimit = 200
 	viewportModel := viewport.New(80, 16)
 	m := Model{
 		sender:             sender,
@@ -190,6 +201,7 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 		workflowStages:     map[string]StageItem{},
 		stageCosts:         map[string]float64{},
 		modelInput:         modelInput,
+		paletteInput:       paletteInput,
 		keys:               NewKeyMap(),
 		prefs:              preferences,
 		profile:            profile,
@@ -214,6 +226,10 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 		preferences.Theme = "ember"
 	}
 	m.prefs.Theme = preferences.Theme
+	m.paletteRecent = append([]string(nil), preferences.RecentCommands...)
+	if len(m.paletteRecent) > 8 {
+		m.paletteRecent = m.paletteRecent[:8]
+	}
 	ApplyTheme(preferences.Theme)
 	m.transcript.Motion = true
 	m.focused = true
@@ -442,6 +458,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.sessionPicker {
 		return m.updateSessionPicker(msg)
 	}
+	if m.paletteOpen {
+		return m.updatePalette(msg)
+	}
 	if m.completion.Open {
 		switch msg.String() {
 		case "up":
@@ -476,6 +495,11 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case matches(msg, m.keys.Quit):
 		return m, tea.Quit
+	case matches(msg, m.keys.Palette):
+		if m.paletteCanOpen() {
+			m.openPalette()
+		}
+		return m, nil
 	case matches(msg, m.keys.Cancel):
 		if len(slashMatches(m.composer.Value())) > 0 {
 			return m, nil
@@ -2254,6 +2278,11 @@ func (m Model) View() string {
 	}
 	if m.sessionPicker {
 		return Center(background, sessionPicker(m.sessionOptions, m.sessionCursor, m.width, m.height), m.width, m.height)
+	}
+	if m.paletteOpen {
+		entries := paletteFuzzyMatch(m.paletteInput.Value(), paletteEntries(m))
+		panel := lipgloss.JoinVertical(lipgloss.Left, m.paletteInput.View(), palettePanelView(entries, m.paletteCursor, m.width, m.height))
+		return Center(background, panel, m.width, m.height)
 	}
 	if m.overlayOpen {
 		body := skillsPlaceholder()
