@@ -120,6 +120,21 @@ func TestUndoPanelRequiresTwoEnterPressesForLegacyForce(t *testing.T) {
 	}
 }
 
+func TestUndoTabArrowKeysNavigateOverlayTabs(t *testing.T) {
+	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
+	m.openOverlay("undo")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(Model)
+	if m.overlayTab != "model" {
+		t.Fatalf("right from undo selected %q, want model", m.overlayTab)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(Model)
+	if m.overlayTab != "undo" {
+		t.Fatalf("left from model selected %q, want undo", m.overlayTab)
+	}
+}
+
 func TestAppApprovalInputOverlayAndReconnect(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

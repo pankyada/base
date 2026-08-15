@@ -69,6 +69,10 @@ func firstAvailableUndo(entries []protocol.UndoEntry, fallback int) int {
 
 func (m Model) updateUndoTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "left":
+		m.cycleOverlay(-1)
+	case "right":
+		m.cycleOverlay(1)
 	case "up":
 		m.undoCursor = nextUndoCursor(m.undoEntries, m.undoCursor, -1)
 		m.undoForceID = ""
