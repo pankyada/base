@@ -444,12 +444,11 @@ record of *why* an action was permitted.
 
 ---
 
-### 🔄 22. Provenance gating
+### ✅ 22. Provenance gating
 
-**In progress on `feat/17-channels`:** typed provenance, monotonic taint,
-untrusted inbound-channel handling, action gates, audit attribution, and core
-undo, and the permanent red-team corpus are implemented. Main-branch merge
-remains.
+**What shipped:** typed provenance, monotonic taint, untrusted inbound-channel
+handling, action gates, audit attribution, core undo, exact-only provenance
+overrides, and a permanent red-team corpus covering direct and laundering paths.
 
 **The security keystone of this track.** Once an agent reads content other people
 wrote, its context contains instructions from strangers that are
@@ -459,7 +458,7 @@ this closes the path structurally.
 Claim is deliberately narrow: *content the agent read can never silently
 authorize an action.* The model may still be fooled — the gate holds anyway.
 
-**To build:**
+**Safety contract:**
 - `provenance` on tool results; **untrusted by default** for anything network-sourced
 - Monotonic per-turn taint stored on the ledger (not derived — projection would silently un-taint it); resets only on a genuine human message
 - `safety.gate_untrusted_actions`: in a tainted turn, `outbound`/`destructive` tools escalate to approval regardless of ACL, quoting the tainting source
@@ -666,8 +665,8 @@ Unattended track — **boundary guard shipped; next up is #17**:
 #19 temporal memory       │
 #20 watch/poll triggers ──┘
   ↓
-#21 budget + conditional ACL ──┐
-#22 provenance gating ─────────┘  must land together — #21 without #22
+✅ #21 budget + conditional ACL ──┐
+✅ #22 provenance gating ─────────┘  shipped together — #21 without #22
   ↓                               widens autonomy with no injection defense
 #23 multi-profile + audio
 ```

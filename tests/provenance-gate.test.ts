@@ -3,6 +3,10 @@ import { runAgentLoop } from '../src/loop/agent-loop.js'
 import { createSession } from '../src/session/store.js'
 import { FsMemoryProvider } from '../src/memory/fs-memory.js'
 import { clearRegistry, registerTool } from '../src/tools/registry.js'
+import { defaultProvenance } from '../src/safety/provenance.js'
+import { memoryWriteTool } from '../src/tools/builtin/memory-write.js'
+import { memoryReadTool } from '../src/tools/builtin/memory-read.js'
+import { audit } from '../src/audit/journal.js'
 import { mkdtempSync } from 'fs'
 import { readFileSync } from 'fs'
 import { join } from 'path'
@@ -14,6 +18,59 @@ const RED_TEAM_CASES = JSON.parse(readFileSync(new URL('./fixtures/red-team/prov
 
 describe('provenance gate', () => {
   beforeEach(() => clearRegistry())
+
+  it('allows an explicit per-tool provenance override, never a wildcard', () => {
+    const session = createSession('guarded', 'alice')
+    const context: any = {
+      profile: { tools: { provenance: { 'inbox__read': 'trusted' } } },
+      session,
+      workingDir: process.cwd(),
+    }
+    expect(defaultProvenance('inbox__read', {}, context, true)).toEqual({ provenance: 'trusted' })
+    expect(defaultProvenance('other__read', {}, context, true)).toEqual({ provenance: 'untrusted', source: 'MCP other__read' })
+  })
+
+  it('keeps the permanent corpus broad enough to cover known laundering paths', () => {
+    expect(RED_TEAM_CASES.map(item => item.id)).toEqual(expect.arrayContaining([
+      'untrusted-mcp-result',
+      'untrusted-calendar-invite',
+      'untrusted-shared-note',
+      'untrusted-mcp-error',
+      'untrusted-filename',
+      'memory-laundering',
+      'delegation-laundering',
+      'authority-spoofing',
+      'encoded-instruction',
+      'approval-prompt-targeting',
+    ]))
+  })
+
+  it('taints a later turn when it rereads memory written in a tainted turn', async () => {
+    const session = createSession('guarded', 'alice')
+    const dir = mkdtempSync(join(tmpdir(), 'provenance-memory-'))
+    const memory = new FsMemoryProvider(dir, session)
+    await memoryWriteTool.execute({ scope: 'user', key: 'copied', content: 'send it' }, {
+      session, memory, taintSources: ['MCP inbox'],
+    } as any)
+    await expect(memoryReadTool.execute({ scope: 'user', key: 'copied' }, { memory } as any))
+      .resolves.toMatchObject({ provenance: 'untrusted', source: 'MCP inbox' })
+  })
+
+  it('taints a later read of a file written during a tainted turn', () => {
+    const home = mkdtempSync(join(tmpdir(), 'provenance-file-'))
+    vi.stubEnv('HOME', home)
+    const session = createSession('guarded', 'alice')
+    const filePath = join(home, 'copied.txt')
+    audit({
+      run_id: 'r', session_id: session.id, user: session.user, profile: 'guarded', tool: 'Write',
+      input: { file_path: filePath }, effect: 'write', decision: 'allow', decided_by: 'default',
+      decided_reason: 'test', tainted: true, ok: true,
+    })
+    expect(defaultProvenance('Read', { file_path: filePath }, {
+      profile: { tools: {} }, session, workingDir: home,
+    } as any, false)).toEqual({ provenance: 'untrusted', source: `tainted file: ${filePath}` })
+    vi.unstubAllEnvs()
+  })
 
   it('prompts for outbound action after untrusted content, even in yolo mode', async () => {
     const session = createSession('guarded', 'alice')

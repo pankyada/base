@@ -3,6 +3,8 @@ import { wasTaintedWrite } from '../audit/query.js'
 import type { ToolContext, ToolProvenance } from '../tools/types.js'
 
 export function defaultProvenance(tool: string, input: Record<string, unknown>, context: ToolContext, isMcp: boolean): { provenance: ToolProvenance; source?: string } {
+  const override = context.profile.tools?.provenance?.[tool]
+  if (override) return { provenance: override }
   if (isMcp) return { provenance: 'untrusted', source: `MCP ${tool}` }
   if (tool === 'Bash' || tool === 'ExecuteCode') return { provenance: 'untrusted', source: `${tool} output` }
   if (tool === 'Read') {

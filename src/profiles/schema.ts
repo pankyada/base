@@ -187,6 +187,12 @@ const SafetySchema = z.object({
   gate_writes: z.boolean().default(false),
 })
 
+const ProvenanceOverridesSchema = z.record(z.string(), z.enum(['trusted', 'untrusted'])).superRefine((overrides, ctx) => {
+  if ('*' in overrides) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'wildcard provenance overrides are forbidden' })
+  }
+})
+
 const VoiceProviderSchema = z.object({ provider: z.string().min(1), config: z.record(z.string(), z.unknown()).default({}) })
 const VoiceSchema = z.object({
   stt: VoiceProviderSchema.optional(),
@@ -269,6 +275,7 @@ export const ProfileSchema = z.object({
       builtin: z.preprocess((val) => val ?? {}, BuiltinToolsSchema),
       custom: z.record(z.string(), AclEntry).default(() => ({ '*': 'prompt' as const })),
       mcp_servers: z.array(McpServerSchema).default([]),
+      provenance: ProvenanceOverridesSchema.optional(),
       web_search: WebSearchSchema.optional(),
     })
   ),

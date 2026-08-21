@@ -18,4 +18,13 @@ describe('safety profile block', () => {
     })
     expect(profile.safety).toEqual({ enabled: false, timeout_ms: 900, cache_ttl_hours: 2, classifier_model_id: 'cheap', gate_untrusted_actions: false, gate_writes: false })
   })
+
+  it('rejects wildcard provenance overrides', () => {
+    expect(() => ProfileSchema.parse({
+      name: 'bad-provenance',
+      model: { base_url: 'https://example.com', api_key_env: 'KEY', id: 'm' },
+      system_prompt: '/tmp/prompt', artifact_dir: '/tmp/art',
+      tools: { provenance: { '*': 'trusted' } },
+    })).toThrow(/wildcard provenance/i)
+  })
 })

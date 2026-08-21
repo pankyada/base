@@ -129,4 +129,11 @@ describe('Delegate tool', () => {
     expect(runAgentLoop).toHaveBeenCalledOnce()
     expect(destroyMcpClients).toHaveBeenCalledOnce()
   })
+
+  it('propagates parent taint into a delegated run', async () => {
+    vi.mocked(runAgentLoop).mockResolvedValue(undefined)
+    const context = makeContext({ delegateDepth: 0, taintSources: ['MCP inbox'] })
+    await delegateTool.execute({ profile: TEST_PROFILE_NAME, task: 'summarise inbox' }, context)
+    expect(vi.mocked(runAgentLoop).mock.calls[0][3]).toMatchObject({ taintSources: ['MCP inbox'] })
+  })
 })

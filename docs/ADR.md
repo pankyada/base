@@ -64,16 +64,16 @@ pointer to what replaced them.
 | [40](#adr-40) | The poll probe never calls the model | 📋 | triggers |
 | [41](#adr-41) | Coalesce watch events; suppress self-writes | 📋 | triggers |
 | [42](#adr-42) | Overlapping runs skip by default; concurrency cap is global | 📋 | triggers |
-| [43](#adr-43) | Budgets fail closed and are checked before every call | 📋 | autonomy |
-| [44](#adr-44) | ACL predicates are data, from a closed set | 📋 | autonomy |
-| [45](#adr-45) | Audit records *why*, separately from telemetry | 📋 | autonomy |
-| [46](#adr-46) | Undo is best-effort and says so | 📋 | autonomy |
-| [47](#adr-47) | Network-sourced content is untrusted by default | 📋 | provenance |
-| [48](#adr-48) | Taint is stored, monotonic, and human-reset only | 📋 | provenance |
-| [49](#adr-49) | The gate sits after everything; `yolo` cannot bypass it | 📋 | provenance |
-| [50](#adr-50) | Laundering paths are closed explicitly | 📋 | provenance |
-| [51](#adr-51) | The red-team corpus only grows | 📋 | provenance |
-| [52](#adr-52) | Gating is off by default in the harness, on in assistant modes | 📋 | provenance |
+| [43](#adr-43) | Budgets fail closed and are checked before every call | ✅ | autonomy |
+| [44](#adr-44) | ACL predicates are data, from a closed set | ✅ | autonomy |
+| [45](#adr-45) | Audit records *why*, separately from telemetry | ✅ | autonomy |
+| [46](#adr-46) | Undo is best-effort and says so | ✅ | autonomy |
+| [47](#adr-47) | Network-sourced content is untrusted by default | ✅ | provenance |
+| [48](#adr-48) | Taint is stored, monotonic, and human-reset only | ✅ | provenance |
+| [49](#adr-49) | The gate sits after everything; `yolo` cannot bypass it | ✅ | provenance |
+| [50](#adr-50) | Laundering paths are closed explicitly | ✅ | provenance |
+| [51](#adr-51) | The red-team corpus only grows | ✅ | provenance |
+| [52](#adr-52) | Gating is off by default in the harness, on in assistant modes | ✅ | provenance |
 | [53](#adr-53) | Multi-profile shares a process; crash isolation is not claimed | 📋 | server |
 | [54](#adr-54) | MCP connects lazily; the concurrency cap is global | 📋 | server |
 | [55](#adr-55) | Voice ships as interfaces only | 📋 | voice |
@@ -557,7 +557,7 @@ supersedes), and `max_concurrent_runs` enforced globally rather than per profile
 discarded, which is correct — a stale signal has no value.
 
 ### ADR-43
-**Budgets fail closed and are checked before every call** — 📋
+**Budgets fail closed and are checked before every call** — ✅
 
 *Context:* Checking spend after the fact is a receipt, not a budget.
 *Decision:* Cost, tool-count, and wall-clock limits enforced before each model
@@ -567,7 +567,7 @@ children inherit a share of the parent's remainder, never a fresh allowance.
 server is caught by wall time even when cost stays flat.
 
 ### ADR-44
-**ACL predicates are data, from a closed set** — 📋
+**ACL predicates are data, from a closed set** — ✅
 
 *Context:* `allow`/`prompt`/`deny` per tool name cannot express "allow when the
 arguments look like this" — forcing a choice between over-permission and
@@ -581,7 +581,7 @@ rules. A config file that can execute is an attack surface — that is the whole
 reason for the restriction.
 
 ### ADR-45
-**Audit records *why*, separately from telemetry** — 📋
+**Audit records *why*, separately from telemetry** — ✅
 
 *Context:* Telemetry is sampled, aggregate, and disposable. "Why did my assistant
 send that?" needs complete, per-action, permanent data.
@@ -592,7 +592,7 @@ descriptor.
 permitted it. Also supplies the write record [ADR-41](#adr-41) depends on.
 
 ### ADR-46
-**Undo is best-effort and says so** — 📋
+**Undo is best-effort and says so** — ✅
 
 *Context:* A universal undo is not implementable across third-party services.
 *Decision:* Core ships inverses for its own tools; other tools may supply an undo
@@ -606,7 +606,7 @@ explicitly instead of assumed.
 # Provenance
 
 ### ADR-47
-**Network-sourced content is untrusted by default** — 📋
+**Network-sourced content is untrusted by default** — ✅
 
 *Context:* An agent reading email holds instructions from strangers that are
 token-indistinguishable from the user's.
@@ -616,7 +616,7 @@ inbound default to **untrusted**. A tool author who forgets gets the safe answer
 per-tool opt-in. Wildcard trust overrides are not offered.
 
 ### ADR-48
-**Taint is stored, monotonic, and human-reset only** — 📋
+**Taint is stored, monotonic, and human-reset only** — ✅
 
 *Context:* Deriving taint from current context would silently un-taint it through
 elision, digest, or park/resume.
@@ -627,7 +627,7 @@ message. A trigger firing is not a human.
 Requires [ADR-15](#adr-15)'s append-only ledger to be sound.
 
 ### ADR-49
-**The gate sits after everything; `yolo` cannot bypass it** — 📋
+**The gate sits after everything; `yolo` cannot bypass it** — ✅
 
 *Context:* Prompt-level injection defenses are probabilistic; they lower the rate
 without closing the path.
@@ -641,7 +641,7 @@ never *silently* authorize an action. The model may still be fooled; the gate
 holds anyway. It does not protect a user who approves a malicious request.
 
 ### ADR-50
-**Laundering paths are closed explicitly** — 📋
+**Laundering paths are closed explicitly** — ✅
 
 *Context:* A gate on direct action is worthless if the agent can route around it.
 *Decision:* Close all three known paths — memory (writes record the writing
@@ -651,7 +651,7 @@ files (reads of paths written during a tainted turn taint the reader).
 is a permanent CI fixture.
 
 ### ADR-51
-**The red-team corpus only grows** — 📋
+**The red-team corpus only grows** — ✅
 
 *Context:* Injection defenses rot silently; a refactor can reopen a closed path
 with every unit test still green.
@@ -662,7 +662,7 @@ model's refusal.
 *Consequences:* Defenses are regression-tested rather than assumed.
 
 ### ADR-52
-**Gating is off by default in the harness, on in assistant modes** — 📋
+**Gating is off by default in the harness, on in assistant modes** — ✅
 
 *Context:* A developer profile reading its own repo and running its own shell
 does not need this, and defaulting it on would break existing profiles.
