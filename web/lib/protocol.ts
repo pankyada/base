@@ -171,7 +171,7 @@ export type ClientMessage =
   | { type: 'plan_request'; content: string }
   | { type: 'cancel' }
   | { type: 'resume'; sessionId: string }
-  | { type: 'tool_approve'; id: string }
+  | { type: 'tool_approve'; id: string; remember?: boolean }
   | { type: 'tool_deny'; id: string }
   | { type: 'input_response'; id: string; value: string }
   | { type: 'code_result'; id: string; stdout: string; stderr: string; exit_code: number; files: Record<string, string> }
@@ -204,6 +204,7 @@ export type ServerMessage =
   | { type: 'tool_end'; id: string; name: string; result: string; ok?: boolean; run_id?: string }
   | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown>; run_id?: string }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; run_id?: string }
+  | { type: 'tool_auto_approved'; id: string; name: string; scope: 'session'; run_id?: string }
   | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; yolo: boolean; protocol_version?: number }
   | { type: 'session_end'; sessionId: string; run_id?: string }
   | { type: 'session_resumed'; sessionId: string }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approvalSummary, requiresDangerConfirmation } from '../components/ops/ApprovalQueue'
+import { approvalSummary, autoApprovalNotice, requiresDangerConfirmation } from '../components/ops/ApprovalQueue'
 import { previewToolInput } from '../components/ApprovalModal'
 
 describe('approval queue', () => {
@@ -15,5 +15,9 @@ describe('approval queue', () => {
   it('previews tool arguments with effect-specific fields', () => {
     expect(previewToolInput('Bash', { command: 'ls', cwd: '/tmp' })).toContain('cwd')
     expect(previewToolInput('Write', { path: 'a.txt', content: 'x' })).toContain('a.txt')
+  })
+
+  it('labels session-scoped auto approval from server message', () => {
+    expect(autoApprovalNotice('Read', 'session')).toContain('scope: session')
   })
 })

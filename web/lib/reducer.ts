@@ -182,6 +182,7 @@ export function reducer(state: State, action: Action): State {
           return next
         })
         case 'tool_prompt': { const item = { id: msg.id, name: msg.name, input: msg.input, risk: msg.risk, reason: msg.reason }; const queue = [...(state.approvalQueue ?? []), item]; return { ...state, approvalQueue: queue, pendingApproval: state.pendingApproval ?? item } }
+        case 'tool_auto_approved': return { ...state, notices: [...(state.notices ?? []), { level: 'info', message: msg.name + ' auto-approved · scope: ' + msg.scope }] }
         case 'input_request': return { ...state, pendingInputRequest: { id: msg.id, prompt: msg.prompt, kind: msg.kind, options: msg.options } }
         case 'todos': return { ...state, todos: msg.todos }
         case 'session_ready': return { ...state, profile: msg.profile, sessionId: msg.sessionId, currentModel: msg.model, allowedPackages: msg.allowed_packages ?? [], approvalMode: state.approvalMode }

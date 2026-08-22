@@ -51,6 +51,7 @@ import { VoiceInput } from '../voice/input.js'
 import { VoiceTurn } from '../voice/session.js'
 import { VoiceOutput } from '../voice/output.js'
 import { isYoloEnabled, resolveApprovalLimit, resolveRequestedApprovalMode } from './approval-mode.js'
+import { SessionApprovalGrants } from './session-approvals.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -301,10 +302,24 @@ async function main() {
       : new FsMemoryProvider(profile.artifact_dir, session)
     let usageAtConnectionStart = { ...session.usage }
     let abortController = new AbortController()
-    const pendingApprovals = new Map<string, (approved: boolean) => void>()
+    const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void; name: string }>()
+    const sessionApprovalGrants = new SessionApprovalGrants()
     const pendingInputRequests = new Map<string, (value: string) => void>()
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     const pendingRenders = new Map<string, (result: any) => void>()
+
+    const requestToolApproval = (sendForRun: (message: any) => void, id: string, name: string, input: Record<string, unknown>, risk?: 'safe' | 'caution' | 'danger', reason?: string): Promise<boolean> => new Promise(resolve => {
+      // This callback is reached only after ACL resolution produced a prompt.
+      // Session grants never widen a deny decision; deny never reaches this path.
+      const grant = sessionApprovalGrants.check(name, 'prompt')
+      if (grant) {
+        sendForRun({ type: 'tool_auto_approved', id, name: grant.name, scope: grant.scope })
+        resolve(true)
+        return
+      }
+      pendingApprovals.set(id, { resolve, name })
+      sendForRun({ type: 'tool_prompt', id, name, input, risk, reason })
+    })
 
     const resolvePendingClientWork = (reason: string): void => {
       for (const [id, resolve] of pendingCodeExecutions) {
@@ -418,10 +433,7 @@ async function main() {
         onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
         onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
         onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
-        onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(resolve => {
-          pendingApprovals.set(id, resolve)
-          sendForRun({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
-        }),
+        onToolPrompt: (id, n, i, risk, reason) => requestToolApproval(sendForRun, id, n, i, risk, reason),
         onSessionEnd: () => {},
         onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
         onInputRequest: (id, prompt, kind, options) => requestInput(runId, prompt, kind, options, id),
@@ -498,10 +510,10 @@ async function main() {
           userId = sanitizeUserId(msg.user_id)
           wasmSupported = msg.wasm_supported ?? false
           audioSupported = msg.audio_supported ?? false
-          const error = await activateProfile(msg.profile, msg.yolo ?? false)
+          const error = await activateProfile(msg.profile)
           if (error) { send({ type: 'error', message: error }); return }
         }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: msg.yolo ?? false, protocol_version: PROTOCOL_VERSION })
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, allowed_packages: connectionProfile.executor?.allowed_packages ?? [], yolo: isYoloEnabled(approvalMode), protocol_version: PROTOCOL_VERSION })
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -510,7 +522,7 @@ async function main() {
       if (msg.type === 'set_profile') {
         const error = await activateProfile(msg.profile)
         if (error) { send({ type: 'error', message: error }); return }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, yolo: false, protocol_version: PROTOCOL_VERSION })
+        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, allowed_packages: connectionProfile.executor?.allowed_packages ?? [], yolo: isYoloEnabled(approvalMode), protocol_version: PROTOCOL_VERSION })
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -590,10 +602,7 @@ async function main() {
             onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
             onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
             onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
-            onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(resolve => {
-              pendingApprovals.set(id, resolve)
-              sendForRun({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
-            }),
+            onToolPrompt: (id, n, i, risk, reason) => requestToolApproval(sendForRun, id, n, i, risk, reason),
             onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
             onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
             onInputRequest: (id, prompt, kind, options) => requestInput(resumedRunId, prompt, kind, options, id),
@@ -607,11 +616,16 @@ async function main() {
       }
 
       if (msg.type === 'set_approval_mode') {
-        if (msg.mode !== 'strict' && msg.mode !== 'bash' && msg.mode !== 'danger' && msg.mode !== 'yolo') {
+        const requested = resolveRequestedApprovalMode(msg.mode, approvalLimit)
+        if (!requested) {
           send({ type: 'notice', level: 'error', message: 'unknown approval mode', detail: 'use strict, bash, danger, or yolo' })
           return
         }
-        approvalMode = msg.mode
+        if (!requested.ok) {
+          send({ type: 'notice', level: 'warn', message: `approval mode ${msg.mode} exceeds the server limit`, detail: `maximum allowed mode is ${approvalLimit}` })
+          return
+        }
+        approvalMode = requested.mode
         send({ type: 'approval_mode_changed', mode: approvalMode })
         return
       }
@@ -619,6 +633,13 @@ async function main() {
       if (msg.type === 'models_list') {
         const activeProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
         send({ type: 'models', models: listModels(activeProfile), current: connectionModel })
+        return
+      }
+
+      if (msg.type === 'profiles_list') {
+        const available = [...profiles.values()].map(item => ({ name: item.name, description: item.description, mode: item.mode }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+        send({ type: 'profiles', profiles: available, current: connectionProfile.name })
         return
       }
 
@@ -742,8 +763,9 @@ async function main() {
       if (msg.type === 'cancel') {
         abortController.abort()
         abortController = new AbortController()
-		for (const resolve of pendingApprovals.values()) resolve(false)
+		for (const pending of pendingApprovals.values()) pending.resolve(false)
 		pendingApprovals.clear()
+        sessionApprovalGrants.clear()
 		for (const resolve of pendingInputRequests.values()) resolve('')
 		pendingInputRequests.clear()
         resolvePendingClientWork('Client cancelled the request.')
@@ -751,8 +773,12 @@ async function main() {
       }
 
       if (msg.type === 'tool_approve' || msg.type === 'tool_deny') {
-        const cb = pendingApprovals.get(msg.id)
-        if (cb) { pendingApprovals.delete(msg.id); cb(msg.type === 'tool_approve') }
+        const pending = pendingApprovals.get(msg.id)
+        if (pending) {
+          pendingApprovals.delete(msg.id)
+          if (msg.type === 'tool_approve' && msg.remember) sessionApprovalGrants.remember(pending.name, 'prompt')
+          pending.resolve(msg.type === 'tool_approve')
+        }
         return
       }
 
@@ -847,10 +873,7 @@ async function main() {
           onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
           onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
           onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
-          onToolPrompt: (id, n, i, risk, reason) => new Promise<boolean>(res => {
-            pendingApprovals.set(id, res)
-            sendForRun({ type: 'tool_prompt', id, name: n, input: i, risk, reason })
-          }),
+          onToolPrompt: (id, n, i, risk, reason) => requestToolApproval(sendForRun, id, n, i, risk, reason),
           onSessionEnd: (id) => {
             voiceOutput?.end()
             saveSession(session)
@@ -926,8 +949,9 @@ async function main() {
 
     ws.on('close', () => {
       openSockets.delete(ws)
-	  for (const resolve of pendingApprovals.values()) resolve(false)
+	  for (const pending of pendingApprovals.values()) pending.resolve(false)
 	  pendingApprovals.clear()
+      sessionApprovalGrants.clear()
 	  for (const resolve of pendingInputRequests.values()) resolve('')
 	  pendingInputRequests.clear()
       resolvePendingClientWork('Client disconnected before completion.')
