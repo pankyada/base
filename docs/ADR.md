@@ -867,3 +867,42 @@ plan stage; build, verify, and review remain profile-governed.
 *Consequences:* Stage safety is enforced centrally for interactive, delegated,
 and workflow runs. Profiles without a stage remain behaviorally unchanged, and
 the overlay adds no profile schema or dependency surface.
+
+### ADR-68
+**Canvas pins persist in browser storage, not the harness state directory** — ✅
+
+*Context:* Canvas layout is a browser presentation concern, while artifact
+payloads remain session-owned and can be rehydrated from the read APIs.
+*Decision:* Store pin order, panel sizes, and the last-good payload reference in
+`localStorage` keyed by session and artifact id. Never write canvas state through
+REST; refresh remains an explicit client action.
+*Consequences:* Reload preserves the analyst layout without adding a server
+write endpoint. Clearing browser storage drops pins but does not delete source
+artifacts or session history.
+
+### ADR-69
+**Browser transport uses an exact origin allowlist with an explicit browserless branch** — ✅
+
+*Context:* WebSocket upgrades do not receive browser same-origin protection, so any
+local page could otherwise connect to the harness; TUI and CLI clients do not send an
+`Origin` header.
+*Decision:* Validate `Origin` before WebSocket upgrade acceptance and before REST route
+matching. `HARNESS_ALLOWED_ORIGINS` is an exact-match comma-separated allowlist with
+localhost defaults; missing `Origin` is accepted only through the explicit
+browserless policy branch, and `*` is an operator-visible escape hatch.
+*Consequences:* Browser exposure is bounded by configuration without breaking
+browserless clients. Origin rejections are counted for `/health` and logged as
+security events.
+
+### ADR-70
+**Approval mode is server-authoritative and bounded by profile trust** — ✅
+
+*Context:* A browser-controlled `hello.yolo` flag must not widen a profile's ACL, and
+the existing mode defaults did not cover every non-developer profile.
+*Decision:* Resolve the effective approval ceiling as the strictest of selected
+profile, `HARNESS_APPROVAL_MODE`, and a trust ceiling. `developer` and mode-less
+profiles may reach `yolo`; `analyst`, `assistant`, and `production` cap at `danger`.
+Client requests can only move to a stricter mode, and `hello.yolo` is ignored.
+*Consequences:* Browser clients cannot grant themselves bypass authority. Existing
+non-developer profiles stay bounded even when deployment configuration requests
+`yolo`; the behavior is documented as a breaking approval change.

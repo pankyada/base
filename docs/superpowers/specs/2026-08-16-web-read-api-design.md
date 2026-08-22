@@ -277,6 +277,8 @@ offending origin, which is a security event, not an access log.
 1. Should `/metrics` accept `group=` combinations, or ship four fixed shapes?
    Fixed shapes are proposed; combinations invite a query language.
 2. Parquet: dependency-free reader, or opaque-store-only for v1?
+   **Resolution (2026-08-16):** Opaque-store-only shipped for v1; schema and
+   preview remain empty until an analyst-side execution profiles the file.
 3. Does `/triggers` eventually need `POST /triggers/:name/fire`? Useful, but it is
    a *write* over HTTP against the scheduler — deferred until the console proves
    the need.

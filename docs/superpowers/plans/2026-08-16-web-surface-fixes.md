@@ -2,7 +2,7 @@
 
 **Generated**: 2026-08-16
 **Estimated Complexity**: Medium (4 sprints; one is security-critical and should land first)
-**Status**: proposed — not started
+**Status**: F1, F2, F7, and F8 verified in the #25/#26 completion pass; F3–F6 remain scoped to the later #27/#28 work.
 
 ## Overview
 
@@ -341,13 +341,13 @@ Independent of S1–S3; can run any time, including in parallel.
 
 ## Validation checklist
 
-- [ ] `resolveApprovalLimit` caps `analyst`/`assistant`/`production` at `danger` even when `yolo` is requested; `developer` and mode-less profiles are unaffected.
-- [ ] A `Bash` call under `mode: assistant` stays denied even with `approval_mode: yolo` requested.
-- [ ] `DELETE /datasets/:id` works end-to-end through the HTTP handler, including 404s.
+- [x] `resolveApprovalLimit` caps `analyst`/`assistant`/`production` at `danger` even when `yolo` is requested; `developer` and mode-less profiles are unaffected.
+- [x] A `Bash` call under `mode: assistant` stays denied even with `approval_mode: yolo` requested.
+- [x] `DELETE /datasets/:id` works end-to-end through the HTTP handler, including 404s.
 - [ ] A pinned artifact renders as its real widget on the canvas.
 - [ ] Canvas state survives a reload, scoped per project, with an oversized-artifact truncation path that doesn't throw.
 - [ ] Canvas export and session export are both reachable by clicking something, not only by calling a function in a test.
 - [ ] A `<script>`-bearing transcript turn cannot execute in an exported session HTML file.
-- [ ] Surface sandbox attribute is asserted exact-string; ideally the six-entry corpus is proven to actually fail against a weakened sandbox.
-- [ ] Every design doc's touched open question carries a dated resolution note; untouched ones remain visibly open.
+- [x] Surface sandbox attribute is asserted exact-string; the interim unit-test floor is the selected validation path for this pass.
+- [x] Every design doc's touched open question carries a dated resolution note; untouched ones remain visibly open.
 - [ ] `pnpm typecheck && pnpm test && ./scripts/check-boundary.sh` and `pnpm --filter harness-web typecheck && pnpm --filter harness-web test` all green.

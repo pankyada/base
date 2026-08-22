@@ -210,6 +210,11 @@ Surface isolation requirements (non-negotiable, enforced by test):
   (`src/tools/builtin/render-ui.ts:5`); the host enforces the same bound before
   mounting so a compromised server cannot wedge the tab.
 
+**Resolution (2026-08-16):** This fix pass ships the sanctioned strict
+`sandbox="allow-scripts"` attribute test. A full browser-driven six-entry escape
+corpus remains follow-up work because the current web unit-test command has no
+headless browser runner.
+
 ---
 
 ## 5. Design tokens v2
@@ -271,11 +276,15 @@ Shape only, here:
 1. **Chart implementation** — hand-rolled SVG (no dep, full token control, more
    code) versus a small library. Plan assumes hand-rolled SVG for the eight marks;
    revisit if the kit exceeds ~800 LOC.
+   **Resolution (2026-08-16):** Hand-rolled SVG shipped in Phase 2; the fixed
+   widget kit remains dependency-free.
 2. **Transcript rehydration bound** — replaying a long ledger into the reducer may
    be slow. Cap at the last N turns with an explicit "load earlier" affordance?
 3. **Canvas persistence** — pinned dashboards as project memory records, or a new
    `~/.harness/canvas/` store? Memory scope avoids a new persistence concept but
    makes non-fact data live in a fact store.
+   **Resolution (2026-08-16):** Per-project browser `localStorage` shipped. Canvas
+   layout is view configuration, not memory, and stays out of server persistence.
 4. **Does the web client host `ExecuteCode` for unattended runs?** A browser tab is
    an unreliable executor. Proposal: WASM only while a tab is attached; server
    executors otherwise — already the `executor.fallback` contract, needs testing.

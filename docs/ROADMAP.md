@@ -535,7 +535,7 @@ Measured gap at time of writing:
 
 ---
 
-### ❌ 25. Transport hardening & read APIs
+### ✅ 25. Transport hardening & read APIs
 
 **Ships first, and is worth shipping even if nothing else in this track does** —
 the exposure exists whether or not the web client is used.
@@ -559,7 +559,7 @@ surface. And a localhost-only posture is only a posture if the transport holds.
 
 ---
 
-### ❌ 26. Web protocol parity
+### ✅ 26. Web protocol parity
 
 **To build:**
 - `web/lib/protocol.ts` generated from `src/types.ts` with a CI freshness check — the hand-copied duplicate in `web/lib/types.ts` is the root cause of the drift
@@ -676,12 +676,12 @@ keeps that safe when the agent is reading other people's content. Shipping the
 first without the second is the one ordering mistake in this track that produces
 a genuinely dangerous build.
 
-Web surface track — **next up is #25**:
+Web surface track — **next up is #27**:
 
 ```
-#25 transport hardening + read APIs   ← ships alone; fixes a live exposure
+#25 transport hardening + read APIs   ✅
   ↓
-#26 protocol parity ──────────┐
+#26 protocol parity            ✅
   ↓                           │  #26 and #27 are the floor for the three faces
 #27 surfaces + widget kit ────┘
   ↓

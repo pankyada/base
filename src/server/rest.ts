@@ -18,6 +18,8 @@ import type { ChannelRuntime } from '../channels/runtime.js'
 import { PendingStore } from '../runs/pending.js'
 import { isParkSignal } from '../runs/park.js'
 import { resumeCancelledInput, resumePendingInput } from '../runs/resume.js'
+import { checkOrigin, loadOriginPolicy, type OriginPolicy } from './origin.js'
+import { createReadApiHandler, type ReadApiDeps } from './read-api.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
@@ -33,6 +35,8 @@ export interface RestDeps {
   /** Resolve channel ownership after the request profile has been selected. */
   channelsForProfile?: (profile: Profile) => ChannelRuntime | undefined
   pendingStore?: PendingStore
+  originPolicy?: OriginPolicy
+  readApi?: Partial<Omit<ReadApiDeps, 'defaultProfile' | 'profiles'>>
 }
 
 interface AgentCard {
@@ -273,6 +277,15 @@ function handleListPending(req: IncomingMessage, res: ServerResponse, deps: Rest
   const pending = store.list({ user: params.get('user') ?? undefined, state: (params.get('state') ?? undefined) as any })
     .map(({ path: _path, ...record }) => record)
   sendJson(res, 200, { pending })
+}
+
+function handleListChannels(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
+  const rawUrl = req.url ?? '/channels'
+  const [, query = ''] = rawUrl.split('?')
+  const params = new URLSearchParams(query)
+  const user = sanitizeUserId(params.get('user') ?? process.env.HARNESS_USER ?? 'anonymous')
+  const runtime = channelsFor(deps, deps.defaultProfile)
+  sendJson(res, 200, { channels: runtime?.statusForUser(user) ?? [] })
 }
 
 async function handleAnswerPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps, runId: string): Promise<void> {

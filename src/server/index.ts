@@ -1,6 +1,7 @@
 import { createServer } from 'http'
 import { randomUUID } from 'crypto'
 import { createRestHandler } from './rest.js'
+import { checkOrigin, loadOriginPolicy } from './origin.js'
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir, userInfo } from 'os'
@@ -13,7 +14,7 @@ import { TriggerManager } from '../triggers/manager.js'
 import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
-import { loadProfile, applyModeDefaults } from '../profiles/loader.js'
+import { loadProfile } from '../profiles/loader.js'
 import { loadProfileDirectory } from '../profiles/registry.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
@@ -49,6 +50,7 @@ import { registerServer, serverRecordFor, unregisterServer } from './process-reg
 import { VoiceInput } from '../voice/input.js'
 import { VoiceTurn } from '../voice/session.js'
 import { VoiceOutput } from '../voice/output.js'
+import { isYoloEnabled, resolveApprovalLimit, resolveRequestedApprovalMode } from './approval-mode.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -102,6 +104,7 @@ async function main() {
   if (profiles.size > 1 && !defaultName) console.warn(`[profiles] no --default-profile supplied; using ${profile.name}`)
   const channelsByProfile = new Map([...profiles.values()].map(item => [item.name, new ChannelRuntime(item)]))
   const channels = channelsByProfile.get(profile.name)!
+  const originPolicy = loadOriginPolicy()
   const runStore = new RunStore()
   const pendingStore = new PendingStore()
   const abortRegistry = new Map<string, AbortController>()
@@ -249,11 +252,19 @@ async function main() {
   for (const scheduler of schedulers) scheduler.init()
   for (const owner of profiles.values()) if (owner.triggers?.cron) console.log(`[cron] registered schedule '${owner.triggers.cron}' for profile '${owner.name}'`)
 
-  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore })
+  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore, originPolicy })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: (info, cb) => {
+      const header = info.req.headers.origin
+      const origin = typeof header === 'string' ? header : header ? '__invalid_origin__' : undefined
+      const originResult = checkOrigin(origin, originPolicy)
+      if (!originResult.ok) {
+        console.warn(`[origin] rejected WebSocket upgrade: ${origin ?? 'missing'} (${originResult.reason})`)
+        cb(false, 403, 'Forbidden')
+        return
+      }
       if (!apiKey) {
         cb(true)  // no key set → open dev mode
         return
@@ -314,11 +325,12 @@ async function main() {
     let voiceTurn: VoiceTurn | null = null
     let voiceOutput: VoiceOutput | null = null
     let baseProfile = profile
-    let connectionProfile = profile  // may be overridden to developer mode via yolo
+    let connectionProfile = profile
     let connectionChannels = channels
     let connectionOpenai = openai
     let connectionImprover = improver
     let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
+    let approvalLimit: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let connectionModel = profile.model.id
     let miningSkills = false
     let safetyDisclosed = false
@@ -327,12 +339,13 @@ async function main() {
       connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
     }
 
-    const activateProfile = async (name: string | undefined, yolo = false): Promise<string | null> => {
+    const activateProfile = async (name: string | undefined): Promise<string | null> => {
       const selected = name ? profiles.get(name) : profile
       if (!selected) return `unknown profile "${name}"; available: ${[...profiles.keys()].sort().join(', ')}`
       baseProfile = selected
-      connectionProfile = yolo ? applyModeDefaults({ ...selected, mode: 'developer' }) : selected
-      approvalMode = yolo ? 'yolo' : 'danger'
+      connectionProfile = selected
+      approvalLimit = resolveApprovalLimit(connectionProfile)
+      approvalMode = approvalLimit
       connectionModel = connectionProfile.model.id
       connectionOpenai = createProviderClient(connectionProfile)
       connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
@@ -553,7 +566,7 @@ async function main() {
       }
 
       if (msg.type === 'undo_apply') {
-        const notice = await undoNotice(userId, session.id, msg.id, connectionProfile, msg.force)
+        const notice = await undoNotice(userId, session.id, msg.id, connectionProfile, msg.force, msg.reason)
         send({ type: 'notice', level: notice.level, message: notice.message })
         send({ type: 'undo_entries', entries: listUndoEntries(userId, session.id) })
         return

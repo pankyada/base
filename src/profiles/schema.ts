@@ -334,6 +334,7 @@ export const ProfileSchema = z.object({
   }).optional(),
   executor: ExecutorSchema.optional(),
   mode: z.enum(['developer', 'analyst', 'assistant', 'production']).optional(),
+  approval_mode: z.enum(['strict', 'bash', 'danger', 'yolo']).optional(),
   channels: z.array(ChannelSchema).optional(),
   voice: VoiceSchema,
   mcp: McpRuntimeSchema,
