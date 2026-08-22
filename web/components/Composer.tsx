@@ -6,9 +6,12 @@ interface Props {
   onSubmit: () => void
   busy: boolean
   compact: boolean
+  onCancel?: () => void
+  onCompact?: () => void
+  compactOffer?: boolean
 }
 
-export function Composer({ value, onChange, onSubmit, busy, compact }: Props) {
+export function Composer({ value, onChange, onSubmit, busy, compact, onCancel, onCompact, compactOffer }: Props) {
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -35,6 +38,8 @@ export function Composer({ value, onChange, onSubmit, busy, compact }: Props) {
           </div>
         )}
       </div>
+      {busy && onCancel ? <button type="button" onClick={onCancel}>cancel</button> : null}
+      {!busy && compactOffer && onCompact ? <button type="button" onClick={onCompact}>compact</button> : null}
     </div>
   )
 }

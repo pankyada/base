@@ -1,7 +1,19 @@
 import { useState, useEffect, KeyboardEvent } from 'react'
-import { Project, SessionSummary } from '../lib/types'
+import type { ApprovalMode, CommandSummary, ModelInfo, Project, SessionSummary } from '../lib/types'
+import type { ProfileInfo } from '../lib/protocol'
 
-export type PaletteMode = 'root' | 'project_switch' | 'project_new' | 'history' | 'history_all' | 'assign'
+export type PaletteMode = 'root' | 'project_switch' | 'project_new' | 'history' | 'history_all' | 'assign' | 'models' | 'profiles'
+
+export interface ModelRow { key: string; label: string; disabled: boolean; act: () => void }
+export function modelRows(models: ModelInfo[], onSetModel: (id: string) => void): ModelRow[] {
+  return models.map(model => ({ key: model.id, label: `${model.label} · $${model.input_price}/$${model.output_price}${model.available ? '' : ` · unavailable${model.reason ? ` (${model.reason})` : ''}`}`, disabled: !model.available, act: () => { if (model.available) onSetModel(model.id) } }))
+}
+
+export interface ProfileRow { key: string; label: string; disabled: boolean; act: () => void }
+export function profileRows(profiles: ProfileInfo[], onSetProfile: (name: string) => void): ProfileRow[] {
+  return profiles.map(p => ({ key: p.name, label: `${p.name}${p.mode ? ` · ${p.mode}` : ''}${p.description ? ` · ${p.description}` : ''}`, disabled: false, act: () => onSetProfile(p.name) }))
+}
+export function shouldOfferCompact(tokens: number | undefined, window: number | undefined): boolean { return tokens != null && window != null && window > 0 && tokens / window >= 0.8 }
 
 interface Props {
   onClose: () => void
@@ -16,6 +28,13 @@ interface Props {
   onNewProject: (name: string) => void
   onResume: (sessionId: string, project: string) => void
   onAssign: (projectId: string) => void
+  models?: ModelInfo[]
+  commands?: CommandSummary[]
+  onSetModel?: (model: string) => void
+  profiles?: ProfileInfo[]
+  onSetProfile?: (name: string) => void
+  approvalMode?: ApprovalMode
+  onSetApprovalMode?: (mode: ApprovalMode) => void
 }
 
 const RUN_SCENARIOS = [
@@ -40,6 +59,8 @@ const MODE_LABEL: Record<PaletteMode, string> = {
   history: 'History',
   history_all: 'All history',
   assign: 'Move to project',
+  models: 'Switch model',
+  profiles: 'Switch profile',
 }
 
 export function Palette(props: Props) {
@@ -68,6 +89,9 @@ export function Palette(props: Props) {
       ...RUN_SCENARIOS.map(s => ({ key: s.id, label: s.title, group: 'RUN TASK', act: () => { onRun(s.id); onClose() } })),
       { key: 'reset', label: 'Clear Session', group: 'SESSION', act: () => { onReset(); onClose() } },
       ...ROOT_COMMANDS.map(c => ({ key: c.id, label: c.title, group: c.group, act: () => setMode(c.mode) })),
+      ...(props.models?.length ? [{ key: 'models', label: 'Switch model…', group: 'MODEL', act: () => setMode('models') }] : []),
+      ...(props.profiles && props.profiles.length > 1 ? [{ key: 'profiles', label: 'Switch profile…', group: 'PROFILE', act: () => setMode('profiles') }] : []),
+      ...(props.commands ?? []).map(command => ({ key: `command:${command.name}`, label: `/${command.name} · ${command.description}`, group: 'COMMAND', act: () => { onRun(command.template); onClose() } })),
     ].filter(r => r.label.toLowerCase().includes(lower))
   } else if (mode === 'project_switch') {
     rows = projects.filter(p => p.name.toLowerCase().includes(lower))
@@ -79,6 +103,10 @@ export function Palette(props: Props) {
     rows = history
       .filter(h => (h.title ?? h.id).toLowerCase().includes(lower))
       .map(h => ({ key: h.id, label: h.title ?? h.id.slice(0, 8), group: h.summary, act: () => { props.onResume(h.id, h.project); onClose() } }))
+  } else if (mode === 'models') {
+    rows = modelRows(props.models ?? [], model => { props.onSetModel?.(model); onClose() })
+  } else if (mode === 'profiles') {
+    rows = profileRows(props.profiles ?? [], name => { props.onSetProfile?.(name); onClose() })
   }
 
   const submitNewProject = () => {
@@ -115,6 +143,11 @@ export function Palette(props: Props) {
           placeholder={placeholder}
           style={{ padding: '1rem', background: 'transparent', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--text)', outline: 'none' }}
         />
+        {props.approvalMode && props.onSetApprovalMode ? <label style={{ padding: '0.4rem 1rem', color: 'var(--dim)', fontSize: '0.75rem' }}>approval
+          <select value={props.approvalMode} onChange={event => props.onSetApprovalMode?.(event.target.value as ApprovalMode)} style={{ marginLeft: '0.5rem', background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+            {(['strict', 'bash', 'danger', 'yolo'] as ApprovalMode[]).map(modeValue => <option key={modeValue} value={modeValue}>{modeValue}</option>)}
+          </select>
+        </label> : null}
         <div style={{ overflowY: 'auto' }}>
           {mode === 'project_new' ? (
             <div style={{ padding: '0.75rem 1rem', color: 'var(--dim)', fontSize: '0.85rem' }}>Type a name and press Enter to create.</div>

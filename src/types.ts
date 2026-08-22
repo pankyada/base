@@ -50,6 +50,12 @@ export interface ModelInfo {
   reason?: string
 }
 
+export interface ProfileInfo {
+  name: string
+  description?: string
+  mode?: 'developer' | 'analyst' | 'assistant' | 'production'
+}
+
 export interface SkillSummary {
   name: string
   description: string
@@ -150,7 +156,7 @@ export interface OutcomeEvent extends Omit<TelemetryEvent, 'kind'> {
 export const PROTOCOL_VERSION = 2
 
 export type ClientMessage =
-  | { type: 'hello'; user_id: string; protocol_version?: number; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean }
+  | { type: 'hello'; user_id: string; protocol_version?: number; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean /** Ignored: approval mode is server-authoritative. */ }
   | { type: 'set_profile'; profile: string }
   | { type: 'audio_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
   | { type: 'audio_end' }
@@ -170,6 +176,7 @@ export type ClientMessage =
   | { type: 'session_list'; projectId?: string }
   | { type: 'models_list' }
   | { type: 'set_model'; model: string }
+  | { type: 'profiles_list' }
   | { type: 'set_approval_mode'; mode: ApprovalMode }
   | { type: 'skills_list' }
   | { type: 'commands_list' }
@@ -182,7 +189,7 @@ export type ClientMessage =
   | { type: 'pending_list' }
   | { type: 'pending_answer'; pending_id: string; value: string }
   | { type: 'undo_list' }
-  | { type: 'undo_apply'; id: string; force?: boolean }
+  | { type: 'undo_apply'; id: string; force?: boolean; reason?: string }
 
 export type ServerMessage =
   | { type: 'turn_start'; run_id: string }
@@ -191,7 +198,7 @@ export type ServerMessage =
   | { type: 'tool_end'; id: string; name: string; result: string; ok?: boolean; run_id?: string }
   | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown>; run_id?: string }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; run_id?: string }
-  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; yolo: boolean; protocol_version?: number }
+  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; yolo: boolean; protocol_version?: number }
   | { type: 'session_end'; sessionId: string; run_id?: string }
   | { type: 'session_resumed'; sessionId: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; run_id?: string }
@@ -205,6 +212,7 @@ export type ServerMessage =
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
   | { type: 'models'; models: ModelInfo[]; current: string }
+  | { type: 'profiles'; profiles: ProfileInfo[]; current: string }
   | { type: 'model_changed'; model: string }
   | { type: 'approval_mode_changed'; mode: ApprovalMode }
   | { type: 'skills'; proposed: SkillSummary[]; installed: SkillSummary[] }
@@ -220,7 +228,7 @@ export type ServerMessage =
   | { type: 'audio_out_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
   | { type: 'audio_out_end'; reason: 'complete' | 'interrupted' | 'error' }
 
-export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
+export type ArtifactKind = 'metrics' | 'bar' | 'line' | 'area' | 'scatter' | 'histogram' | 'heatmap' | 'box' | 'correlation' | 'table' | 'filetree' | 'diff' | 'terminal' | 'doc' | 'research'
 
 export interface ArtifactWidget {
   id: string

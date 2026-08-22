@@ -3,7 +3,7 @@ import { useRef, useState, useEffect, useCallback } from 'react'
 import type { ClientMessage, ServerMessage } from '../lib/types'
 
 interface Options {
-  yolo?: boolean
+  userId?: string
 }
 
 export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void, opts: Options = {}) {
@@ -24,10 +24,9 @@ export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void,
       backoff.current = 1000
       sock.send(JSON.stringify({
         type: 'hello',
-        user_id: 'web-user',
         protocol_version: 2,
         wasm_supported: true,
-        yolo: optsRef.current.yolo ?? false,
+        user_id: optsRef.current.userId ?? 'web-user',
       }))
     }
     sock.onmessage = e => { try { onMessageRef.current(JSON.parse(e.data)) } catch {} }
@@ -41,7 +40,6 @@ export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void,
     sock.onerror = () => setStatus('error')
   }, [url])
 
-  // Reconnect when yolo changes so a new hello is sent with the updated flag
   useEffect(() => {
     const sock = ws.current
     ws.current = null
@@ -52,7 +50,7 @@ export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void,
       ws.current = null
       s?.close()
     }
-  }, [connect, opts.yolo])
+  }, [connect, opts.userId])
 
   const send = useCallback((msg: ClientMessage) => {
     if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(msg))
