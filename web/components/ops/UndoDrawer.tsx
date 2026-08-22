@@ -1,0 +1,5 @@
+'use client'
+
+export function undoLabel(entry: { available: boolean; applied: boolean }): string { return entry.applied ? 'applied' : entry.available ? 'available' : 'stale' }
+export function undoEmptyLabel(entries: unknown[]): string { return entries.length ? '' : 'No undo entries' }
+export function UndoDrawer({ entries = [], onUndo }: { entries?: { id: string; tool: string; target: string; available: boolean; applied: boolean; forceable: boolean }[]; onUndo?: (id: string, force: boolean, reason?: string) => void }) { return <section className="undo-drawer"><h2>Undo</h2>{entries.length === 0 ? <p>{undoEmptyLabel(entries)}</p> : entries.map(entry => <article key={entry.id}><strong>{entry.tool}</strong><span>{entry.target} · {undoLabel(entry)}</span>{entry.available ? <button onClick={() => onUndo?.(entry.id, false)}>undo</button> : entry.forceable ? <button onClick={() => { const reason = window.prompt('Reason for forcing stale undo?'); if (reason?.trim()) onUndo?.(entry.id, true, reason.trim()) }}>force</button> : null}</article>)}</section> }

@@ -12,6 +12,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "harness-docs", "preview", "--port", "4174"],
       "port": 4174
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "harness-web", "dev"],
+      "port": 3000
     }
   ]
 }

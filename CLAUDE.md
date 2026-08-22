@@ -92,7 +92,8 @@ Example profiles in `profiles/` (each demonstrates a distinct harness feature):
 | Profile | Feature | Model |
 |---------|---------|-------|
 | `coding.yaml` | Baseline dev assistant | gpt-5.4-mini |
-| `data.yaml` | Read-only data analysis | gpt-4o |
+| `data.yaml` | Data analyst — `mode: analyst`, read-only SQL/reports | gpt-4o |
+| `assistant.yaml` | Personal assistant — `mode: assistant`, read-only + memory | claude-sonnet-4-6 |
 | `devops.yaml` | Cron trigger + GitHub/log MCP | claude-sonnet-4-6 |
 | `research.yaml` | `agents:` block — orchestrator + 2 workers | claude-opus-4-8 |
 | `researcher.yaml` | Worker: fetch + brave-search MCP | claude-sonnet-4-6 |
@@ -100,7 +101,7 @@ Example profiles in `profiles/` (each demonstrates a distinct harness feature):
 | `writer.yaml` | Typed I/O contract + `on_stop` git hook | claude-sonnet-4-6 |
 | `security.yaml` | Webhook trigger + read-only ACL | claude-opus-4-8 |
 
-All Anthropic profiles use `base_url: https://api.anthropic.com/v1` (OpenAI-compatible endpoint). No `mode:` field is used — `applyModeDefaults` always wins over profile-level overrides, so these profiles use explicit ACLs for full control. See `docs/superpowers/specs/2026-06-05-profile-examples-design.md` for the design rationale.
+All Anthropic profiles use `base_url: https://api.anthropic.com/v1` (OpenAI-compatible endpoint). Most profiles skip the `mode:` field and use explicit ACLs for full control (`applyModeDefaults` always wins over profile-level overrides when `mode:` is set — see `docs/superpowers/specs/2026-06-05-profile-examples-design.md`); `data.yaml` and `assistant.yaml` use `mode: analyst` / `mode: assistant` instead, since the ACL preset is exactly the read-only shape both want. The web client's profile switcher (`profiles_list`/`profiles` protocol messages, `TopBar`/`Palette`) lets an operator hop between any loaded profile mid-session via `set_profile`.
 
 ### Skills
 

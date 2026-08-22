@@ -8,9 +8,11 @@ interface Props {
   setPalette: (v: string) => void
   density: string
   setDensity: (v: string) => void
+  userId: string
+  setUserId: (v: string) => void
 }
 
-export function Tweaks({ open, theme, setTheme, palette, setPalette, density, setDensity }: Props) {
+export function Tweaks({ open, theme, setTheme, palette, setPalette, density, setDensity, userId, setUserId }: Props) {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     document.documentElement.setAttribute('data-palette', palette)
@@ -26,6 +28,11 @@ export function Tweaks({ open, theme, setTheme, palette, setPalette, density, se
       transition: 'transform 0.2s ease'
     }}>
       <h3 style={{ color: 'var(--accent)', marginBottom: '1rem' }}>Tweaks</h3>
+
+      <div style={{ marginBottom: '1rem' }}>
+        <div style={{ color: 'var(--dim)', marginBottom: '0.5rem' }}>Session identity (scope only)</div>
+        <input value={userId} onChange={event => { setUserId(event.target.value); localStorage.setItem('harness-user-id', event.target.value) }} style={{ width: '100%', padding: '0.5rem', background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)' }} />
+      </div>
 
       <div style={{ marginBottom: '1rem' }}>
         <div style={{ color: 'var(--dim)', marginBottom: '0.5rem' }}>Theme</div>

@@ -1,0 +1,27 @@
+name: assistant
+description: "Personal assistant. Read-only over local files and memory, no code execution or edits — for scheduling, notes, research triage, and day-to-day Q&A."
+mode: assistant
+model:
+  base_url: https://api.anthropic.com/v1
+  api_key_env: ANTHROPIC_API_KEY
+  id: claude-sonnet-4-6
+models:
+  roles: { cheap: claude-haiku-4-5-20251001, balanced: claude-sonnet-4-6, frontier: claude-opus-4-8, critic: gpt-5.5 }
+workflow:
+  enabled: true
+  playbook: generic
+  routing:
+    table: { recon: cheap, plan: balanced, design: balanced, build: balanced, verify: cheap, review: balanced }
+system_prompt: ./assistant.md
+working_dir: $CWD
+artifact_dir: .harness/assistant
+tools:
+  builtin: {}
+  mcp_servers: []
+hooks:
+  pre_tool: []
+  post_tool: []
+  on_stop: []
+improvement:
+  enabled: true
+  mine_skills_every_n_sessions: 10

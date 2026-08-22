@@ -3,12 +3,16 @@ interface Props {
   focusPane: 'conv' | 'work'
   tokens: { in: number, out: number }
   theme: string
-  yolo: boolean
   onToggleTheme: () => void
-  onToggleYolo: () => void
+  approvalMode?: string
+  context?: { tokens: number; window?: number }
+  costUsd?: number
 }
 
-export function StatusBar({ busy, focusPane, tokens, theme, yolo, onToggleTheme, onToggleYolo }: Props) {
+import { ContextGauge } from './chrome/ContextGauge'
+import { CostTicker } from './chrome/CostTicker'
+
+export function StatusBar({ busy, focusPane, tokens, theme, approvalMode, onToggleTheme, context, costUsd }: Props) {
   return (
     <div className="statusbar">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0' }}>
@@ -21,25 +25,11 @@ export function StatusBar({ busy, focusPane, tokens, theme, yolo, onToggleTheme,
         <span style={{ color: focusPane === 'work' ? 'var(--dim)' : 'var(--faint)' }}>work</span>
         <span style={{ color: 'var(--border-hi)', margin: '0 0.5rem' }}>│</span>
         <span style={{ color: 'var(--faint)' }}>{tokens.in} in / {tokens.out} out</span>
+        <ContextGauge tokens={context?.tokens} window={context?.window} />
+        <CostTicker costUsd={costUsd} tokensIn={tokens.in} tokensOut={tokens.out} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        <button
-          onClick={onToggleYolo}
-          title="YOLO mode: allow all tool calls without approval"
-          style={{
-            cursor: 'pointer',
-            color: yolo ? 'var(--del)' : 'var(--faint)',
-            background: yolo ? 'var(--accent-sub)' : 'transparent',
-            border: yolo ? '1px solid var(--accent-dim)' : '1px solid transparent',
-            borderRadius: '3px',
-            padding: '0 0.3rem',
-            fontSize: '0.7rem',
-            lineHeight: '1.4',
-            letterSpacing: '0.04em',
-          }}
-        >
-          ⚡ {yolo ? 'yolo: on' : 'yolo: off'}
-        </button>
+        <span>approval: {approvalMode ?? '…'}</span>
         <button onClick={onToggleTheme} style={{ cursor: 'pointer', color: 'var(--faint)' }}>
           theme: {theme}
         </button>

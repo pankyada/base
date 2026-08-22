@@ -40,6 +40,7 @@ export default defineConfig({
           { text: 'Context Projection', link: '/context' },
           { text: 'Self-Improvement', link: '/self-improvement' },
           { text: 'Telemetry', link: '/telemetry' },
+          { text: 'Read API', link: '/read-api' },
           { text: 'CLI & TUI', link: '/cli-tui' },
         ],
       },
