@@ -183,7 +183,7 @@ Backed by `/datasets` ([W1 §2.8](2026-08-16-web-read-api-design.md)).
 
 A per-project dashboard of pinned artifacts.
 
-- Pin from any artifact, cell figure, or surface. Pinning stores the artifact plus
+- Pin from any fixed artifact or cell figure. Pinning stores the artifact plus
   its *provenance*: the session, the tool call, and the code that produced it.
 - Grid layout, drag to reorder, resize in 1/3 · 1/2 · full column widths.
 - **Refresh** re-runs the pinned artifact's generating code against current data
@@ -192,8 +192,10 @@ A per-project dashboard of pinned artifacts.
   nothing.
 - Export: whole canvas to PNG/PDF, single table to CSV, session to a read-only
   HTML bundle.
-- Persistence: canvases are per-project; storage choice is
-  [W0 §8 open question 3](2026-08-16-web-surface-design.md).
+- **Resolution (2026-08-16):** This fix pass ships per-widget SVG download for
+  canvas export; whole-canvas PNG rasterization remains deferred.
+- Persistence: canvases are per-project; storage choice is resolved in
+  [W0 §8 question 3](2026-08-16-web-surface-design.md).
 
 ---
 
@@ -235,6 +237,9 @@ a 400 px chart is useful.
 
 1. Do surfaces get pinned to the canvas, or only fixed widgets? A pinned surface
    cannot be re-themed or exported to CSV, which weakens the canvas contract.
+   **Resolution (2026-08-16):** Fixed `ArtifactWidget`s are pinnable and retain
+   their `kind` through the widget kit. Generated `RenderUI` surfaces are not
+   pinnable because they lack a stable refresh/export contract.
 2. Should the dataset drawer auto-profile on upload (one `ExecuteCode` call), or
    stay purely server-sniffed until the analyst asks?
 3. Does the notebook lane need a "sessions as notebook" export (`.ipynb`), or is
