@@ -2,7 +2,10 @@
 
 **Generated**: 2026-08-16
 **Estimated Complexity**: Medium (4 sprints; one is security-critical and should land first)
-**Status**: F1, F2, F7, and F8 verified in the #25/#26 completion pass; F3–F6 remain scoped to the later #27/#28 work.
+**Status**: F1/F2 verified in the #25/#26 pass. F7 is now exercised by the
+real-browser six-entry corpus and F8 is recorded in ADR-71/72 plus the
+architecture map. F3–F6 are partially present in #27/#28; the verification
+report records the remaining hollow canvas/widget paths.
 
 ## Overview
 

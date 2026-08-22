@@ -906,3 +906,26 @@ Client requests can only move to a stricter mode, and `hello.yolo` is ignored.
 *Consequences:* Browser clients cannot grant themselves bypass authority. Existing
 non-developer profiles stay bounded even when deployment configuration requests
 `yolo`; the behavior is documented as a breaking approval change.
+
+### ADR-71
+**Generated surfaces run in an opaque-origin sandbox** — ✅
+
+*Context:* Model-authored HTML and JavaScript execute in the operator's browser,
+so a normal same-origin iframe would expose parent DOM, cookies, storage, and
+localhost services.
+*Decision:* SurfaceHost uses an iframe with sandbox="allow-scripts" and no
+allow-same-origin. The document CSP is default-src none with connect-src none;
+only the small allowlisted postMessage bridge is accepted.
+*Consequences:* Surfaces can render and emit structured UI results, but cannot
+reach the host page or network. The permanent browser corpus guards the boundary.
+
+### ADR-72
+**Fixed widget kit and generative surfaces are separate rendering paths** — ✅
+
+*Context:* Fixed artifacts need stable theming, CSV export, and canvas pinning;
+bespoke generated UI needs an escape hatch when no widget kind fits.
+*Decision:* Route known ArtifactWidget kinds through the fixed hand-rolled kit.
+Route bespoke SurfaceSpec payloads through SurfaceHost. Do not make surfaces the
+default widget renderer or grant them fixed-kit guarantees.
+*Consequences:* The two paths can evolve independently and their security and
+export contracts remain explicit.

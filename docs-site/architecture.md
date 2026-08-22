@@ -18,6 +18,9 @@ lifecycle, runtime boundaries, and how to actually run and extend the thing.
 ```mermaid
 flowchart LR
   C["TUI · CLI · Web app · channel adapter"] --> T["HTTP + WebSocket server"]
+  T --> Q["Read API · origin allowlist"]
+  C --> W["Web faces: analyst · ops · assistant"]
+  W --> H["SurfaceHost · fixed widget kit"]
   T --> R["Profile registry"]
   R --> S["Isolated session + memory view"]
   S --> L["Agent loop"]
@@ -66,7 +69,7 @@ processes when a profile needs a separate failure domain.
 | Durable automation | Cron, watch, and poll triggers with a free no-change path; globally capped concurrency; deferred questions that survive a full server restart; pluggable channels to reach a human. | [Automation](./automation) |
 | Temporal memory | Facts carry validity intervals and recurrence instead of being implicitly eternal; `Recall` answers "what was true at time T," fully backward compatible. | [Memory](./memory) |
 | Voice transport | Binary audio frames, streaming STT/TTS plugin interfaces, sentence chunking, endpointing, voice prompts, and barge-in cancellation. | [Voice](./voice) |
-| Product surfaces | Go TUI, readline CLI, REST/SSE API, WebSocket protocol, and optional browser client. | [CLI & TUI](./cli-tui) |
+| Product surfaces | Go TUI, readline CLI, REST/SSE API, WebSocket protocol, and browser faces for analyst work, operations, and assistant briefs. Fixed artifacts use the widget kit; generated UI crosses an opaque-origin SurfaceHost boundary (allow-scripts, no allow-same-origin, CSP connect-src none) and returns only allowlisted messages. | [CLI & TUI](./cli-tui) · [Read API](./read-api) |
 
 ## Use it
 
@@ -139,6 +142,18 @@ triggers:
 
 `release-notes.md` lives beside the YAML. `$CWD` is deliberate runtime input:
 start Harness in the repository you want the agent to inspect.
+
+The browser client is built separately with `pnpm --filter harness-web build`.
+Set `NEXT_PUBLIC_HARNESS_WS_URL` and `NEXT_PUBLIC_HARNESS_HTTP_URL` to a
+reachable server, and add the browser origin to `HARNESS_ALLOWED_ORIGINS`.
+
+### Web faces
+
+Live empty-state captures from the local build:
+
+![Analyst workbench](/web-surface/analyst.png)
+![Operator console](/web-surface/operator.png)
+![Assistant brief](/web-surface/assistant.png)
 
 ### 5. Add streaming voice without adding a vendor to core
 

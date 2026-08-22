@@ -1,31 +1,43 @@
-import { Artifact } from '../lib/types'
+import React from 'react'
+import type { Artifact } from '../lib/types'
+import { MetricTiles } from './MetricTiles'
+import { Bar } from './Bar'
+import { Line } from './Line'
+import { Area } from './Area'
+import { Scatter } from './Scatter'
+import { Histogram } from './Histogram'
+import { Heatmap } from './Heatmap'
+import { Box } from './Box'
+import { Correlation } from './Correlation'
+import { DataTable } from './DataTable'
+import { DiffView } from './DiffView'
+import { FileTree } from './FileTree'
+import { TermOut } from './TermOut'
+import { DocView } from './DocView'
 
-// Simple placeholder components for all widgets to pass typechecking first
-export function Metrics({ data }: { data: unknown }) { return <div>Metrics Widget</div> }
-export function BarChart({ data }: { data: unknown }) { return <div>BarChart Widget</div> }
-export function LineChart({ data }: { data: unknown }) { return <div>LineChart Widget</div> }
-export function DataTable({ data }: { data: unknown }) { return <div>DataTable Widget</div> }
-export function FileTree({ data }: { data: unknown }) { return <div>FileTree Widget</div> }
-export function Diff({ data }: { data: unknown }) { return <div>Diff Widget</div> }
-export function TermOut({ data }: { data: unknown }) { return <div>TermOut Widget</div> }
-export function Doc({ data }: { data: unknown }) { return <div>Doc Widget</div> }
-export function Research({ data }: { data: unknown }) { return <div>Research Widget</div> }
-
-interface Props {
-  artifact: Artifact
+export const WIDGET_KINDS = ['metrics', 'bar', 'line', 'area', 'scatter', 'histogram', 'heatmap', 'box', 'correlation', 'table', 'diff', 'filetree', 'terminal', 'doc', 'research'] as const
+type WidgetProps = { data: unknown }
+export function widgetForKind(kind: string): ((props: WidgetProps) => JSX.Element) | undefined {
+  switch (kind) {
+    case 'metrics': return MetricTiles
+    case 'bar': return Bar
+    case 'line': return Line
+    case 'area': return Area
+    case 'scatter': return Scatter
+    case 'histogram': return Histogram
+    case 'heatmap': return Heatmap
+    case 'box': return Box
+    case 'correlation': return Correlation
+    case 'table': return DataTable
+    case 'diff': return DiffView
+    case 'filetree': return FileTree
+    case 'terminal': return TermOut
+    case 'doc': case 'research': return DocView
+    default: return undefined
+  }
 }
 
-export function GenWidget({ artifact }: Props) {
-  switch (artifact.kind) {
-    case 'metrics': return <Metrics data={artifact.data} />
-    case 'bar': return <BarChart data={artifact.data} />
-    case 'line': return <LineChart data={artifact.data} />
-    case 'table': return <DataTable data={artifact.data} />
-    case 'filetree': return <FileTree data={artifact.data} />
-    case 'diff': return <Diff data={artifact.data} />
-    case 'terminal': return <TermOut data={artifact.data} />
-    case 'doc': return <Doc data={artifact.data} />
-    case 'research': return <Research data={artifact.data} />
-    default: return <div style={{ color: 'var(--del)' }}>Unknown widget kind: {artifact.kind}</div>
-  }
+export function GenWidget({ artifact }: { artifact: Artifact }) {
+  const Widget = widgetForKind(artifact.kind)
+  return Widget ? <Widget data={artifact.data} /> : <div role="alert">Unknown widget kind: {artifact.kind}</div>
 }

@@ -1,0 +1,8 @@
+[
+  "window.parent.document.body",
+  "top.location.href",
+  "document.cookie",
+  "localStorage.setItem('x','y')",
+  "fetch('http://localhost:7337/health')",
+  "document.forms[0].submit()"
+]
