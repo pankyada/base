@@ -49,4 +49,13 @@ describe('protocol reducer', () => {
     const resolved = reducer(second, { type: 'RESOLVE_APPROVAL' })
     expect(resolved.pendingApproval?.id).toBe('b')
   })
+
+  it('carries the live budget limit and terminal budget status', () => {
+    let state = reducer(base, { type: 'SERVER_MSG', payload: { type: 'session_ready', sessionId: 's', profile: 'test', budget: { max_cost_usd: 1 }, yolo: false } })
+    state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'turn_start', run_id: 'budget-run' } })
+    state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'stats', run_id: 'budget-run', tokens_in: 1, tokens_out: 1, cost_usd: 1, context_tokens: 2 } })
+    state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'session_end', run_id: 'budget-run', sessionId: 's', status: 'budget_exceeded', reason: 'cost' } })
+    expect(state.budget).toEqual({ cost: 1, limit: 1 })
+    expect(state.runs?.['budget-run']?.status).toBe('budget_exceeded')
+  })
 })

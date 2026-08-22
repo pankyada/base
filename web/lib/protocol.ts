@@ -205,8 +205,8 @@ export type ServerMessage =
   | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown>; run_id?: string }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; run_id?: string }
   | { type: 'tool_auto_approved'; id: string; name: string; scope: 'session'; run_id?: string }
-  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; yolo: boolean; protocol_version?: number }
-  | { type: 'session_end'; sessionId: string; run_id?: string }
+  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; budget?: { max_cost_usd: number }; yolo: boolean; protocol_version?: number }
+  | { type: 'session_end'; sessionId: string; run_id?: string; status?: 'completed' | 'budget_exceeded' | 'cancelled' | 'failed'; reason?: string }
   | { type: 'session_resumed'; sessionId: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; run_id?: string }
   | { type: 'error'; message: string; run_id?: string }

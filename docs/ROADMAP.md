@@ -618,11 +618,11 @@ Everything #17–#23 built is invisible in a browser. Two faces close that.
 
 **To build (operator, `/ops`):**
 - Run board with lanes, live overlay, and `waiting_input` visually distinct from `running`
-- Approval centre — `risk`/`reason` displayed including the provenance gate's quoted tainting source, per-tool argument previews, an approval *queue* (unattended runs stack them), and "always allow" that reports what the server actually granted
+- Approval centre — `risk`/`reason` displayed including the provenance gate's quoted tainting source, per-tool argument previews, an approval *queue* (unattended runs stack them), and "always allow" that reports what the server actually granted ✅ ([#29 closeout G2](superpowers/plans/2026-08-22-web-surface-closeout.md#sprint-2-always-allow-for-the-approval-queue))
 - Deferred-ask inbox with TTL countdown; undo drawer grouped by run with staleness and explicit `force`
 - Audit table with a first-class `tainted` filter — the review workflow #22 was built for and has had no interface
 - Observability: cost/day by profile, tool volume with ok-rate and p95, model mix, stage funnel, routing efficacy from `aggregateRouting`
-- Budget meter per run; budget-exceeded as its own terminal state, not a generic failure
+- Budget meter per run; budget-exceeded as its own terminal state, not a generic failure ✅ ([#29 closeout G3](superpowers/plans/2026-08-22-web-surface-closeout.md#sprint-3-budget-exceeded-live-wiring))
 
 **To build (assistant, `/home`):**
 - Brief cards: needs-you, overnight, next fires, spend, expiring beliefs, tainted-turn attention

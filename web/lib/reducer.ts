@@ -36,7 +36,7 @@ export interface RunLane {
   messages: UIMessage[]
   stages: StageView[]
   stats?: { tokensIn: number; tokensOut: number; costUsd: number }
-  status?: 'running' | 'done' | 'error'
+  status?: 'running' | 'done' | 'error' | 'budget_exceeded' | 'cancelled' | 'failed'
 }
 
 export interface SurfaceEntry { surface: SurfaceSpec; runId?: string }
@@ -76,6 +76,7 @@ export interface State {
   runs?: Record<string, RunLane>
   activeRunId?: string
   costUsd?: number
+  budget?: { cost: number; limit?: number }
   context?: { tokens: number; window?: number }
   stages?: StageView[]
   notices?: NoticeView[]
@@ -185,12 +186,15 @@ export function reducer(state: State, action: Action): State {
         case 'tool_auto_approved': return { ...state, notices: [...(state.notices ?? []), { level: 'info', message: msg.name + ' auto-approved · scope: ' + msg.scope }] }
         case 'input_request': return { ...state, pendingInputRequest: { id: msg.id, prompt: msg.prompt, kind: msg.kind, options: msg.options } }
         case 'todos': return { ...state, todos: msg.todos }
-        case 'session_ready': return { ...state, profile: msg.profile, sessionId: msg.sessionId, currentModel: msg.model, allowedPackages: msg.allowed_packages ?? [], approvalMode: state.approvalMode }
+        case 'session_ready': return { ...state, profile: msg.profile, sessionId: msg.sessionId, currentModel: msg.model, allowedPackages: msg.allowed_packages ?? [], budget: msg.budget ? { cost: state.costUsd ?? 0, limit: msg.budget.max_cost_usd } : undefined, approvalMode: state.approvalMode }
         case 'stats': {
-          const next = { ...state, tokens: { in: msg.tokens_in, out: msg.tokens_out }, costUsd: msg.cost_usd, context: { tokens: msg.context_tokens ?? state.context?.tokens ?? 0, window: msg.context_window ?? state.context?.window } }
+          const next = { ...state, tokens: { in: msg.tokens_in, out: msg.tokens_out }, costUsd: msg.cost_usd, budget: state.budget ? { ...state.budget, cost: msg.cost_usd } : undefined, context: { tokens: msg.context_tokens ?? state.context?.tokens ?? 0, window: msg.context_window ?? state.context?.window } }
           return withLane(next, msg.run_id, current => ({ ...current, stats: { tokensIn: msg.tokens_in, tokensOut: msg.tokens_out, costUsd: msg.cost_usd } }))
         }
-        case 'session_end': return withLane({ ...state, busy: false }, msg.run_id, current => ({ ...current, status: 'done' }))
+        case 'session_end': {
+          const status = msg.status === 'budget_exceeded' || msg.status === 'cancelled' || msg.status === 'failed' ? msg.status : 'done'
+          return withLane({ ...state, busy: false }, msg.run_id, current => ({ ...current, status }))
+        }
         case 'session_resumed': return { ...state, busy: false, sessionId: msg.sessionId }
         case 'error': return withLane({ ...state, busy: false, notices: [...(state.notices ?? []), { level: 'error', message: msg.message }] }, msg.run_id, current => ({ ...current, status: 'error' }))
         case 'code_execute': return { ...state, pendingCodeExecution: { id: msg.id, code: msg.code, language: msg.language, data: msg.data } }

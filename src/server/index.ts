@@ -52,6 +52,8 @@ import { VoiceTurn } from '../voice/session.js'
 import { VoiceOutput } from '../voice/output.js'
 import { isYoloEnabled, resolveApprovalLimit, resolveRequestedApprovalMode } from './approval-mode.js'
 import { SessionApprovalGrants } from './session-approvals.js'
+import { RunBudget, BudgetExceeded } from '../runs/budget.js'
+import { sessionEndFromError, type SessionEndStatus } from './session-status.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -405,6 +407,17 @@ async function main() {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
     }
 
+    const sendSessionReady = () => {
+      const budget = connectionProfile.triggers?.budget
+      send({
+        type: 'session_ready', sessionId: session.id, profile: connectionProfile.name,
+        model: connectionProfile.model.id, working_dir: connectionProfile.working_dir,
+        allowed_packages: connectionProfile.executor?.allowed_packages ?? [],
+        ...(budget ? { budget: { max_cost_usd: budget.max_cost_usd } } : {}),
+        yolo: isYoloEnabled(approvalMode), protocol_version: PROTOCOL_VERSION,
+      })
+    }
+
     const cloneSession = (): typeof session => JSON.parse(JSON.stringify(session))
 
     const requestInput = (runId: string, prompt: string, kind: InputRequestKind, options?: string[], id: string = randomUUID()): Promise<string> => new Promise(resolve => {
@@ -513,7 +526,7 @@ async function main() {
           const error = await activateProfile(msg.profile)
           if (error) { send({ type: 'error', message: error }); return }
         }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, allowed_packages: connectionProfile.executor?.allowed_packages ?? [], yolo: isYoloEnabled(approvalMode), protocol_version: PROTOCOL_VERSION })
+        sendSessionReady()
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -522,7 +535,7 @@ async function main() {
       if (msg.type === 'set_profile') {
         const error = await activateProfile(msg.profile)
         if (error) { send({ type: 'error', message: error }); return }
-        send({ type: 'session_ready', sessionId: session.id, profile: connectionProfile.name, model: connectionProfile.model.id, working_dir: connectionProfile.working_dir, allowed_packages: connectionProfile.executor?.allowed_packages ?? [], yolo: isYoloEnabled(approvalMode), protocol_version: PROTOCOL_VERSION })
+        sendSessionReady()
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
         return
@@ -843,6 +856,12 @@ async function main() {
       if (msg.type === 'message') {
         const runId = randomRunId()
         const sendForRun = makeRunEmitter(runId, send)
+        const runSignal = abortController.signal
+        const budget = connectionProfile.triggers?.budget
+          ? new RunBudget(connectionProfile.triggers.budget)
+          : undefined
+        let terminalStatus: SessionEndStatus = 'completed'
+        let terminalReason: string | undefined
         sendForRun({ type: 'turn_start' })
         runStore.create({
           id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream',
@@ -877,7 +896,8 @@ async function main() {
           onSessionEnd: (id) => {
             voiceOutput?.end()
             saveSession(session)
-            sendForRun({ type: 'session_end', sessionId: id })
+            const status = runSignal.aborted ? 'cancelled' : terminalStatus
+            sendForRun({ type: 'session_end', sessionId: id, status, ...(terminalReason ? { reason: terminalReason } : {}) })
             closeMcpWhenIdle()
           },
           onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => {
@@ -910,7 +930,7 @@ async function main() {
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
           profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
-          events, openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0,
+          events, openai: connectionOpenai, signal: runSignal, delegateDepth: 0,
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
@@ -918,15 +938,16 @@ async function main() {
           channels: connectionChannels,
           runId,
           pendingInputs: pendingStore,
+          budget,
         }
 
-        const runSignal = abortController.signal
         try {
           await runInteractiveTurn(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal, msg.skipWorkflow)
-          runStore.update(runId, { status: 'completed', session_id: session.id, finished_at: new Date().toISOString() })
+          terminalStatus = runSignal.aborted ? 'cancelled' : 'completed'
+          runStore.update(runId, { status: terminalStatus, session_id: session.id, finished_at: new Date().toISOString() })
           if (runSignal.aborted) {
             saveSession(session)
-            sendForRun({ type: 'session_end', sessionId: session.id })
+            sendForRun({ type: 'session_end', sessionId: session.id, status: terminalStatus })
           }
         } catch (e: any) {
           voiceOutput?.end()
@@ -935,13 +956,16 @@ async function main() {
             sendPending()
             return
           }
-          runStore.update(runId, { status: 'failed', error: e.message, finished_at: new Date().toISOString() })
+          const outcome = sessionEndFromError(e, runSignal.aborted)
+          terminalStatus = outcome.status
+          terminalReason = outcome.reason
+          runStore.update(runId, { status: outcome.status === 'budget_exceeded' ? 'budget_exceeded' : outcome.status === 'cancelled' ? 'cancelled' : 'failed', error: e.message, finished_at: new Date().toISOString() })
           if (e.name !== 'AbortError') {
             sendForRun({ type: 'error', message: e.message })
           }
-		  if (runSignal.aborted) {
+		  if (runSignal.aborted || e instanceof BudgetExceeded) {
 		    saveSession(session)
-		    sendForRun({ type: 'session_end', sessionId: session.id })
+		    sendForRun({ type: 'session_end', sessionId: session.id, status: terminalStatus, ...(terminalReason ? { reason: terminalReason } : {}) })
 		  }
         }
       }

@@ -17,4 +17,10 @@ describe('run board', () => {
   it('has a deliberate empty state', () => {
     expect(runBoardEmptyLabel([])).toBe('No active runs')
   })
+
+  it('keeps budget exhaustion visible in the live lane', () => {
+    const rows = mergeRunEvent([], { type: 'session_end', run_id: 'budget-run', status: 'budget_exceeded', reason: 'cost' })
+    expect(rows[0].status).toBe('budget_exceeded')
+    expect(runStatusLabel(rows[0].status)).toContain('budget')
+  })
 })

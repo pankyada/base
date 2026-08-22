@@ -33,6 +33,11 @@ export default function OpsPage() {
   const undoEntries = undoMessage?.type === 'undo_entries' ? undoMessage.entries : []
   const skillsMessage = [...events].reverse().find(event => event.type === 'skills')
   const skills = skillsMessage?.type === 'skills' ? skillsMessage : undefined
+  const sessionReady = [...events].reverse().find(event => event.type === 'session_ready')
+  const latestStats = [...events].reverse().find(event => event.type === 'stats')
+  const liveBudget = sessionReady?.type === 'session_ready' && sessionReady.budget
+    ? { cost: latestStats?.type === 'stats' ? latestStats.cost_usd : 0, limit: sessionReady.budget.max_cost_usd }
+    : undefined
   const content = Object.fromEntries(events.filter(event => event.type === 'skill_content').map(event => event.type === 'skill_content' ? [event.name, event.content] : []))
   const approvals = events.filter(event => event.type === 'tool_prompt' && !resolvedApprovals.has(event.id)).map(event => event.type === 'tool_prompt' ? ({ id: event.id, name: event.name, input: event.input, risk: event.risk, reason: event.reason }) : null).filter(item => item !== null) as ApprovalItem[]
   const resolveApproval = (id: string, approve: boolean) => { setResolvedApprovals(current => new Set(current).add(id)); send({ type: approve ? 'tool_approve' : 'tool_deny', id }) }
@@ -43,7 +48,7 @@ export default function OpsPage() {
     <ApprovalQueue items={approvals} onApprove={id => resolveApproval(id, true)} onDeny={id => resolveApproval(id, false)} onRemember={rememberApproval} />
     <Inbox items={pending} onAnswer={(id, value) => send({ type: 'pending_answer', pending_id: id, value })} />
     <UndoDrawer entries={undoEntries} onUndo={(id, force, reason) => send({ type: 'undo_apply', id, force, ...(reason ? { reason } : {}) })} />
-    <Observability report={report} />
+    <Observability report={report} budget={liveBudget} />
     <AuditTable baseUrl={base} />
     <SkillsQueue proposed={skills?.proposed} installed={skills?.installed} content={content} onAction={(action, name) => send({ type: action === 'promote' ? 'skill_promote' : 'skill_discard', name })} onSave={(name, value) => send({ type: 'skill_save', name, content: value })} />
     <Channels channels={channels} />
