@@ -1,4 +1,8 @@
 name: research
+use_case:
+  label: Research
+  blurb: Coordinate focused research and synthesis workers.
+  rank: 5
 description: "Research orchestrator. Fans work out to researcher and summariser sub-agents; synthesises findings into a structured report."
 model:
   base_url: https://api.anthropic.com/v1

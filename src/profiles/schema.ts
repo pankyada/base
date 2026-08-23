@@ -328,6 +328,11 @@ export const ProfileSchema = z.object({
   }).strict().optional(),
   lists: z.record(z.string(), ListSourceSchema).default({}),
   description: z.string().optional(),
+  use_case: z.object({
+    label: z.string().min(1),
+    blurb: z.string().min(1),
+    rank: z.number().int().nonnegative(),
+  }).optional(),
   interop: z.object({
     a2a: z.boolean().default(false),
     acp: z.boolean().default(false),

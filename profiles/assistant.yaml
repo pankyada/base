@@ -1,4 +1,8 @@
 name: assistant
+use_case:
+  label: Personal assistant
+  blurb: Work with memory, calendar, and read-only tools.
+  rank: 3
 description: "Personal assistant. Read-only over local files and memory, no code execution or edits — for scheduling, notes, research triage, and day-to-day Q&A."
 mode: assistant
 model:

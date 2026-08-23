@@ -1,4 +1,8 @@
 name: devops
+use_case:
+  label: DevOps
+  blurb: Inspect logs, GitHub, and scheduled checks.
+  rank: 4
 description: "Infra health-check and DevOps automation agent. Runs daily at 08:00 via cron; usable interactively too."
 model:
   base_url: https://api.anthropic.com/v1

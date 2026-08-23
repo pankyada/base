@@ -1,4 +1,8 @@
 name: data
+use_case:
+  label: Data analysis
+  blurb: Query data and produce read-only reports.
+  rank: 2
 model:
   base_url: https://api.openai.com/v1
   api_key_env: OPENAI_API_KEY
