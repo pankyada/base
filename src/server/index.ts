@@ -5,7 +5,7 @@ import { checkOrigin, loadOriginPolicy } from './origin.js'
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir, userInfo } from 'os'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { recordUsage } from '../usage/ledger.js'
 import { RunStore } from '../runs/store.js'
@@ -15,7 +15,8 @@ import { runProfileOnce } from './run-profile.js'
 import { DefaultImprover } from '../improver/default-improver.js'
 import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
-import { loadProfileDirectory } from '../profiles/registry.js'
+import { loadStartupProfiles } from './profile-startup.js'
+import { readUserConfig } from '../config/user-config.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
@@ -93,18 +94,12 @@ async function main() {
     : profileFlag >= 0
       ? process.argv[profileFlag + 1]
       : process.argv[2]
-  const profilePath = configuredPath ? resolve(configuredPath) : resolve(homedir(), '.harness', 'profiles', 'coding.yaml')
-  const defaultName = defaultFlag >= 0 ? process.argv[defaultFlag + 1] : undefined
-  const loadedProfiles = existsSync(profilePath) && statSync(profilePath).isDirectory()
-    ? loadProfileDirectory(profilePath, defaultName)
-    : (() => {
-        const single = loadProfile(profilePath)
-        return { profiles: new Map([[single.name, single]]), defaultProfile: single, errors: [] as Array<{ path: string; error: string }> }
-      })()
+  const explicitDefaultName = defaultFlag >= 0 ? process.argv[defaultFlag + 1] : undefined
+  const loadedProfiles = loadStartupProfiles({ configuredPath, explicitDefaultProfile: explicitDefaultName })
   const profiles = loadedProfiles.profiles
   const profile = loadedProfiles.defaultProfile
   for (const failed of loadedProfiles.errors) console.warn(`[profiles] skipped ${failed.path}: ${failed.error}`)
-  if (profiles.size > 1 && !defaultName) console.warn(`[profiles] no --default-profile supplied; using ${profile.name}`)
+  if (profiles.size > 1 && !explicitDefaultName && !process.env.HARNESS_PROFILE && !readUserConfig()?.default_profile) console.warn(`[profiles] no --default-profile supplied; using ${profile.name}`)
   const channelsByProfile = new Map([...profiles.values()].map(item => [item.name, new ChannelRuntime(item)]))
   const channels = channelsByProfile.get(profile.name)!
   const originPolicy = loadOriginPolicy()

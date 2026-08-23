@@ -87,6 +87,7 @@ pointer to what replaced them.
 | [63](#adr-63) | Product state lives in `~/.mitra/`, separate from `~/.harness/` | 📋 | product |
 | [64](#adr-64) | Harness edits never happen from inside the product repo | 📋 | product |
 | [66](#adr-66) | Project instruction files are trusted prompt context | ✅ | context |
+| [75](#adr-75) | Default profile is a pointer, never a profile-pruning operation | ✅ | onboarding |
 
 ---
 
@@ -929,3 +930,20 @@ Route bespoke SurfaceSpec payloads through SurfaceHost. Do not make surfaces the
 default widget renderer or grant them fixed-kit guarantees.
 *Consequences:* The two paths can evolve independently and their security and
 export contracts remain explicit.
+
+### ADR-75
+**Default profile is a pointer, never a profile-pruning operation** — ✅
+
+*Context:* The harness already loads a directory of profiles and supports
+mid-session switching. A fresh install previously reached only `coding.yaml`,
+which made the other shipped profiles unreachable and invited a second,
+destructive profile-selection mechanism.
+*Decision:* Store `default_profile` as a profile **name** in machine-level
+`~/.harness/config.json`. Server startup loads the configured profiles
+directory, then passes that name to the existing registry selection path. All
+profiles remain installed and switchable. Presentation preferences remain in
+client-owned `tui.json`, not this machine-level config.
+*Consequences:* Changing the default is reversible and does not alter any
+profile. Custom profiles continue to participate in the same registry. A
+missing or invalid config degrades to the registry's existing `coding`, then
+alphabetical, fallback rather than preventing startup.
