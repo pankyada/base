@@ -60,10 +60,11 @@ export async function applyUndoEntry(user: string, sessionId: string, id: string
   }
 }
 
-export async function undoNotice(user: string, sessionId: string, id: string, profile: Profile, force = false): Promise<{ level: 'info' | 'warn'; message: string }> {
+export async function undoNotice(user: string, sessionId: string, id: string, profile: Profile, force = false, reason?: string): Promise<{ level: 'info' | 'warn'; message: string }> {
+  if (force && !reason?.trim()) return { level: 'warn', message: 'a stated reason is required to force an undo' }
   try {
     const message = await applyUndoEntry(user, sessionId, id, profile, force)
-    return { level: message.startsWith('undid ') ? 'info' : 'warn', message }
+    return { level: message.startsWith('undid ') ? 'info' : 'warn', message: force && message.startsWith('undid ') ? `${message} (reason: ${reason!.trim()})` : message }
   } catch (error: any) {
     return { level: 'warn', message: `undo entry ${id} failed: ${error?.message ?? String(error)}` }
   }

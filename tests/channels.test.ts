@@ -64,6 +64,17 @@ describe('channels', () => {
     expect(fake.sent[0].to).toBe('opaque-1')
   })
 
+  it('reports binding state and effective capabilities without exposing config', async () => {
+    const fake = adapter()
+    registerChannel(fake.item)
+    const bindings = new BindingStore(join(root, 'bindings-status.json'))
+    bindings.bind('test', 'opaque-status', { user: 'pankaj', profile: 'p', bound_at: new Date().toISOString() })
+    const runtime = new ChannelRuntime(profile({ name: 'in', transport: 'test', inbound: true, acl: { inbound: 'paired', notify: 'allow', approvals: false }, config: { secret: 'hidden' }, limits: {} }), bindings)
+    await runtime.init()
+    expect(runtime.statusForUser('pankaj')).toEqual([expect.objectContaining({ name: 'in', transport: 'test', binding: 'paired', capabilities: fake.item.capabilities })])
+    expect(JSON.stringify(runtime.statusForUser('pankaj'))).not.toContain('hidden')
+  })
+
   it('binds open identities before invoking the route', async () => {
     const fake = adapter()
     registerChannel(fake.item)

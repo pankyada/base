@@ -35,6 +35,6 @@ describe('undo error handling', () => {
     writeFileSync(target, 'new')
     writeFileSync(join(auditDir, '2026-08-15.jsonl'), JSON.stringify(fixture('entry-1', user, sessionId, target)) + '\n')
 
-    await expect(undoNotice(user, sessionId, 'entry-1', {} as any, true)).resolves.toEqual({ level: 'warn', message: 'undo entry entry-1 failed: unlink exploded' })
+    await expect(undoNotice(user, sessionId, 'entry-1', {} as any, true, 'recover failed write')).resolves.toEqual({ level: 'warn', message: 'undo entry entry-1 failed: unlink exploded' })
   })
 })

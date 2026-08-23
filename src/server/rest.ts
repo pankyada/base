@@ -631,23 +631,38 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
 
 export function createRestHandler(deps: RestDeps) {
   const acpInFlight = new Set<string>()
+  const originPolicy = deps.originPolicy ?? loadOriginPolicy()
+  const readHandler = createReadApiHandler({ defaultProfile: deps.defaultProfile, profiles: deps.profiles, ...deps.readApi })
+  let rejectedOrigins = 0
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = (req.url ?? '/').split('?')[0]
     const method = req.method ?? 'GET'
 
     try {
+      const header = req.headers.origin
+      const origin = typeof header === 'string' ? header : header ? '__invalid_origin__' : undefined
+      const originResult = checkOrigin(origin, originPolicy)
+      if (!originResult.ok) {
+        rejectedOrigins += 1
+        console.warn(`[origin] rejected REST request: ${origin ?? 'missing'} (${originResult.reason})`)
+        return sendJson(res, 403, { error: 'forbidden', reason: originResult.reason })
+      }
       if (method === 'POST' && url.startsWith('/channels/')) {
         const channel = url.slice('/channels/'.length, -'/inbound'.length)
         if (url.endsWith('/inbound') && deps.channels && await deps.channels.handleHttp(channel, req, res)) return
       }
       if (method === 'GET' && url === '/health') {
-        return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, profiles: deps.profiles ? [...deps.profiles.keys()].sort() : [deps.defaultProfile.name], version: VERSION })
+        return sendJson(res, 200, { status: 'ok', profile: deps.defaultProfile.name, profiles: deps.profiles ? [...deps.profiles.keys()].sort() : [deps.defaultProfile.name], version: VERSION, origin_policy: originPolicy, origin_rejections: rejectedOrigins })
       }
 
       if (deps.apiKey && req.headers['authorization'] !== `Bearer ${deps.apiKey}`) {
         return sendJson(res, 401, { error: 'unauthorized' })
       }
+
+      if (await readHandler(req, res)) return
+
+      if (method === 'GET' && url === '/channels') return handleListChannels(req, res, deps)
 
       if (method === 'GET' && url === '/agents') return handleAcpAgents(req, res, deps)
 

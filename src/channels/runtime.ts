@@ -42,6 +42,20 @@ export class ChannelRuntime {
 
   get configuredNames(): string[] { return this.configs.map(config => config.name) }
 
+  statusForUser(user: string): Array<{ name: string; transport: string; inbound: boolean; binding: 'paired' | 'open' | 'unbound' | 'off'; capabilities?: ChannelAdapter['capabilities']; degraded?: string }> {
+    this.bindings.reload()
+    return this.configs.map(config => {
+      const adapter = this.adapters.get(config.name)
+      const bound = this.bindings.findForUser(config.transport, user)
+      const binding = !config.inbound || config.acl.inbound === 'off'
+        ? 'off'
+        : bound
+          ? (bound.binding.untrusted ? 'open' : 'paired')
+          : config.acl.inbound === 'open' ? 'open' : 'unbound'
+      return { name: config.name, transport: config.transport, inbound: config.inbound, binding, capabilities: adapter?.capabilities, ...(adapter ? {} : { degraded: 'adapter unavailable' }) }
+    })
+  }
+
   async init(): Promise<void> {
     if (!this.enabled || this.started) return
     registerBuiltinChannels()
