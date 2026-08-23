@@ -24,6 +24,19 @@ healthy, then launches the TUI. Quitting the TUI (Ctrl-C) cleanly shuts down the
 it started. If a server is already running on `HARNESS_PORT` (default 7337), it is
 reused and left running when the TUI exits.
 
+### Windows PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/pankyada/base/main/scripts/install.ps1 | iex
+```
+
+The PowerShell installer places binaries in
+`%LOCALAPPDATA%\Programs\harness`, adds that directory to the user PATH, and
+hands off to `harness init` only from an interactive terminal. Use
+`-NoInit` when invoking the script directly to skip onboarding. Downloaded
+Windows binaries are unsigned; Defender or SmartScreen may warn before launch.
+Confirm the release source before allowing them. Code signing is out of scope.
+
 ---
 
 ## Option 2 — Raw Docker

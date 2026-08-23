@@ -7,8 +7,9 @@ const root = resolve(new URL('..', import.meta.url).pathname)
 const packageJSON = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
 const version = process.env.npm_package_version ?? packageJSON.version
 mkdirSync(resolve(root, 'bin'), { recursive: true })
-for (const [goos, goarch, suffix] of [['darwin', 'arm64', 'darwin-arm64'], ['darwin', 'amd64', 'darwin-amd64'], ['linux', 'amd64', 'linux-amd64']]) {
-  execFileSync('go', ['build', '-ldflags', `-s -w -X main.version=${version}`, '-o', resolve(root, `bin/harness-tui-${suffix}`), '.'], {
+for (const [goos, goarch, suffix] of [['darwin', 'arm64', 'darwin-arm64'], ['darwin', 'amd64', 'darwin-amd64'], ['linux', 'amd64', 'linux-amd64'], ['windows', 'amd64', 'windows-amd64']]) {
+  const extension = goos === 'windows' ? '.exe' : ''
+  execFileSync('go', ['build', '-ldflags', `-s -w -X main.version=${version}`, '-o', resolve(root, `bin/harness-tui-${suffix}${extension}`), '.'], {
     cwd: resolve(root, 'tui'),
     env: { ...process.env, GOOS: goos, GOARCH: goarch },
     stdio: 'inherit',

@@ -85,12 +85,15 @@ jobs:
             bin/harness-macos-arm64 \
             bin/harness-macos-x64 \
             bin/harness-linux-x64 \
+            bin/harness-windows-x64.exe \
             bin/harness-server-macos-arm64 \
             bin/harness-server-macos-x64 \
             bin/harness-server-linux-x64 \
+            bin/harness-server-windows-x64.exe \
             bin/harness-tui-darwin-arm64 \
             bin/harness-tui-darwin-amd64 \
             bin/harness-tui-linux-amd64 \
+            bin/harness-tui-windows-amd64.exe \
             bin/harness-profiles.tar.gz \
             --title "$TAG" \
             --generate-notes

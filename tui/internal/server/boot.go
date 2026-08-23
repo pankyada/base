@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -55,6 +56,14 @@ func findRepoRoot(dir string) (root string, ok bool) {
 	return dir, false
 }
 
+func serverBinaryPath(executable, goos string) string {
+	name := "harness-server"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(filepath.Dir(executable), name)
+}
+
 // serverCommand returns dev (tsx) vs prod (harness-server binary) invocation.
 func serverCommand(profile string) (string, []string, string) {
 	exe, _ := os.Executable()
@@ -77,7 +86,7 @@ func serverCommand(profile string) (string, []string, string) {
 	if profile != "" {
 		args = append(args, profile)
 	}
-	return filepath.Join(filepath.Dir(exe), "harness-server"), args, root
+	return serverBinaryPath(exe, runtime.GOOS), args, root
 }
 
 // EnsureServer probes /health and spawns the server if it is not already up.

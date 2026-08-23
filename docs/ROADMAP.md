@@ -637,6 +637,30 @@ cannot draw the harness's own metrics, it is not ready for the analyst.
 
 ---
 
+### ✅ 30. Guided install & first-run onboarding
+
+Installing now reaches first run on macOS, Linux, and Windows. The onboarding
+flow persists a selected profile pointer, contained credentials, and a
+validated provider setup before the first message.
+
+**What shipped:**
+- `~/.harness/config.json` + `resolveDefaultProfile()` pointer; profile-directory fallback and `--default-profile`
+- `loadUserEnv()` + `~/.harness/env` mode `0600`; ambient `process.env` wins
+- `harness doctor` with human/JSON output, offline mode, and non-zero failures
+- `harness init` with derived use-case menu, provider/model choices, masked key input, diff guard, backups, and doctor handoff
+- TTY-only `install.sh` and PowerShell installer handoff; piped installs stay non-interactive
+- Go TUI delegates onboarding to Node and re-reads the selected profile
+- Windows server, CLI, and TUI build targets plus release assets
+
+**Why:** the multi-profile-with-one-default mechanism remains a reversible
+pointer, not a pruning operation: all nine profiles stay installed and
+switchable.
+
+**Design:** [`guided-install-onboarding-design.md`](superpowers/specs/2026-08-23-guided-install-onboarding-design.md)
+**Plan:** [`2026-08-23-guided-install-onboarding.md`](superpowers/plans/2026-08-23-guided-install-onboarding.md)
+
+---
+
 ## Suggested sequencing
 
 ```
@@ -687,6 +711,17 @@ Web surface track — **next up is #27**:
   ↓
 #28 analyst workbench      #29 operator console + assistant surface
 ```
+
+Onboarding track — **independent of the web surface track, start any time**:
+
+```
+#30 guided install & first-run onboarding
+```
+
+**#30 does not queue behind #27–#29.** It touches the CLI, the installer, and
+profile resolution — none of which the web surface work owns — and it is the
+only item that changes whether a brand-new install can send a first message
+at all.
 
 **#25 is not optional and does not wait for the UI.** The cross-site WebSocket
 hole and the browser-asserted `yolo` flag are exploitable today, independent of

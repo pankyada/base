@@ -13,12 +13,23 @@ Architecture, features, and usage examples: [docs-site/architecture.md](docs-sit
 curl -fsSL https://raw.githubusercontent.com/pankyada/base/main/scripts/install.sh | sh
 ```
 
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/pankyada/base/main/scripts/install.ps1 | iex
+```
+
 The installer places binaries in `~/.local/bin`, installs the shipped profiles,
 and launches `harness init` when run from an interactive terminal. Init asks
 for your primary use case, provider, model, API key, and preferred surface.
 The API key is stored in `~/.harness/env` with mode `0600`; it is plaintext at
 rest, so treat that file like `~/.aws/credentials`. Existing exported keys
 always win. Run `harness doctor` to diagnose a setup.
+
+Windows installs land in `%LOCALAPPDATA%\Programs\harness` and add that folder
+to the user PATH. Downloaded binaries are unsigned, so Windows Defender or
+SmartScreen may warn before first launch; verify the release source before
+allowing the file. Code signing is not included.
 
 For local development, requires Node.js 22+ and pnpm 9.15.9:
 
