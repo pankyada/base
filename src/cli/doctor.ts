@@ -59,7 +59,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
   }
 
   const port = Number.parseInt(environment.HARNESS_PORT ?? '7337', 10)
-  const registered = listServers().some(server => server.port === port && server.status === 'running')
+  const registered = listServers(environment.HARNESS_SERVER_REGISTRY_DIR ?? join(homeDir, '.harness', 'servers')).some(server => server.port === port && server.status === 'running')
   const free = registered || await (options.portCheck ?? isPortFree)(port)
   checks.push(free
     ? pass('port', registered ? `port ${port} is owned by harness` : `port ${port} is free`)

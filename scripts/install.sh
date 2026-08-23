@@ -6,6 +6,14 @@ INSTALL_DIR="$HOME/.local/bin"
 HARNESS_DIR="$HOME/.harness"
 PROFILE_DIR="$HARNESS_DIR/profiles"
 BASE_URL="https://github.com/${REPO}/releases/latest/download"
+NO_INIT=0
+
+for ARG in "$@"; do
+  case "${ARG}" in
+    --no-init) NO_INIT=1 ;;
+    *) echo "Unknown option: ${ARG}" >&2; exit 1 ;;
+  esac
+done
 
 OS=$(uname -s)
 ARCH=$(uname -m)
@@ -92,3 +100,7 @@ echo "Make sure ${INSTALL_DIR} is in your PATH."
 echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 echo ""
 "${INSTALL_DIR}/harness-server" --version
+
+if [ "${NO_INIT}" -eq 0 ] && [ -t 0 ]; then
+  exec "${INSTALL_DIR}/harness" init
+fi

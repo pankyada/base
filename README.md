@@ -10,12 +10,22 @@ Licensed under the [MIT License](LICENSE).
 Architecture, features, and usage examples: [docs-site/architecture.md](docs-site/architecture.md).
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/pankyada/base/main/scripts/install.sh | sh
+```
+
+The installer places binaries in `~/.local/bin`, installs the shipped profiles,
+and launches `harness init` when run from an interactive terminal. Init asks
+for your primary use case, provider, model, API key, and preferred surface.
+The API key is stored in `~/.harness/env` with mode `0600`; it is plaintext at
+rest, so treat that file like `~/.aws/credentials`. Existing exported keys
+always win. Run `harness doctor` to diagnose a setup.
+
+For local development, requires Node.js 22+ and pnpm 9.15.9:
+
+```bash
 pnpm install
 pnpm tui
 ```
-
-Requires Node.js 22+ and pnpm 9.15.9. Copy `.env.example` to `.env`, then set
-only the provider variables required by the profile you plan to run.
 
 Build TUI locally with `cd tui && go build -o ../bin/harness-tui .`; build
 release targets with `GOCACHE=/tmp/harness-go-cache pnpm build:bin`.

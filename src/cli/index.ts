@@ -6,6 +6,7 @@ import pkg from '../../package.json' with { type: 'json' }
 import { routingStats } from '../analysis/cli.js'
 import { runAuditCommand } from './audit.js'
 import { runDoctorCommand } from './doctor.js'
+import { runInit } from './init.js'
 import { runServerCommand } from './server.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -34,6 +35,11 @@ if (process.argv[2] === 'audit') {
 
 if (process.argv[2] === 'doctor') {
   process.exitCode = await runDoctorCommand(process.argv.slice(3))
+  process.exit()
+}
+
+if (process.argv[2] === 'init') {
+  process.exitCode = await runInit(process.argv.slice(3))
   process.exit()
 }
 

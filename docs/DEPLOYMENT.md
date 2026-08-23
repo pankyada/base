@@ -3,8 +3,18 @@
 ## Option 1 — Local TUI (single command)
 
 ```bash
-cp .env.example .env
-# Edit .env and set OPENAI_API_KEY
+curl -fsSL https://raw.githubusercontent.com/pankyada/base/main/scripts/install.sh | sh
+```
+
+The installer runs `harness init` when attached to a terminal. Choose a
+primary use case, provider, model, API key, and surface. It writes the default
+profile pointer to `~/.harness/config.json` and stores a typed key in
+`~/.harness/env` with mode `0600`. That file is plaintext at rest; treat it
+like `~/.aws/credentials`. Ambient exported keys always take precedence.
+
+Run `harness doctor` any time setup or startup fails. For a source checkout:
+
+```bash
 pnpm install
 pnpm tui
 ```
