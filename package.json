@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Profile-driven agent runtime with guarded tools, durable runs, multi-profile orchestration, and terminal or web control surfaces.",
