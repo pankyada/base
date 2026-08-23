@@ -17,6 +17,7 @@ import { runHooks } from '../hooks/runner.js'
 import { loadProfile } from '../profiles/loader.js'
 import { loadStartupProfiles } from './profile-startup.js'
 import { readUserConfig } from '../config/user-config.js'
+import { loadUserEnv } from '../config/user-env.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
@@ -86,6 +87,7 @@ function writeSessionCount(artifactDir: string, count: number): void {
 }
 
 async function main() {
+  loadUserEnv()
   const profileFlag = process.argv.indexOf('--profile')
   const profilesFlag = process.argv.indexOf('--profiles')
   const defaultFlag = process.argv.indexOf('--default-profile')

@@ -88,6 +88,7 @@ pointer to what replaced them.
 | [64](#adr-64) | Harness edits never happen from inside the product repo | 📋 | product |
 | [66](#adr-66) | Project instruction files are trusted prompt context | ✅ | context |
 | [75](#adr-75) | Default profile is a pointer, never a profile-pruning operation | ✅ | onboarding |
+| [76](#adr-76) | API keys stay in harness-local env, never a shell rc | ✅ | onboarding |
 
 ---
 
@@ -947,3 +948,18 @@ client-owned `tui.json`, not this machine-level config.
 profile. Custom profiles continue to participate in the same registry. A
 missing or invalid config degrades to the registry's existing `coding`, then
 alphabetical, fallback rather than preventing startup.
+
+### ADR-76
+**API keys stay in harness-local env, never a shell rc** — ✅
+
+*Context:* First-run onboarding needs a durable API-key path, but appending an
+export to a shell rc leaks the key to unrelated processes, has inconsistent
+permissions, and does not translate to Windows.
+*Decision:* Store `KEY=value` lines in `~/.harness/env`, created with mode
+`0600`, and load them only when the harness starts. Values already present in
+the ambient process environment always win. The loader is a single seam for a
+future OS-keychain backend.
+*Consequences:* The file is plaintext at rest, comparable to
+`~/.aws/credentials`; this is documented rather than treated as secret storage.
+Users get a portable, contained setup path now, while keychain support can be
+added without changing profile or server code later.
