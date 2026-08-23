@@ -1,0 +1,1 @@
+import{c as t,Q as d,j as a,m as r}from"./chunks/framework.BfXm-OOo.js";const m=JSON.parse('{"title":"Read API","description":"","frontmatter":{},"headers":[],"relativePath":"read-api.md","filePath":"read-api.md"}'),o={name:"read-api.md"};function s(c,e,n,i,p,l){return d(),a("div",null,[...e[0]||(e[0]=[r("",5)])])}const h=t(o,[["render",s]]);export{m as __pageData,h as default};
