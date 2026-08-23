@@ -61,30 +61,20 @@ func main() {
 		return
 	}
 
-	profilePath, err := resolveProfilePath(options.profile)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, fmt.Errorf("failed to determine home directory: %w", err))
+		os.Exit(1)
+	}
+	configPath := filepath.Join(home, ".harness", "config.json")
+	if err := setup.EnsureInitialized(configPath, options.reconfigure); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	profilePath, err := resolveProfilePath(options.profile, configPath, home)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-	if options.reconfigure {
-		backup, err := setup.Reconfigure(profilePath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if backup != "" {
-			fmt.Printf("Backed up existing profile to %s\n", backup)
-		}
-	}
-	if _, err := setup.EnsureProfile(profilePath, os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if err := setup.EnsurePromptFile(filepath.Join(home, ".harness", "prompts", "coding.md")); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
 	}
 
 	serverResult, err := server.EnsureServer(options.port, profilePath)
@@ -150,17 +140,12 @@ func profileNameFromPath(profilePath string) string {
 	return "coding"
 }
 
-// resolveProfilePath mirrors src/server/index.ts's default-path logic so the
-// TUI checks (and, if needed, provisions) the exact file the server will
-// load — an empty flag means "~/.harness/profiles/coding.yaml", anything
-// else resolves relative to the launch directory, same as Node's resolve().
-func resolveProfilePath(profileArg string) (string, error) {
+// resolveProfilePath mirrors src/server/index.ts's configured default-path
+// logic. Explicit --profile paths remain relative to the launch directory;
+// otherwise init's selected default profile is re-read from config.json.
+func resolveProfilePath(profileArg, configPath, home string) (string, error) {
 	if profileArg == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("failed to determine home directory: %w", err)
-		}
-		return filepath.Join(home, ".harness", "profiles", "coding.yaml"), nil
+		return setup.ResolveDefaultProfile(configPath, home)
 	}
 	abs, err := filepath.Abs(profileArg)
 	if err != nil {

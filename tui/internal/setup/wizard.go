@@ -1,62 +1,53 @@
-// Package setup provisions a first-run harness profile and system prompt so
-// harness-tui can boot without the user having hand-written YAML first.
+// Package setup hands first-run onboarding to the Node harness CLI so every
+// surface uses one profile and secret-management implementation.
 package setup
 
 import (
-	"bufio"
-	_ "embed"
+	"encoding/json"
 	"fmt"
-	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
-const (
-	defaultBaseURL   = "https://api.openai.com/v1"
-	defaultAPIKeyEnv = "OPENAI_API_KEY"
-	defaultModelID   = "gpt-4o"
-)
-
-//go:embed assets/coding.md
-var defaultSystemPrompt []byte
-
-// EnsureProfile checks whether profilePath already exists. If it does not,
-// it interactively prompts on in/out for the three fields the server cannot
-// run without (base URL, API key env var, model ID), then writes a starter
-// profile with sane defaults for everything else. Returns true if it wrote a
-// new profile.
-func EnsureProfile(profilePath string, in io.Reader, out io.Writer) (bool, error) {
-	if _, err := os.Stat(profilePath); err == nil {
-		return false, nil
-	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("failed to check profile %s: %w", profilePath, err)
+// EnsureInitialized runs the canonical Node wizard when the user has no
+// config. The child inherits the terminal so prompts, masking, and doctor
+// output behave exactly as they do for a direct `harness init` invocation.
+// Reconfigure always forwards --reconfigure; Node owns backups and diffs.
+func EnsureInitialized(configPath string, reconfigure bool) error {
+	if !reconfigure {
+		if _, err := os.Stat(configPath); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to check harness config %s: %w", configPath, err)
+		}
 	}
 
-	fmt.Fprintf(out, "No profile found at %s — let's set one up.\n", profilePath)
-	fmt.Fprintln(out, "Press enter to accept the bracketed default.")
-	fmt.Fprintln(out)
-
-	reader := bufio.NewReader(in)
-	baseURL := promptDefault(reader, out, "Base URL", defaultBaseURL)
-	apiKeyEnv := promptDefault(reader, out, "API key env var", defaultAPIKeyEnv)
-	modelID := promptDefault(reader, out, "Model ID", defaultModelID)
-
-	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
-		return false, fmt.Errorf("failed to create profile directory: %w", err)
+	command, err := exec.LookPath("harness")
+	if err != nil {
+		return fmt.Errorf("harness init is required but harness was not found on PATH: %w", err)
 	}
-	if err := os.WriteFile(profilePath, []byte(renderProfile(baseURL, apiKeyEnv, modelID)), 0o644); err != nil {
-		return false, fmt.Errorf("failed to write profile: %w", err)
+	args := []string{"init"}
+	if reconfigure {
+		args = append(args, "--reconfigure")
 	}
-
-	fmt.Fprintf(out, "\nWrote profile to %s\n\n", profilePath)
-	return true, nil
+	cmd := exec.Command(command, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("harness init failed: %w", err)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		return fmt.Errorf("harness init completed without creating %s: %w", configPath, err)
+	}
+	return nil
 }
 
-// Reconfigure moves an existing profile out of the way (timestamped backup)
-// so a subsequent EnsureProfile call treats it as absent and re-prompts. If
-// no profile exists yet, it is a no-op and returns an empty backup path.
+// Reconfigure is retained for callers that need the old profile backup helper.
+// The TUI entrypoint no longer calls it: --reconfigure is forwarded to the
+// Node wizard, which backs up config, env, and profile files coherently.
 func Reconfigure(profilePath string) (backupPath string, err error) {
 	if _, err := os.Stat(profilePath); err != nil {
 		if os.IsNotExist(err) {
@@ -71,73 +62,34 @@ func Reconfigure(profilePath string) (backupPath string, err error) {
 	return backupPath, nil
 }
 
-// EnsurePromptFile writes the bundled default system prompt to path if
-// nothing exists there yet. It never overwrites an existing file.
-func EnsurePromptFile(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to check system prompt %s: %w", path, err)
+// ResolveDefaultProfile reads the user config after init and returns the
+// selected profile file. Explicit --profile paths remain untouched.
+func ResolveDefaultProfile(configPath, homeDir string) (string, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read harness config %s: %w", configPath, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create prompt directory: %w", err)
+	var config struct {
+		DefaultProfile string `json:"default_profile"`
+		ProfilesDir    string `json:"profiles_dir"`
 	}
-	if err := os.WriteFile(path, defaultSystemPrompt, 0o644); err != nil {
-		return fmt.Errorf("failed to write system prompt: %w", err)
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("failed to parse harness config %s: %w", configPath, err)
 	}
-	return nil
-}
-
-func promptDefault(reader *bufio.Reader, out io.Writer, label, def string) string {
-	fmt.Fprintf(out, "%s [%s]: ", label, def)
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return def
+	if config.DefaultProfile == "" {
+		return "", fmt.Errorf("harness config %s has no default_profile", configPath)
 	}
-	return line
-}
-
-func renderProfile(baseURL, apiKeyEnv, modelID string) string {
-	return fmt.Sprintf(`name: coding
-model:
-  base_url: %s
-  api_key_env: %s
-  id: %s
-  fallback_id: %s
-system_prompt: ~/.harness/prompts/coding.md
-working_dir: $CWD
-artifact_dir: .harness/coding
-tools:
-  builtin:
-    Read: allow
-    Write: allow
-    Edit: allow
-    Bash: prompt
-    Grep: allow
-    Glob: allow
-    Skill: allow
-    MemoryRead: allow
-    MemoryWrite: allow
-    MemoryList: allow
-    Stats: allow
-    Delegate: prompt
-  mcp_servers: []
-hooks:
-  pre_tool: []
-  post_tool: []
-  on_stop: []
-improvement:
-  enabled: true
-  mine_skills_every_n_sessions: 10
-`, yamlQuote(baseURL), yamlQuote(apiKeyEnv), yamlQuote(modelID), yamlQuote(modelID))
-}
-
-// yamlQuote wraps a scalar in a YAML double-quoted string so user input
-// (which may contain colons, `#`, or other flow-scalar-breaking characters)
-// can't corrupt the document.
-func yamlQuote(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	return `"` + s + `"`
+	profilesDir := config.ProfilesDir
+	if profilesDir == "" {
+		profilesDir = filepath.Join(homeDir, ".harness", "profiles")
+	}
+	if profilesDir == "~" {
+		profilesDir = homeDir
+	} else if len(profilesDir) > 2 && profilesDir[:2] == "~/" {
+		profilesDir = filepath.Join(homeDir, profilesDir[2:])
+	}
+	if !filepath.IsAbs(profilesDir) {
+		profilesDir = filepath.Join(homeDir, profilesDir)
+	}
+	return filepath.Join(profilesDir, config.DefaultProfile+".yaml"), nil
 }

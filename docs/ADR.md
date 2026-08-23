@@ -963,3 +963,18 @@ future OS-keychain backend.
 `~/.aws/credentials`; this is documented rather than treated as secret storage.
 Users get a portable, contained setup path now, while keychain support can be
 added without changing profile or server code later.
+
+### ADR-77
+**Onboarding lives in one process** — ✅
+
+*Context:* The Node CLI now owns use-case selection, provider/model defaults,
+secret handling, profile diffing, config persistence, and doctor checks. A
+second native Go wizard would immediately duplicate that policy surface and
+drift as profiles and providers change.
+*Decision:* The Go TUI delegates first-run setup and reconfiguration to
+`harness init` with the terminal inherited, then re-reads `config.json` to
+join the selected profile. Go retains only the small process handoff and
+legacy backup helper; it does not write profiles or prompts.
+*Consequences:* Every surface gets the same onboarding behavior and security
+guarantees. Contributors adding onboarding policy must change the Node wizard
+and its tests, not re-add a native Go flow.
