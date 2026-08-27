@@ -87,8 +87,8 @@ describe('Delegate tool', () => {
     expect(findProfilePath('worker', { profile_path: owner })).toBe(worker)
   })
 
-  it('returns error when delegateDepth >= 1 (max depth exceeded)', async () => {
-    const context = makeContext({ delegateDepth: 1 })
+  it('returns error when delegateDepth reaches the configured max depth', async () => {
+    const context = makeContext({ delegateDepth: 2, maxDepth: 2 })
     const result = await delegateTool.execute(
       { profile: 'coding', task: 'do something' },
       context

@@ -56,6 +56,7 @@ import { isYoloEnabled, resolveApprovalLimit, resolveRequestedApprovalMode } fro
 import { SessionApprovalGrants } from './session-approvals.js'
 import { RunBudget, BudgetExceeded } from '../runs/budget.js'
 import { sessionEndFromError, type SessionEndStatus } from './session-status.js'
+import { createRootFrame } from '../agents/frames.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -307,7 +308,7 @@ async function main() {
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     const pendingRenders = new Map<string, (result: any) => void>()
 
-    const requestToolApproval = (sendForRun: (message: any) => void, id: string, name: string, input: Record<string, unknown>, risk?: 'safe' | 'caution' | 'danger', reason?: string): Promise<boolean> => new Promise(resolve => {
+    const requestToolApproval = (sendForRun: (message: any) => void, id: string, name: string, input: Record<string, unknown>, risk?: 'safe' | 'caution' | 'danger', reason?: string, agentId?: string): Promise<boolean> => new Promise(resolve => {
       // This callback is reached only after ACL resolution produced a prompt.
       // Session grants never widen a deny decision; deny never reaches this path.
       const grant = sessionApprovalGrants.check(name, 'prompt')
@@ -317,7 +318,7 @@ async function main() {
         return
       }
       pendingApprovals.set(id, { resolve, name })
-      sendForRun({ type: 'tool_prompt', id, name, input, risk, reason })
+      sendForRun({ type: 'tool_prompt', id, name, input, risk, reason, ...(agentId ? { agent_id: agentId } : {}) })
     })
 
     const resolvePendingClientWork = (reason: string): void => {
@@ -348,6 +349,7 @@ async function main() {
     let connectionModel = profile.model.id
     let miningSkills = false
     let safetyDisclosed = false
+    let protocolVersion = PROTOCOL_VERSION
 
     const rebuildConnectionProfile = () => {
       connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
@@ -411,7 +413,7 @@ async function main() {
         model: connectionProfile.model.id, working_dir: connectionProfile.working_dir,
         allowed_packages: connectionProfile.executor?.allowed_packages ?? [],
         ...(budget ? { budget: { max_cost_usd: budget.max_cost_usd } } : {}),
-        yolo: isYoloEnabled(approvalMode), protocol_version: PROTOCOL_VERSION,
+        yolo: isYoloEnabled(approvalMode), protocol_version: protocolVersion,
       })
     }
 
@@ -440,12 +442,14 @@ async function main() {
       }
       const planEvents: AgentLoopEvents = {
         onToken: () => {},
-        onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
-        onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
+        onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
+        onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
         onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
-        onToolPrompt: (id, n, i, risk, reason) => requestToolApproval(sendForRun, id, n, i, risk, reason),
+        onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
         onSessionEnd: () => {},
-        onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
+        onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+        onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+        onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
         onInputRequest: (id, prompt, kind, options) => requestInput(runId, prompt, kind, options, id),
         onTodosUpdate: todos => sendForRun({ type: 'todos', todos }),
         onStage: (stage, intensity, tier, model, state, cost_usd) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
@@ -457,6 +461,8 @@ async function main() {
           events: planEvents, openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0, agentTools,
           maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode, channels: connectionChannels, runId,
           pendingInputs: pendingStore,
+          agentFrame: createRootFrame(connectionProfile.name, previewSession.id),
+          protocolVersion,
         }
         const preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
         sendForRun({ type: 'plan', content: preview.body })
@@ -511,10 +517,12 @@ async function main() {
       }
 
       if (msg.type === 'hello') {
-		if (msg.protocol_version !== PROTOCOL_VERSION) {
-		  send({ type: 'error', message: `Unsupported protocol version ${msg.protocol_version ?? 1}; client must use version ${PROTOCOL_VERSION}.` })
+		const requestedProtocolVersion = msg.protocol_version ?? 1
+		if (requestedProtocolVersion !== 2 && requestedProtocolVersion !== PROTOCOL_VERSION) {
+		  send({ type: 'error', message: `Unsupported protocol version ${requestedProtocolVersion}; client must use version 2 or ${PROTOCOL_VERSION}.` })
 		  return
 		}
+		protocolVersion = requestedProtocolVersion
         // Only honour hello before the session has any messages
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
@@ -607,14 +615,17 @@ async function main() {
           pendingStore, runStore, abortRegistry,
           resolveProfile: name => profiles.get(name) ?? null,
           channels: connectionChannels,
+          protocolVersion,
           events: {
-            onToken: t => sendForRun({ type: 'token', content: t }),
-            onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
-            onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
+            onToken: (t, agentId) => sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }),
+            onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
+            onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
             onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
-            onToolPrompt: (id, n, i, risk, reason) => requestToolApproval(sendForRun, id, n, i, risk, reason),
+            onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
             onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
-            onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens }),
+            onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+            onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+            onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
             onInputRequest: (id, prompt, kind, options) => requestInput(resumedRunId, prompt, kind, options, id),
           },
         })
@@ -885,11 +896,11 @@ async function main() {
           : null
         voiceOutput?.start()
         const events: AgentLoopEvents = {
-          onToken: t => { sendForRun({ type: 'token', content: t }); voiceOutput?.push(t) },
-          onToolStart: (id, n, i) => sendForRun({ type: 'tool_start', id, name: n, input: i }),
-          onToolEnd: (id, n, r, ok) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok }),
+          onToken: (t, agentId) => { sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }); voiceOutput?.push(t) },
+          onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
+          onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
           onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
-          onToolPrompt: (id, n, i, risk, reason) => requestToolApproval(sendForRun, id, n, i, risk, reason),
+          onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
           onSessionEnd: (id) => {
             voiceOutput?.end()
             saveSession(session)
@@ -897,9 +908,11 @@ async function main() {
             sendForRun({ type: 'session_end', sessionId: id, status, ...(terminalReason ? { reason: terminalReason } : {}) })
             closeMcpWhenIdle()
           },
-          onStats: (tokens_in, tokens_out, cost_usd, context_tokens) => {
-            sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens })
+          onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => {
+            sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) })
           },
+          onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+          onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
           onSafetyNotice: (classifierModel) => {
             if (safetyDisclosed) return
             safetyDisclosed = true
@@ -936,6 +949,8 @@ async function main() {
           runId,
           pendingInputs: pendingStore,
           budget,
+          agentFrame: createRootFrame(connectionProfile.name, session.id),
+          protocolVersion,
         }
 
         try {

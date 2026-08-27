@@ -11,7 +11,9 @@ import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { buildSystemPrompt } from '../context/system-prompt.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
-import type { ToolContext, AgentLoopEvents } from '../tools/types.js'
+import type { ToolContext } from '../tools/types.js'
+import { createAgentFrame } from './frames.js'
+import { tagEvents } from './events.js'
 
 export interface SubAgentParams {
   agentName: string
@@ -51,6 +53,16 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
 
     try {
       const subSession = createSession(subProfile.name, context.session.user)
+      const frame = createAgentFrame({
+        agentName,
+        parent: context.agentFrame,
+        profile: subProfile.name,
+        sessionId: subSession.id,
+        depth: (context.delegateDepth ?? 0) + 1,
+      })
+      const subEvents = tagEvents(context.events, frame, context.protocolVersion)
+      const startedAt = Date.now()
+      subEvents.onAgentSpawn?.(frame, input)
       const subMemory =
         subProfile.memory?.provider === 'graph'
           ? new GraphMemoryProvider(subProfile.artifact_dir, subSession)
@@ -62,15 +74,6 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         role: 'system',
         content: await buildSystemPrompt({ profile: subProfile, systemPromptBase, skillIndex, memory: subMemory }),
       })
-
-      const subEvents: AgentLoopEvents = {
-        onToken: t => context.events.onToken(t),
-        onToolStart: (id, n, i) => context.events.onToolStart(id, n, i),
-        onToolEnd: (id, n, r, ok) => context.events.onToolEnd(id, n, r, ok),
-        onToolPrompt: (id, n, i) => context.events.onToolPrompt(id, n, i),
-        onSessionEnd: () => {},
-        onStats: context.events.onStats,
-      }
 
       const subContext: ToolContext = {
         profile: subProfile,
@@ -85,30 +88,46 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         delegateDepth: (context.delegateDepth ?? 0) + 1,
         maxDepth,
         agentTools: [], // sub-agents don't inherit parent's agent registry
+        agentFrame: frame,
+        protocolVersion: context.protocolVersion,
       }
 
-      await runAgentLoop(
-        userMessage,
-        subProfile,
-        subSession,
-        subContext,
-        subEvents,
-        subOpenai,
-        context.signal,
-        context.stage ? { stage: context.stage } : undefined,
-      )
+      try {
+        await runAgentLoop(
+          userMessage,
+          subProfile,
+          subSession,
+          subContext,
+          subEvents,
+          subOpenai,
+          context.signal,
+          context.stage ? { stage: context.stage } : undefined,
+        )
 
-      // 5–6. Output parsing + validation (shared util)
-      const messages = subSession.messages as Array<{ role: string; content?: string | null }>
-      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
-      const raw = lastAssistant?.content ?? ''
-      const result = parseJsonContract(raw, outputValidator)
-      if (!result.ok) {
-        return `Error: agent "${agentName}" ${result.error}`
+        // 5–6. Output parsing + validation (shared util)
+        const messages = subSession.messages as Array<{ role: string; content?: string | null }>
+        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
+        const raw = lastAssistant?.content ?? ''
+        const result = parseJsonContract(raw, outputValidator)
+        if (!result.ok) {
+          const error = `Error: agent "${agentName}" ${result.error}`
+          subEvents.onAgentEnd?.(frame.agent_id, 'contract_violation', error, undefined, Date.now() - startedAt)
+          return error
+        }
+
+        const output = result.value
+        subEvents.onAgentEnd?.(frame.agent_id, 'completed', undefined, output, Date.now() - startedAt)
+        return JSON.stringify(output)
+      } catch (e: any) {
+        const status = context.signal?.aborted || e?.name === 'AbortError'
+          ? 'cancelled'
+          : e?.name === 'BudgetExceeded'
+            ? 'budget_exceeded'
+            : 'failed'
+        const error = `Error: agent "${agentName}" failed: ${e.message}`
+        subEvents.onAgentEnd?.(frame.agent_id, status, error, undefined, Date.now() - startedAt)
+        throw e
       }
-
-      // 7. Return validated output as JSON string
-      return JSON.stringify(result.value)
     } finally {
       await destroyMcpClients(subMcpEntries).catch(() => {})
     }

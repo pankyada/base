@@ -116,6 +116,31 @@ describe('runSubAgent', () => {
     expect(destroyMcpClients).toHaveBeenCalledOnce()
   })
 
+  it('emits child lifecycle and tagged stream events', async () => {
+    const context = makeParams().context
+    const onAgentSpawn = vi.fn()
+    const onAgentEnd = vi.fn()
+    const onToken = vi.fn()
+    context.events = { ...context.events, onAgentSpawn, onAgentEnd, onToken }
+    vi.mocked(runAgentLoop).mockImplementation(async (_msg, _profile, session: any, _context, events: any) => {
+      events.onToken('child token')
+      session.messages.push({ role: 'assistant', content: JSON.stringify({ findings: 'done' }) })
+    })
+
+    await runSubAgent({ ...makeParams(), context })
+
+    expect(onAgentSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      agent_id: expect.stringMatching(/^ag_[a-f0-9]{4}$/),
+      agent_name: 'researcher',
+      parent_agent_id: 'root',
+      depth: 1,
+      session_id: expect.any(String),
+    }), { query: 'test query' })
+    const frame = onAgentSpawn.mock.calls[0][0]
+    expect(onToken).toHaveBeenCalledWith('child token', frame.agent_id)
+    expect(onAgentEnd).toHaveBeenCalledWith(frame.agent_id, 'completed', undefined, { findings: 'done' }, expect.any(Number))
+  })
+
   it('passes the active stage ACL into a named sub-agent loop', async () => {
     let subLoopAcl: string | undefined
     vi.mocked(runAgentLoop).mockImplementation(async (_msg, subProfile, _session, _context, _events, _openai, _signal, opts) => {

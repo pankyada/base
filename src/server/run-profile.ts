@@ -21,6 +21,8 @@ import { isParkSignal } from '../runs/park.js'
 import { BudgetExceeded } from '../runs/budget.js'
 import type { RunBudget } from '../runs/budget.js'
 import { audit } from '../audit/journal.js'
+import { createRootFrame } from '../agents/frames.js'
+import type { AgentFrame } from '../types.js'
 
 export interface RestUsage { tokens_in: number; tokens_out: number; cost_usd: number }
 
@@ -46,6 +48,8 @@ export interface RunProfileOptions {
   resumeApproval?: { toolCallId: string; approved: boolean; name: string; input: Record<string, unknown>; isMcp: boolean }
   budget?: RunBudget
   initialTaintSources?: string[]
+  agentFrame?: AgentFrame
+  protocolVersion?: number
 }
 
 /** One-shot root run of a profile: build context, run the loop, extract final text + usage. */
@@ -84,6 +88,8 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
       events, openai, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2, channels,
       pendingInputs: opts.pendingInputs, runId: opts.runId, unattended: opts.unattended, budget: opts.budget, taintSources: opts.initialTaintSources,
+      agentFrame: opts.agentFrame ?? createRootFrame(profile.name, session.id),
+      protocolVersion: opts.protocolVersion,
     }
 
     if (profile.workflow?.enabled) {

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { homedir } from 'os'
-import { ToolDefinition, ToolContext, AgentLoopEvents } from '../types.js'
+import { ToolDefinition, ToolContext } from '../types.js'
 import { loadProfile } from '../../profiles/loader.js'
 import { createProviderClient } from '../../provider/client.js'
 import { createMcpClients, destroyMcpClients } from '../../mcp/client.js'
@@ -12,6 +12,8 @@ import { MemoryProvider } from '../../memory/interface.js'
 import { loadAllSkills, resolveSkillsDirs } from '../../skills/loader.js'
 import { buildSkillIndex } from '../../skills/indexer.js'
 import { runAgentLoop } from '../../loop/agent-loop.js'
+import { createAgentFrame } from '../../agents/frames.js'
+import { tagEvents } from '../../agents/events.js'
 
 export function findProfilePath(name: string, profile?: { profile_path?: string }): string | null {
   const candidates = [
@@ -38,9 +40,10 @@ export const delegateTool: ToolDefinition = {
   async execute(input, context) {
     const { profile: profileName, task } = input as { profile: string; task: string }
 
-    // Depth limit — sub-agents cannot delegate further
-    if ((context.delegateDepth ?? 0) >= 1) {
-      return 'Error: cannot delegate from within a sub-agent (max depth is 1).'
+    // Depth limit — match agents-as-tools and honor the active profile cap.
+    const maxDepth = context.maxDepth ?? 2
+    if ((context.delegateDepth ?? 0) >= maxDepth) {
+      return `Error: cannot delegate from within a sub-agent (max depth is ${maxDepth}).`
     }
 
     // Profile discovery
@@ -59,6 +62,16 @@ export const delegateTool: ToolDefinition = {
 
       try {
         const subSession = createSession(subProfile.name, context.session.user)
+        const frame = createAgentFrame({
+          agentName: profileName,
+          parent: context.agentFrame,
+          profile: subProfile.name,
+          sessionId: subSession.id,
+          depth: (context.delegateDepth ?? 0) + 1,
+        })
+        const subEvents = tagEvents(context.events, frame, context.protocolVersion)
+        const startedAt = Date.now()
+        subEvents.onAgentSpawn?.(frame, input)
         const subMemory: MemoryProvider = subProfile.memory?.provider === 'graph'
           ? new GraphMemoryProvider(subProfile.artifact_dir, subSession)
           : new FsMemoryProvider(subProfile.artifact_dir, subSession)
@@ -73,17 +86,6 @@ export const delegateTool: ToolDefinition = {
           content: systemPromptBase + skillIndex + memSection,
         })
 
-        // Forward all sub-agent events to parent WebSocket
-        const subEvents: AgentLoopEvents = {
-          onToken: t => context.events.onToken(t),
-          onToolStart: (id, n, i) => context.events.onToolStart(id, n, i),
-          onToolEnd: (id, n, r, ok) => context.events.onToolEnd(id, n, r, ok),
-          onToolPrompt: (id, n, i) => context.events.onToolPrompt(id, n, i),
-          onSessionEnd: () => { /* no-op — parent manages its own session end */ },
-          onStats: (a, b, c) => context.events.onStats?.(a, b, c),
-        }
-
-        // Sub-context: delegateDepth = 1 blocks further delegation
         const subContext: ToolContext = {
           profile: subProfile,
           session: subSession,
@@ -94,39 +96,51 @@ export const delegateTool: ToolDefinition = {
           events: subEvents,
           openai: subOpenai,
           signal: context.signal,
-          delegateDepth: 1,
+          delegateDepth: (context.delegateDepth ?? 0) + 1,
+          maxDepth,
           budget: context.budget,
           taintSources: context.taintSources,
+          agentFrame: frame,
+          protocolVersion: context.protocolVersion,
         }
 
-        await runAgentLoop(
-          task,
-          subProfile,
-          subSession,
-          subContext,
-          subEvents,
-          subOpenai,
-          context.signal,
-          context.stage ? { stage: context.stage } : undefined,
-        )
+        try {
+          await runAgentLoop(
+            task,
+            subProfile,
+            subSession,
+            subContext,
+            subEvents,
+            subOpenai,
+            context.signal,
+            context.stage ? { stage: context.stage } : undefined,
+          )
 
-        // Extract final assistant text
-        const messages = subSession.messages as Array<{ role: string; content?: string | null }>
-        const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
-        const finalText = lastAssistant?.content ?? '(no response)'
+          // Extract final assistant text
+          const messages = subSession.messages as Array<{ role: string; content?: string | null }>
+          const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
+          const finalText = lastAssistant?.content ?? '(no response)'
 
-        // Build tool summary
-        const toolCounts = new Map<string, number>()
-        for (const tc of subSession.tool_calls) {
-          toolCounts.set(tc.name, (toolCounts.get(tc.name) ?? 0) + 1)
+          // Build tool summary
+          const toolCounts = new Map<string, number>()
+          for (const tc of subSession.tool_calls) {
+            toolCounts.set(tc.name, (toolCounts.get(tc.name) ?? 0) + 1)
+          }
+          const toolSummary = toolCounts.size === 0
+            ? 'Tools used: (none)'
+            : 'Tools used: ' + [...toolCounts.entries()].map(([n, c]) => `${n} ×${c}`).join(', ')
+
+          const output = `[Delegate: ${profileName}]\n${finalText}\n\n${toolSummary}`
+          subEvents.onAgentEnd?.(frame.agent_id, 'completed', undefined, output, Date.now() - startedAt)
+          return (subSession.taint_sources?.length ?? 0) > 0
+            ? { content: output, provenance: 'untrusted' as const, source: subSession.taint_sources!.join('; ') }
+            : output
+        } catch (e: any) {
+          const status = context.signal?.aborted || e?.name === 'AbortError' ? 'cancelled' : e?.name === 'BudgetExceeded' ? 'budget_exceeded' : 'failed'
+          const error = `Error: delegate to "${profileName}" failed: ${e.message}`
+          subEvents.onAgentEnd?.(frame.agent_id, status, error, undefined, Date.now() - startedAt)
+          throw e
         }
-        const toolSummary = toolCounts.size === 0
-          ? 'Tools used: (none)'
-          : 'Tools used: ' + [...toolCounts.entries()].map(([n, c]) => `${n} ×${c}`).join(', ')
-
-        return (subSession.taint_sources?.length ?? 0) > 0
-          ? { content: `[Delegate: ${profileName}]\n${finalText}\n\n${toolSummary}`, provenance: 'untrusted' as const, source: subSession.taint_sources!.join('; ') }
-          : `[Delegate: ${profileName}]\n${finalText}\n\n${toolSummary}`
       } finally {
         await destroyMcpClients(subMcpEntries).catch(() => {})
       }

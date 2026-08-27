@@ -2,7 +2,7 @@ import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
 import type { McpEntry } from '../mcp/client.js'
-import type { TodoItem, InputRequestKind, RiskLevel, ApprovalMode, SurfaceSpec, SurfaceRenderResult } from '../types.js'
+import type { AgentFrame, TodoItem, InputRequestKind, RiskLevel, ApprovalMode, SurfaceSpec, SurfaceRenderResult } from '../types.js'
 import type { Stage, Intensity, Tier } from '../workflow/types.js'
 import type { ExecutionResult } from '../executor/interface.js'
 import type OpenAI from 'openai'
@@ -18,13 +18,15 @@ export type ToolReturn = string | { content: string; provenance?: ToolProvenance
 export type { SurfaceSpec, SurfaceRenderResult } from '../types.js'
 
 export interface AgentLoopEvents {
-  onToken(token: string): void
-  onToolStart(toolCallId: string, name: string, input: Record<string, unknown>): void
-  onToolEnd(toolCallId: string, name: string, result: string, ok: boolean): void
+  onToken(token: string, agentId?: string): void
+  onToolStart(toolCallId: string, name: string, input: Record<string, unknown>, agentId?: string): void
+  onToolEnd(toolCallId: string, name: string, result: string, ok: boolean, agentId?: string): void
   onToolParked?(toolCallId: string, name: string, input: Record<string, unknown>): void
-  onToolPrompt(id: string, name: string, input: Record<string, unknown>, risk?: RiskLevel, reason?: string): Promise<boolean>
+  onToolPrompt(id: string, name: string, input: Record<string, unknown>, risk?: RiskLevel, reason?: string, agentId?: string): Promise<boolean>
   onSessionEnd(sessionId: string): void
-  onStats?(tokens_in: number, tokens_out: number, cost_usd: number, context_tokens?: number): void
+  onStats?(tokens_in: number, tokens_out: number, cost_usd: number, context_tokens?: number, agentId?: string): void
+  onAgentSpawn?(frame: AgentFrame, input: Record<string, unknown>, budget?: { max_cost_usd: number }): void
+  onAgentEnd?(agentId: string, status: 'completed' | 'failed' | 'cancelled' | 'budget_exceeded' | 'contract_violation', error?: string, output?: unknown, durationMs?: number): void
   onNotice?(level: 'info' | 'warn' | 'error', message: string, detail?: string): void
   onSafetyNotice?(model: string): void
   onArtifacts?(sessionId: string, artifacts: any[]): void
@@ -65,6 +67,8 @@ export interface ToolContext {
   unattended?: boolean
   taintSources?: string[]
   stage?: import('../workflow/types.js').StageTag
+  agentFrame?: AgentFrame
+  protocolVersion?: number
 }
 
 export interface ToolDefinition {

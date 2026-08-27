@@ -90,7 +90,7 @@ function childSession(root: Session, stageId: string, seed: string): Session {
 }
 
 function stageEvents(root: Session, events: AgentLoopEvents): AgentLoopEvents {
-  return { ...events, onSessionEnd: () => {}, onStats: (input, output, cost, contextTokens) => events.onStats?.(root.usage.input + input, root.usage.output + output, root.usage.cost_usd + cost, contextTokens) }
+  return { ...events, onSessionEnd: () => {}, onStats: (input, output, cost, contextTokens, agentId) => events.onStats?.(root.usage.input + input, root.usage.output + output, root.usage.cost_usd + cost, contextTokens, agentId) }
 }
 
 async function shadowCompletion(openai: OpenAI, model: string, prompt: string): Promise<string> {

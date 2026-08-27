@@ -14,6 +14,7 @@ export interface ResumePendingOptions {
   resolveProfile: (name: string) => Profile | null
   channels?: ChannelRuntime
   events?: AgentLoopEvents
+  protocolVersion?: number
 }
 
 export type ResumePendingResult =
@@ -90,6 +91,7 @@ async function continuePendingRun(
           }
         : undefined,
       appendUser: false,
+      protocolVersion: opts.protocolVersion,
     })
     saveSession(result.session)
     opts.runStore.update(run.id, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
