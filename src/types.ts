@@ -163,6 +163,19 @@ export interface AgentFrame {
   session_id: string
 }
 
+export interface AgentCatalogEntry {
+  name: string
+  profile: string
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+  label?: string
+  hint?: string
+  prompt_field?: string
+  example?: Record<string, unknown>
+  max_concurrent?: number
+  budget_usd?: number
+}
+
 export const PROTOCOL_VERSION = 3
 
 export type ClientMessage =
@@ -200,6 +213,9 @@ export type ClientMessage =
   | { type: 'pending_answer'; pending_id: string; value: string }
   | { type: 'undo_list' }
   | { type: 'undo_apply'; id: string; force?: boolean; reason?: string }
+  | { type: 'spawn'; agent: string; input: Record<string, unknown>; count?: number; budget_usd?: number }
+  | { type: 'agent_cancel'; agent_id: string }
+  | { type: 'agents_list' }
 
 export type ServerMessage =
   | { type: 'turn_start'; agent_id?: string; run_id: string }
@@ -223,6 +239,7 @@ export type ServerMessage =
   | { type: 'agent_state'; agent_id: string; state: 'running' | 'waiting_approval' | 'waiting_input'; tool?: string; run_id?: string }
   | { type: 'agent_stats'; agent_id: string; tokens_in: number; tokens_out: number; cost_usd: number; tools: number; run_id?: string }
   | { type: 'agent_end'; agent_id: string; status: 'completed' | 'failed' | 'cancelled' | 'budget_exceeded' | 'contract_violation'; error?: string; output?: unknown; duration_ms: number; run_id?: string }
+  | { type: 'agent_catalog'; agents: AgentCatalogEntry[] }
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }

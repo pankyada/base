@@ -32,6 +32,7 @@ describe('agent frames', () => {
     tagged.onToolEnd('tool-1', 'Read', 'ok', true)
     await tagged.onToolPrompt('tool-2', 'Bash', { command: 'pwd' })
     tagged.onStats?.(1, 2, 0.03)
+    expect(tagged.onInputRequest).toBeUndefined()
 
     expect(messages).toEqual([
       { type: 'token', content: 'root token' },
@@ -72,7 +73,7 @@ describe('agent frames', () => {
   })
 
   it('generates short agent ids and a real root frame', () => {
-    expect(newAgentId()).toMatch(/^ag_[a-f0-9]{4}$/)
+    expect(newAgentId()).toMatch(/^ag_[a-f0-9]{8}$/)
     expect(createRootFrame('research', 'session-1')).toEqual({
       agent_id: 'root',
       agent_name: 'root',
@@ -99,5 +100,26 @@ describe('agent frames', () => {
     second.onToken('deep')
 
     expect(onToken).toHaveBeenCalledWith('deep', 'ag_two')
+  })
+
+  it('reports child waiting states and agent stats', async () => {
+    const states: unknown[] = []
+    const stats: unknown[] = []
+    const parent = parentEvents([])
+    parent.onInputRequest = async () => 'ok'
+    parent.onAgentState = (agentId, state, tool) => states.push({ agentId, state, tool })
+    parent.onAgentStats = (agentId, tokens_in, tokens_out, cost_usd, tools) => stats.push({ agentId, tokens_in, tokens_out, cost_usd, tools })
+    const tagged = tagEvents(parent, { ...createRootFrame('one', 's1'), agent_id: 'ag_one', agent_name: 'one', parent_agent_id: 'root', depth: 1, origin: 'model', profile: 'one', session_id: 's1' })
+    tagged.onToolStart('tool-1', 'Read', {})
+    await tagged.onToolPrompt('tool-2', 'Bash', {})
+    await tagged.onInputRequest!('input-1', 'question', 'text')
+    tagged.onStats?.(2, 3, 0.04)
+    expect(states).toEqual([
+      { agentId: 'ag_one', state: 'waiting_approval', tool: 'Bash' },
+      { agentId: 'ag_one', state: 'running', tool: undefined },
+      { agentId: 'ag_one', state: 'waiting_input' },
+      { agentId: 'ag_one', state: 'running', tool: undefined },
+    ])
+    expect(stats).toEqual([{ agentId: 'ag_one', tokens_in: 2, tokens_out: 3, cost_usd: 0.04, tools: 1 }])
   })
 })

@@ -50,6 +50,9 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
     const subProfile = loadProfile(subProfilePath)
     const subOpenai = createProviderClient(subProfile)
     const subMcpEntries = await createMcpClients(subProfile)
+    const childBudget = context.budget && context.budget.remainingCost() > 0
+      ? context.budget.allocate(context.budget.remainingCost())
+      : context.budget
 
     try {
       const subSession = createSession(subProfile.name, context.session.user)
@@ -59,10 +62,13 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         profile: subProfile.name,
         sessionId: subSession.id,
         depth: (context.delegateDepth ?? 0) + 1,
+        origin: context.agentOrigin ?? 'model',
       })
       const subEvents = tagEvents(context.events, frame, context.protocolVersion)
       const startedAt = Date.now()
-      subEvents.onAgentSpawn?.(frame, input)
+      if (childBudget) subEvents.onAgentSpawn?.(frame, input, { max_cost_usd: childBudget.config.max_cost_usd })
+      else subEvents.onAgentSpawn?.(frame, input)
+      subEvents.onAgentState?.(frame.agent_id, 'running')
       const subMemory =
         subProfile.memory?.provider === 'graph'
           ? new GraphMemoryProvider(subProfile.artifact_dir, subSession)
@@ -87,7 +93,9 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         signal: context.signal,
         delegateDepth: (context.delegateDepth ?? 0) + 1,
         maxDepth,
+        budget: childBudget,
         agentTools: [], // sub-agents don't inherit parent's agent registry
+        taintSources: context.taintSources,
         agentFrame: frame,
         protocolVersion: context.protocolVersion,
       }
@@ -103,6 +111,12 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
           context.signal,
           context.stage ? { stage: context.stage } : undefined,
         )
+
+        if (context.signal?.aborted) {
+          const error = `Error: agent "${agentName}" cancelled`
+          subEvents.onAgentEnd?.(frame.agent_id, 'cancelled', error, undefined, Date.now() - startedAt)
+          return error
+        }
 
         // 5–6. Output parsing + validation (shared util)
         const messages = subSession.messages as Array<{ role: string; content?: string | null }>
@@ -130,6 +144,7 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
       }
     } finally {
       await destroyMcpClients(subMcpEntries).catch(() => {})
+      childBudget?.release()
     }
   } catch (e: any) {
     return `Error: agent "${agentName}" failed: ${e.message}`

@@ -27,37 +27,71 @@ export class BudgetExceeded extends Error {
 
 export class RunBudget {
   private tools = 0
+  private childTools = 0
+  private childCost = 0
+  private reservedCost = 0
+  private observedCost = 0
+  private released = false
   private readonly started: number
 
   constructor(
     readonly config: BudgetConfig,
     private readonly now: () => number = () => Date.now(),
+    private readonly parent?: RunBudget,
+    private readonly allocation = 0,
   ) {
     validateBudgetConfig(config)
-    this.started = now()
+    this.started = parent?.started ?? now()
   }
 
   checkModel(cost: number, model = 'model call'): void {
     this.checkWall(model, cost)
-    if (!Number.isFinite(cost) || cost >= this.config.max_cost_usd) {
+    if (Number.isFinite(cost)) this.observedCost = Math.max(this.observedCost, cost)
+    if (!Number.isFinite(cost) || cost + this.childCost + this.reservedCost >= this.config.max_cost_usd) {
       throw new BudgetExceeded('cost', this.snapshot(cost), this.config.max_cost_usd, model)
     }
   }
 
   checkTool(tool = 'tool call', cost = 0): void {
     this.checkWall(tool, cost)
-    if (this.tools >= this.config.max_tools) {
+    if (this.tools + this.childTools >= this.config.max_tools) {
       throw new BudgetExceeded('tools', this.snapshot(cost), this.config.max_tools, tool)
     }
     this.tools++
+    this.parent?.recordChildTool()
   }
 
-  snapshot(cost = 0): BudgetSnapshot {
-    return { cost_usd: Number.isFinite(cost) ? cost : 0, tools: this.tools, wall_s: (this.now() - this.started) / 1000 }
+  snapshot(cost = this.observedCost): BudgetSnapshot {
+    return { cost_usd: Number.isFinite(cost) ? cost : 0, tools: this.tools + this.childTools, wall_s: (this.now() - this.started) / 1000 }
   }
 
   /** Child execution shares this ledger; it can spend only the parent's remainder. */
   inherit(): RunBudget { return this }
+
+  remainingCost(): number {
+    return Math.max(0, this.config.max_cost_usd - this.observedCost - this.childCost - this.reservedCost)
+  }
+
+  /** Reserve a fixed share before starting a child; release returns unused share. */
+  allocate(maxCost: number): RunBudget {
+    if (!Number.isFinite(maxCost) || maxCost < 0 || maxCost > this.remainingCost()) {
+      throw new BudgetConfigError(`child budget ${maxCost} exceeds parent remainder ${this.remainingCost()}`)
+    }
+    this.reservedCost += maxCost
+    return new RunBudget({ max_cost_usd: maxCost, max_tools: this.config.max_tools, max_wall_s: this.config.max_wall_s }, this.now, this, maxCost)
+  }
+
+  release(): void {
+    if (this.released || !this.parent) return
+    this.released = true
+    this.parent.reservedCost = Math.max(0, this.parent.reservedCost - this.allocation)
+    this.parent.childCost += this.observedCost + this.childCost
+  }
+
+  private recordChildTool(): void {
+    this.childTools++
+    this.parent?.recordChildTool()
+  }
 
   private checkWall(inFlight: string, cost: number): void {
     const wall = (this.now() - this.started) / 1000

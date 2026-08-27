@@ -130,7 +130,7 @@ describe('runSubAgent', () => {
     await runSubAgent({ ...makeParams(), context })
 
     expect(onAgentSpawn).toHaveBeenCalledWith(expect.objectContaining({
-      agent_id: expect.stringMatching(/^ag_[a-f0-9]{4}$/),
+      agent_id: expect.stringMatching(/^ag_[a-f0-9]{8}$/),
       agent_name: 'researcher',
       parent_agent_id: 'root',
       depth: 1,
@@ -139,6 +139,19 @@ describe('runSubAgent', () => {
     const frame = onAgentSpawn.mock.calls[0][0]
     expect(onToken).toHaveBeenCalledWith('child token', frame.agent_id)
     expect(onAgentEnd).toHaveBeenCalledWith(frame.agent_id, 'completed', undefined, { findings: 'done' }, expect.any(Number))
+  })
+
+  it('inherits taint and operator origin across the delegation boundary', async () => {
+    vi.mocked(runAgentLoop).mockImplementation(async (_msg, _profile, session: any) => {
+      session.messages.push({ role: 'assistant', content: JSON.stringify({ findings: 'tainted result' }) })
+    })
+    const onAgentSpawn = vi.fn()
+    await runSubAgent(makeParams({
+      context: { ...makeParams().context, agentOrigin: 'operator', taintSources: ['untrusted feed'], events: { ...makeParams().context.events, onAgentSpawn } },
+    }))
+    const childContext = vi.mocked(runAgentLoop).mock.calls[0][3] as any
+    expect(childContext.taintSources).toEqual(['untrusted feed'])
+    expect(onAgentSpawn.mock.calls[0][0].origin).toBe('operator')
   })
 
   it('passes the active stage ACL into a named sub-agent loop', async () => {

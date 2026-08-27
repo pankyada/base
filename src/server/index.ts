@@ -19,6 +19,8 @@ import { loadStartupProfiles } from './profile-startup.js'
 import { readUserConfig } from '../config/user-config.js'
 import { loadUserEnv } from '../config/user-env.js'
 import { loadAgentTools } from '../agents/loader.js'
+import { buildAgentCatalog } from '../agents/catalog.js'
+import { runBoundedPool } from '../agents/pool.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
 import { createMcpClients, destroyMcpClients, McpEntry } from '../mcp/client.js'
@@ -39,7 +41,7 @@ import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { listModels } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
-import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
+import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
 import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type InputRequestKind } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
@@ -57,6 +59,7 @@ import { SessionApprovalGrants } from './session-approvals.js'
 import { RunBudget, BudgetExceeded } from '../runs/budget.js'
 import { sessionEndFromError, type SessionEndStatus } from './session-status.js'
 import { createRootFrame } from '../agents/frames.js'
+import { delegateTool } from '../tools/builtin/delegate.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
@@ -307,6 +310,7 @@ async function main() {
     const pendingInputRequests = new Map<string, (value: string) => void>()
     const pendingCodeExecutions = new Map<string, (result: any) => void>()
     const pendingRenders = new Map<string, (result: any) => void>()
+    const agentControllers = new Map<string, AbortController>()
 
     const requestToolApproval = (sendForRun: (message: any) => void, id: string, name: string, input: Record<string, unknown>, risk?: 'safe' | 'caution' | 'danger', reason?: string, agentId?: string): Promise<boolean> => new Promise(resolve => {
       // This callback is reached only after ACL resolution produced a prompt.
@@ -350,6 +354,9 @@ async function main() {
     let miningSkills = false
     let safetyDisclosed = false
     let protocolVersion = PROTOCOL_VERSION
+    let connectionAgentTools: ToolDefinition[] = []
+    let activeContext: ToolContext | undefined
+    let operatorBudget: RunBudget | undefined
 
     const rebuildConnectionProfile = () => {
       connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
@@ -378,6 +385,9 @@ async function main() {
       mcpLoaded = false
       if (mcpIdleTimer) clearTimeout(mcpIdleTimer)
       void sweepDeferredLabels(session.user, session.project).catch(() => {})
+      connectionAgentTools = await loadAgentTools(connectionProfile)
+      operatorBudget = connectionProfile.triggers?.budget ? new RunBudget(connectionProfile.triggers.budget) : undefined
+      activeContext = undefined
       return null
     }
 
@@ -419,10 +429,27 @@ async function main() {
 
     const cloneSession = (): typeof session => JSON.parse(JSON.stringify(session))
 
-    const requestInput = (runId: string, prompt: string, kind: InputRequestKind, options?: string[], id: string = randomUUID()): Promise<string> => new Promise(resolve => {
+    const requestInput = (runId: string, prompt: string, kind: InputRequestKind, options?: string[], id: string = randomUUID(), agentId?: string): Promise<string> => new Promise(resolve => {
       pendingInputRequests.set(id, resolve)
-      makeRunEmitter(runId, send)({ type: 'input_request', id, prompt, kind, options })
+      makeRunEmitter(runId, send)({ type: 'input_request', id, prompt, kind, options, ...(agentId ? { agent_id: agentId } : {}) })
     })
+
+    const fleetEvents = (runId: string): AgentLoopEvents => {
+      const sendForRun = makeRunEmitter(runId, send)
+      return {
+        onToken: (token, agentId) => sendForRun({ type: 'token', content: token, ...(agentId ? { agent_id: agentId } : {}) }),
+        onToolStart: (id, name, input, agentId) => sendForRun({ type: 'tool_start', id, name, input, ...(agentId ? { agent_id: agentId } : {}) }),
+        onToolEnd: (id, name, result, ok, agentId) => sendForRun({ type: 'tool_end', id, name, result, ok, ...(agentId ? { agent_id: agentId } : {}) }),
+        onToolPrompt: (id, name, input, risk, reason, agentId) => requestToolApproval(sendForRun, id, name, input, risk, reason, agentId),
+        onInputRequest: (id, prompt, kind, options, agentId) => requestInput(runId, prompt, kind, options, id, agentId),
+        onSessionEnd: () => {},
+        onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+        onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+        onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
+        onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
+        onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
+      }
+    }
 
     const handlePlanRequest = async (request: string): Promise<void> => {
       const runId = randomRunId()
@@ -444,15 +471,17 @@ async function main() {
         onToken: () => {},
         onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
         onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
-        onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
+        onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
         onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
         onSessionEnd: () => {},
         onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
         onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+        onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
+        onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
         onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
-        onInputRequest: (id, prompt, kind, options) => requestInput(runId, prompt, kind, options, id),
-        onTodosUpdate: todos => sendForRun({ type: 'todos', todos }),
-        onStage: (stage, intensity, tier, model, state, cost_usd) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
+        onInputRequest: (id, prompt, kind, options, agentId) => requestInput(runId, prompt, kind, options, id, agentId),
+        onTodosUpdate: (todos, agentId) => sendForRun({ type: 'todos', todos, ...(agentId ? { agent_id: agentId } : {}) }),
+        onStage: (stage, intensity, tier, model, state, cost_usd, agentId) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd, ...(agentId ? { agent_id: agentId } : {}) }),
       }
       try {
         const agentTools = await loadAgentTools(connectionProfile)
@@ -463,6 +492,7 @@ async function main() {
           pendingInputs: pendingStore,
           agentFrame: createRootFrame(connectionProfile.name, previewSession.id),
           protocolVersion,
+          agentControllers,
         }
         const preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
         sendForRun({ type: 'plan', content: preview.body })
@@ -501,6 +531,87 @@ async function main() {
       type: 'pending',
       pending: pendingStore.list({ user: userId, state: 'open' }).map(({ path: _path, ...record }) => record),
     })
+
+    const spawnOperatorAgents = async (msg: Extract<ClientMessage, { type: 'spawn' }>): Promise<void> => {
+      const catalog = buildAgentCatalog(connectionProfile, [...profiles.values()])
+      const entry = catalog.find(candidate => candidate.name === msg.agent)
+      if (!entry) {
+        send({ type: 'notice', level: 'error', message: `unknown agent "${msg.agent}"`, detail: 'request agents_list for available agents' })
+        return
+      }
+      const count = msg.count ?? 1
+      if (!Number.isInteger(count) || count < 1 || count > 32) {
+        send({ type: 'notice', level: 'error', message: 'invalid spawn count', detail: 'count must be an integer from 1 to 32' })
+        return
+      }
+      const input = { ...(msg.input ?? {}) }
+      const promptValue = typeof input.prompt === 'string' ? input.prompt : typeof input.text === 'string' ? input.text : undefined
+      if (entry.prompt_field && promptValue !== undefined && input[entry.prompt_field] === undefined) input[entry.prompt_field] = promptValue
+
+      const parentContext = activeContext
+      const parentBudget = parentContext?.budget ?? operatorBudget
+      const requestedBudget = msg.budget_usd ?? entry.budget_usd
+      const implicitShare = parentBudget ? parentBudget.remainingCost() / count : undefined
+      if (requestedBudget !== undefined && parentBudget) {
+        const remainder = parentBudget.remainingCost()
+        if (requestedBudget * count > remainder) {
+          send({ type: 'notice', level: 'warn', message: `spawn refused: budget ${requestedBudget * count} USD exceeds parent remainder ${remainder.toFixed(4)} USD`, detail: `requested ${requestedBudget.toFixed(4)} USD × ${count}; parent used ${(parentBudget.config.max_cost_usd - remainder).toFixed(4)} USD of ${parentBudget.config.max_cost_usd.toFixed(4)} USD` })
+          return
+        }
+      }
+
+      await ensureMcpClients()
+      const runId = parentContext?.runId ?? randomRunId()
+      const context: ToolContext = parentContext
+        ? { ...parentContext, signal: abortController.signal, agentOrigin: 'operator', taintSources: session.taint_sources, agentControllers }
+        : {
+            profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
+            events: fleetEvents(runId), openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0,
+            agentTools: connectionAgentTools, maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode,
+            channels: connectionChannels, runId, pendingInputs: pendingStore, budget: operatorBudget,
+            agentFrame: createRootFrame(connectionProfile.name, session.id), protocolVersion,
+            agentOrigin: 'operator', agentControllers,
+          }
+      context.agentOrigin = 'operator'
+
+      const namedTool = connectionAgentTools.find(tool => tool.name === msg.agent && tool.name !== 'DelegateFanout')
+      const executor = namedTool
+        ? async (childInput: Record<string, unknown>, childContext: ToolContext) => namedTool.execute(childInput, childContext)
+        : !((connectionProfile.agents ?? []).some(agent => agent.name === entry.name)) && profiles.has(entry.profile)
+          ? async (childInput: Record<string, unknown>, childContext: ToolContext) => delegateTool.execute({ profile: entry.profile, task: String(childInput[entry.prompt_field ?? 'task'] ?? '') }, childContext)
+          : undefined
+      if (!executor) {
+        send({ type: 'notice', level: 'error', message: `agent "${msg.agent}" is not executable`, detail: 'agent catalog is stale; request agents_list again' })
+        return
+      }
+
+      const settled = await runBoundedPool(
+        Array.from({ length: count }, () => ({
+          key: msg.agent,
+          maxConcurrent: entry.max_concurrent,
+          run: async childContext => {
+            const childBudgetLimit = requestedBudget ?? implicitShare
+            const childBudget = parentBudget && childBudgetLimit !== undefined ? parentBudget.allocate(childBudgetLimit) : undefined
+            try {
+              return await executor(input, childBudget ? { ...childContext, budget: childBudget } : childContext)
+            } finally {
+              childBudget?.release()
+            }
+          },
+        })),
+        context,
+        3,
+      )
+      for (const result of settled) {
+        if (result.status === 'rejected') {
+          send({ type: 'notice', level: 'error', message: `spawn failed for "${msg.agent}"`, detail: result.reason instanceof Error ? result.reason.message : String(result.reason) })
+        } else if (typeof result.value === 'string' && result.value.startsWith('Error:')) {
+          send({ type: 'notice', level: 'error', message: `spawn refused for "${msg.agent}"`, detail: result.value })
+        } else if (result.value && typeof result.value === 'object' && 'content' in result.value && String(result.value.content).startsWith('Error:')) {
+          send({ type: 'notice', level: 'error', message: `spawn refused for "${msg.agent}"`, detail: String(result.value.content) })
+        }
+      }
+    }
 
     ws.on('message', async (raw, isBinary) => {
       if (isBinary) {
@@ -543,6 +654,27 @@ async function main() {
         sendSessionReady()
         send({ type: 'approval_mode_changed', mode: approvalMode })
         sendPending()
+        return
+      }
+
+      if (msg.type === 'agents_list') {
+        send({ type: 'agent_catalog', agents: buildAgentCatalog(connectionProfile, [...profiles.values()]) })
+        return
+      }
+
+      if (msg.type === 'spawn') {
+        await spawnOperatorAgents(msg)
+        return
+      }
+
+      if (msg.type === 'agent_cancel') {
+        const controller = agentControllers.get(msg.agent_id)
+        if (controller) {
+          controller.abort()
+          send({ type: 'notice', level: 'info', message: `agent ${msg.agent_id} cancelled` })
+        } else {
+          send({ type: 'notice', level: 'warn', message: `agent ${msg.agent_id} is not running` })
+        }
         return
       }
 
@@ -620,13 +752,15 @@ async function main() {
             onToken: (t, agentId) => sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }),
             onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
             onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
-            onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
+            onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
             onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
             onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
             onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
             onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+            onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
+            onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
             onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
-            onInputRequest: (id, prompt, kind, options) => requestInput(resumedRunId, prompt, kind, options, id),
+            onInputRequest: (id, prompt, kind, options, agentId) => requestInput(resumedRunId, prompt, kind, options, id, agentId),
           },
         })
         if (result.status === 'failed' || result.status === 'ignored') {
@@ -783,6 +917,8 @@ async function main() {
 
       if (msg.type === 'cancel') {
         abortController.abort()
+        for (const controller of agentControllers.values()) controller.abort()
+        agentControllers.clear()
         abortController = new AbortController()
 		for (const pending of pendingApprovals.values()) pending.resolve(false)
 		pendingApprovals.clear()
@@ -847,6 +983,9 @@ async function main() {
           connectionProfile = baseProfile
           connectionOpenai = createProviderClient(connectionProfile)
           connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
+          connectionAgentTools = await loadAgentTools(connectionProfile)
+          operatorBudget = connectionProfile.triggers?.budget ? new RunBudget(connectionProfile.triggers.budget) : undefined
+          activeContext = undefined
           memory = connectionProfile.memory?.provider === 'graph'
             ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
             : new FsMemoryProvider(connectionProfile.artifact_dir, session)
@@ -860,6 +999,12 @@ async function main() {
 
       const projectReply = handleProjectMessage(msg, userId)
       if (projectReply) { send(projectReply); return }
+
+      if (msg.type === 'message' && msg.content.trimStart().startsWith('/spawn ')) {
+        const [, agent, ...words] = msg.content.trim().split(/\s+/)
+        await spawnOperatorAgents({ type: 'spawn', agent, input: { prompt: words.join(' ') } })
+        return
+      }
 
       if (msg.type === 'message') {
         const runId = randomRunId()
@@ -899,7 +1044,7 @@ async function main() {
           onToken: (t, agentId) => { sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }); voiceOutput?.push(t) },
           onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
           onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
-          onToolParked: (id, n, i) => sendForRun({ type: 'tool_parked', id, name: n, input: i }),
+          onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
           onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
           onSessionEnd: (id) => {
             voiceOutput?.end()
@@ -912,29 +1057,31 @@ async function main() {
             sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) })
           },
           onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+          onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
+          onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
           onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
           onSafetyNotice: (classifierModel) => {
             if (safetyDisclosed) return
             safetyDisclosed = true
             sendForRun({ type: 'notice', level: 'info', message: `ambiguous tools classified by ${classifierModel}`, detail: 'verdicts are cached · set safety.enabled: false or use /approval bash to opt out' })
           },
-          onNotice: (level, message, detail) => sendForRun({ type: 'notice', level, message, detail }),
-          onArtifacts: (sessionId, artifacts) => {
-            sendForRun({ type: 'artifacts', sessionId, artifacts })
+          onNotice: (level, message, detail, agentId) => sendForRun({ type: 'notice', level, message, detail, ...(agentId ? { agent_id: agentId } : {}) }),
+          onArtifacts: (sessionId, artifacts, agentId) => {
+            sendForRun({ type: 'artifacts', sessionId, artifacts, ...(agentId ? { agent_id: agentId } : {}) })
           },
-          onInputRequest: (id, prompt, kind, options) => requestInput(runId, prompt, kind, options, id),
-          onTodosUpdate: (todos) => {
-            sendForRun({ type: 'todos', todos })
+          onInputRequest: (id, prompt, kind, options, agentId) => requestInput(runId, prompt, kind, options, id, agentId),
+          onTodosUpdate: (todos, agentId) => {
+            sendForRun({ type: 'todos', todos, ...(agentId ? { agent_id: agentId } : {}) })
           },
-          onCodeExecute: (id, code, language, data) => new Promise(resolve => {
+          onCodeExecute: (id, code, language, data, agentId) => new Promise(resolve => {
             pendingCodeExecutions.set(id, resolve)
-            sendForRun({ type: 'code_execute', id, code, language, data })
+            sendForRun({ type: 'code_execute', id, code, language, data, ...(agentId ? { agent_id: agentId } : {}) })
           }),
-          onRenderUI: (surface) => new Promise(resolve => {
+          onRenderUI: (surface, agentId) => new Promise(resolve => {
             pendingRenders.set(surface.id, resolve)
-            sendForRun({ type: 'ui_render', surface })
+            sendForRun({ type: 'ui_render', surface, ...(agentId ? { agent_id: agentId } : {}) })
           }),
-          onStage: (stage, intensity, tier, model, state, cost_usd) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd }),
+          onStage: (stage, intensity, tier, model, state, cost_usd, agentId) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd, ...(agentId ? { agent_id: agentId } : {}) }),
         }
         await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
@@ -951,7 +1098,9 @@ async function main() {
           budget,
           agentFrame: createRootFrame(connectionProfile.name, session.id),
           protocolVersion,
+          agentControllers,
         }
+        activeContext = context
 
         try {
           await runInteractiveTurn(msg.content, connectionProfile, session, context, events, connectionOpenai, runSignal, msg.skipWorkflow)

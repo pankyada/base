@@ -59,6 +59,9 @@ export const delegateTool: ToolDefinition = {
       const subProfile = loadProfile(profilePath)
       const subOpenai = createProviderClient(subProfile)
       const subMcpEntries = await createMcpClients(subProfile)
+      const childBudget = context.budget && context.budget.remainingCost() > 0
+        ? context.budget.allocate(context.budget.remainingCost())
+        : context.budget
 
       try {
         const subSession = createSession(subProfile.name, context.session.user)
@@ -68,10 +71,13 @@ export const delegateTool: ToolDefinition = {
           profile: subProfile.name,
           sessionId: subSession.id,
           depth: (context.delegateDepth ?? 0) + 1,
+          origin: context.agentOrigin ?? 'model',
         })
         const subEvents = tagEvents(context.events, frame, context.protocolVersion)
         const startedAt = Date.now()
-        subEvents.onAgentSpawn?.(frame, input)
+        if (childBudget) subEvents.onAgentSpawn?.(frame, input, { max_cost_usd: childBudget.config.max_cost_usd })
+        else subEvents.onAgentSpawn?.(frame, input)
+        subEvents.onAgentState?.(frame.agent_id, 'running')
         const subMemory: MemoryProvider = subProfile.memory?.provider === 'graph'
           ? new GraphMemoryProvider(subProfile.artifact_dir, subSession)
           : new FsMemoryProvider(subProfile.artifact_dir, subSession)
@@ -98,7 +104,7 @@ export const delegateTool: ToolDefinition = {
           signal: context.signal,
           delegateDepth: (context.delegateDepth ?? 0) + 1,
           maxDepth,
-          budget: context.budget,
+          budget: childBudget,
           taintSources: context.taintSources,
           agentFrame: frame,
           protocolVersion: context.protocolVersion,
@@ -115,6 +121,12 @@ export const delegateTool: ToolDefinition = {
             context.signal,
             context.stage ? { stage: context.stage } : undefined,
           )
+
+          if (context.signal?.aborted) {
+            const error = `Error: delegate to "${profileName}" cancelled`
+            subEvents.onAgentEnd?.(frame.agent_id, 'cancelled', error, undefined, Date.now() - startedAt)
+            return error
+          }
 
           // Extract final assistant text
           const messages = subSession.messages as Array<{ role: string; content?: string | null }>
@@ -143,6 +155,7 @@ export const delegateTool: ToolDefinition = {
         }
       } finally {
         await destroyMcpClients(subMcpEntries).catch(() => {})
+        childBudget?.release()
       }
     } catch (e: any) {
       return `Error: delegate to "${profileName}" failed: ${e.message}`

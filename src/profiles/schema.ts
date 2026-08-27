@@ -107,11 +107,21 @@ const McpServerSchema = z.preprocess(
 
 export type McpServerConfig = z.infer<typeof McpServerSchema>
 
+const AgentSpawnSchema = z.object({
+  label: z.string().optional(),
+  hint: z.string().optional(),
+  prompt_field: z.string().min(1).optional(),
+  example: z.record(z.string(), z.unknown()).optional(),
+  max_concurrent: z.number().int().positive().optional(),
+  budget_usd: z.number().nonnegative().optional(),
+}).strict()
+
 const AgentEntrySchema = z.object({
   name: z.string(),
   profile: z.string(),
   input: z.record(z.string(), z.unknown()),
   output: z.record(z.string(), z.unknown()),
+  spawn: AgentSpawnSchema.optional(),
 })
 
 export type AgentEntry = z.infer<typeof AgentEntrySchema>

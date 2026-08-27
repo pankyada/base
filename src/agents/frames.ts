@@ -4,7 +4,7 @@ import type { AgentFrame } from '../types.js'
 export type { AgentFrame } from '../types.js'
 
 export function newAgentId(): string {
-  return `ag_${randomUUID().replace(/-/g, '').slice(0, 4)}`
+  return `ag_${randomUUID().replace(/-/g, '').slice(0, 8)}`
 }
 
 export function createRootFrame(profile: string, sessionId: string): AgentFrame {

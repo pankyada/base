@@ -15,7 +15,7 @@ function resolvePath(p: string, profile: Profile): string {
   return resolve(profile.profile_path ? dirname(profile.profile_path) : process.cwd(), untildify(p))
 }
 
-type AgentExecutor = (input: Record<string, unknown>, context: ToolContext) => Promise<string>
+export type AgentExecutor = (input: Record<string, unknown>, context: ToolContext) => Promise<string>
 
 export async function loadAgentTools(profile: Profile): Promise<ToolDefinition[]> {
   if (!profile.agents || profile.agents.length === 0) return []
@@ -56,6 +56,6 @@ export async function loadAgentTools(profile: Profile): Promise<ToolDefinition[]
     })
   }
 
-  tools.push(buildDelegateFanoutTool(executors))
+  tools.push(buildDelegateFanoutTool(executors, new Map(profile.agents.map(entry => [entry.name, entry.spawn ?? {}]))))
   return tools
 }

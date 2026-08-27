@@ -1,9 +1,12 @@
 import type { ToolDefinition, ToolContext } from '../types.js'
+import { runBoundedPool } from '../../agents/pool.js'
 
 type AgentExecutor = (input: Record<string, unknown>, context: ToolContext) => Promise<string>
+type AgentSpawnConfig = { max_concurrent?: number }
 
 export function buildDelegateFanoutTool(
-  executors: Map<string, AgentExecutor>
+  executors: Map<string, AgentExecutor>,
+  spawnConfigs: Map<string, AgentSpawnConfig> = new Map(),
 ): ToolDefinition {
   const agentList = [...executors.keys()].join(', ')
 
@@ -34,23 +37,24 @@ export function buildDelegateFanoutTool(
     async execute(rawInput, context) {
       const { tasks } = rawInput as { tasks: Array<{ agent: string; input: Record<string, unknown> }> }
 
-      const results = await Promise.all(
-        tasks.map(async ({ agent, input }) => {
-          const executor = executors.get(agent)
-          if (!executor) {
-            return { agent, error: `Unknown agent "${agent}". Available: ${agentList || '(none)'}` }
-          }
-          try {
-            const outputStr = await executor(input, context)
-            if (outputStr.startsWith('Error:')) {
-              return { agent, error: outputStr }
-            }
+      const settled = await runBoundedPool(
+        tasks.map(({ agent, input }) => ({
+          key: agent,
+          maxConcurrent: spawnConfigs.get(agent)?.max_concurrent,
+          run: async childContext => {
+            const executor = executors.get(agent)
+            if (!executor) return { agent, error: `Unknown agent "${agent}". Available: ${agentList || '(none)'}` }
+            const outputStr = await executor(input, childContext)
+            if (outputStr.startsWith('Error:')) return { agent, error: outputStr }
             return { agent, output: JSON.parse(outputStr) }
-          } catch (e: any) {
-            return { agent, error: e.message }
-          }
-        })
+          },
+        })),
+        context,
+        3,
       )
+      const results = settled.map((result, index) => result.status === 'fulfilled'
+        ? result.value
+        : { agent: tasks[index].agent, error: result.reason instanceof Error ? result.reason.message : String(result.reason) })
 
       return JSON.stringify({ results })
     },

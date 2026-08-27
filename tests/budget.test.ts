@@ -27,6 +27,16 @@ describe('RunBudget', () => {
     expect(() => child.checkTool('child tool 2')).toThrow(BudgetExceeded)
   })
 
+  it('allocates child budget from parent remainder and returns unused share', () => {
+    const parent = new RunBudget({ max_cost_usd: 1, max_tools: 4, max_wall_s: 60 })
+    const child = parent.allocate(0.4)
+    expect(parent.remainingCost()).toBeCloseTo(0.6)
+    child.checkModel(0.2)
+    child.release()
+    expect(parent.remainingCost()).toBeCloseTo(0.8)
+    expect(() => parent.allocate(0.9)).toThrow(/exceeds parent remainder/)
+  })
+
   it('reports what was in flight when a checkpoint trips', () => {
     const budget = new RunBudget({ max_cost_usd: 1, max_tools: 1, max_wall_s: 60 })
     budget.checkTool('Write', 0.25)

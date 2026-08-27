@@ -77,6 +77,14 @@ agents:
           type: array
           items:
             type: object
+    spawn:
+      label: Researcher
+      hint: Find and verify sources for a focused question.
+      prompt_field: query
+      example:
+        query: "What changed in the latest release?"
+      max_concurrent: 3
+      budget_usd: 0.50
   - name: summariser
     profile: ./summariser.yaml
     input:
@@ -99,6 +107,14 @@ agents:
       properties:
         report:
           type: string
+    spawn:
+      label: Summariser
+      hint: Turn collected findings into a concise report.
+      example:
+        findings: []
+        format: markdown
+      max_concurrent: 1
+      budget_usd: 0.50
 improvement:
   enabled: true
   mine_skills_every_n_sessions: 10
