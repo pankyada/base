@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readUserConfig } from '../src/config/user-config.js'
 import { userEnvPath } from '../src/config/user-env.js'
 import { runInit, type InitDoctor, type InitIO } from '../src/cli/init.js'
@@ -107,4 +107,37 @@ it('onboards legacy profiles without use_case metadata without rewriting the pro
     expect(readUserConfig(home)?.default_profile).toBe('coding')
     expect(readFileSync(path, 'utf8')).toBe(legacy)
   } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+it('shows every provider model and selects beyond the first twelve', async () => {
+  const home = fixtureHome()
+  const models = Array.from({ length: 20 }, (_, i) => ({ id: `provider-model-${i + 1}` }))
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ data: models }), { headers: { 'content-type': 'application/json' } }))
+  try {
+    const lines: string[] = []
+    expect(await runInit([], { homeDir: home, environment: { OPENAI_API_KEY: 'fixture-key' }, io: io(lines, ['1', '2', '20', 'y', '1']), doctor })).toBe(0)
+    expect(lines.join('\n')).toContain('20. provider-model-20')
+    expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('id: provider-model-20')
+  } finally { fetchMock.mockRestore(); rmSync(home, { recursive: true, force: true }) }
+})
+
+it('accepts a custom model ID instead of silently reverting to the default', async () => {
+  const home = fixtureHome()
+  try {
+    expect(await runInit(['--offline'], { homeDir: home, environment: { OPENAI_API_KEY: 'fixture-key' }, io: io([], ['1', '2', 'my-custom-model', 'y', '1']), doctor })).toBe(0)
+    expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('id: my-custom-model')
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+it('loads every Anthropic page before selection', async () => {
+  const home = fixtureHome()
+  const fetchMock = vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'claude-first' }], has_more: true, last_id: 'claude-first' })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'claude-last' }], has_more: false })))
+  try {
+    expect(await runInit([], { homeDir: home, environment: { ANTHROPIC_API_KEY: 'fixture-key' }, io: io([], ['1', '1', '2', 'y', '1']), doctor })).toBe(0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[1][0])).toContain('after_id=claude-first')
+    expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('id: claude-last')
+  } finally { fetchMock.mockRestore(); rmSync(home, { recursive: true, force: true }) }
 })

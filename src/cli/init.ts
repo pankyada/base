@@ -116,7 +116,7 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
         homeDir,
         offline: flags.offline,
         staticModels: baselineModels,
-        fallbackId: profile.model.id,
+        report: message => ui.plain(message),
       })
       const defaultModel = models.some(item => item.id === profile.model.id) ? profile.model.id : models[0].id
       const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
@@ -130,7 +130,7 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       const baseUrl = provider === 'Other OpenAI-compatible' ? await ask('Base URL', currentUrl, ui) : baseUrlForProvider(provider, currentUrl)
       ui.step(3, 'Model')
       ui.status('Provider', provider)
-      ui.status('Base URL', baseUrlForProvider(provider, currentUrl))
+      ui.status('Base URL', baseUrl)
       const apiKeyEnv = provider === 'Anthropic' ? 'ANTHROPIC_API_KEY' : provider === 'OpenAI' ? 'OPENAI_API_KEY' : profile.model.api_key_env ?? 'OPENAI_API_KEY'
       const ambientKey = environment[apiKeyEnv]
       loadUserEnv(homeDir, environment)
@@ -156,6 +156,7 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
         staticModels,
         key: key ?? '',
         apiKeyEnv,
+        report: message => ui.plain(message),
       })
       const defaultModel = models.some(model => model.id === profile.model.id) ? profile.model.id : models[0]?.id ?? profile.model.id
       const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
@@ -186,7 +187,7 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       `Profile: ${profile.name}`,
       `Surface: ${surface}`,
       `Provider: ${provider}`,
-      `Model: ${selectedModel.id}`,
+      `Model: ${profile.model.id}`,
     ])
     writeUserConfig(config, homeDir)
     ui.status('Config', `Wrote ${join(homeDir, '.harness', 'config.json')}`)
@@ -253,6 +254,7 @@ async function resolveLiveModels({
   staticModels,
   key,
   apiKeyEnv,
+  report,
 }: {
   provider: string
   profile: Profile
@@ -262,15 +264,20 @@ async function resolveLiveModels({
   staticModels: readonly ModelInfo[]
   key: string
   apiKeyEnv: string
+  report: (message: string) => void
 }): Promise<ModelInfo[]> {
-  if (!key || offline) return [...staticModels]
+  if (!key || offline) {
+    report(offline ? 'Offline: showing bundled models; custom model IDs accepted.' : 'No API key: showing bundled models.')
+    return [...staticModels]
+  }
+  report(`Fetching models from ${provider}…`)
   if (provider === 'Anthropic') {
     return resolveAnthropicModels({
       baseUrl,
       apiKey: key,
       staticModels,
-      fallbackId: profile.model.id,
       providerLabel: provider,
+      report,
     })
   }
   try {
@@ -284,17 +291,17 @@ async function resolveLiveModels({
         api_key_env: apiKeyEnv,
       },
     }, environment)
-    const response = await client.models.list()
+    const response = await client.models.list({ timeout: 10000, maxRetries: 0 })
     const ids = (response.data ?? []).map((model: any) => (typeof model?.id === 'string' ? model.id : '')).filter((id: string): id is string => !!id)
-    if (!ids.length) return [...staticModels]
+    if (!ids.length) throw new Error('Provider returned no models')
     return materializeModels({
       ids,
       staticModels,
       providerLabel: provider,
       baseUrl,
-      fallbackId: profile.model.id,
     })
   } catch {
+    report('Model discovery unavailable: showing bundled models; custom model IDs accepted.')
     return [...staticModels]
   }
 }
@@ -303,13 +310,14 @@ async function resolveCodexModels({
   homeDir,
   offline,
   staticModels,
-  fallbackId,
+  report,
 }: {
   homeDir: string
   offline: boolean
   staticModels: readonly ModelInfo[]
-  fallbackId: string
+  report: (message: string) => void
 }): Promise<ModelInfo[]> {
+  if (offline) report('Offline: showing bundled Codex models.')
   if (offline) return [...staticModels]
   const record = readCodexAuth(homeDir)
   if (!record?.credential) return [...staticModels]
@@ -321,6 +329,7 @@ async function resolveCodexModels({
     try {
       const response = await fetch(endpoint, {
         method: 'GET',
+        signal: AbortSignal.timeout(10000),
         headers: {
           authorization: `Bearer ${record.credential.access_token}`,
           'chatgpt-account-id': record.credential.account_id,
@@ -336,10 +345,10 @@ async function resolveCodexModels({
         staticModels,
         providerLabel: 'OpenAI Codex subscription',
         baseUrl: '',
-        fallbackId,
       })
     } catch { continue }
   }
+  report('Codex model discovery unavailable: showing bundled models.')
   return [...staticModels]
 }
 
@@ -372,60 +381,60 @@ async function resolveAnthropicModels({
   baseUrl,
   apiKey,
   staticModels,
-  fallbackId,
   providerLabel,
+  report,
 }: {
   baseUrl: string
   apiKey: string
   staticModels: readonly ModelInfo[]
-  fallbackId: string
   providerLabel: string
+  report: (message: string) => void
 }): Promise<ModelInfo[]> {
   try {
-    const endpoint = `${baseUrl.replace(/\/+$/, '')}/models`
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        accept: 'application/json',
-      },
-    })
-    if (!response.ok) return [...staticModels]
-    const body = await response.json()
-    const ids = extractModelIds(body)
-    if (!ids.length) return [...staticModels]
+    const endpoint = new URL(`${baseUrl.replace(/\/+$/, '')}/models`)
+    const ids: string[] = []
+    const cursors = new Set<string>()
+    const signal = AbortSignal.timeout(10000)
+    while (true) {
+      const response = await fetch(endpoint.toString(), {
+        method: 'GET',
+        signal,
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          accept: 'application/json',
+        },
+      })
+      if (!response.ok) throw new Error(`Models request failed: HTTP ${response.status}`)
+      const body = await response.json()
+      ids.push(...extractModelIds(body))
+      if (!body.has_more) break
+      if (typeof body.last_id !== 'string' || !body.last_id || cursors.has(body.last_id)) throw new Error('Invalid models pagination cursor')
+      cursors.add(body.last_id)
+      endpoint.searchParams.set('after_id', body.last_id)
+    }
+    if (!ids.length) throw new Error('Provider returned no models')
     return materializeModels({
       ids,
       staticModels,
       providerLabel,
       baseUrl,
-      fallbackId,
     })
   } catch {
+    report('Anthropic model discovery unavailable: showing bundled models; custom model IDs accepted.')
     return [...staticModels]
   }
 }
 
 function extractModelIds(payload: unknown): string[] {
   if (!payload || typeof payload !== 'object') return []
-  if ('data' in payload) {
-    const maybe = (payload as { data?: unknown }).data
-    if (Array.isArray(maybe)) {
-      return maybe
-        .map(entry => typeof (entry as { id?: unknown }).id === 'string' ? String((entry as { id?: unknown }).id) : '')
-        .filter((value): value is string => Boolean(value))
-    }
-  }
-  if ('models' in payload) {
-    const maybe = (payload as { models?: unknown }).models
-    if (Array.isArray(maybe)) {
-      return maybe
-        .map(entry => typeof (entry as { id?: unknown }).id === 'string' ? String((entry as { id?: unknown }).id) : '')
-        .filter((value): value is string => Boolean(value))
-    }
-  }
-  return []
+  const body = payload as { data?: unknown; models?: unknown }
+  const entries = Array.isArray(body.data) ? body.data : Array.isArray(body.models) ? body.models : []
+  return entries.flatMap(entry => {
+    if (!entry || typeof entry !== 'object') return []
+    const id = entry.id ?? entry.slug
+    return typeof id === 'string' && id.trim() ? [id] : []
+  })
 }
 
 function materializeModels({
@@ -433,13 +442,11 @@ function materializeModels({
   staticModels,
   providerLabel,
   baseUrl,
-  fallbackId,
 }: {
   ids: string[]
   staticModels: readonly ModelInfo[]
   providerLabel: string
   baseUrl: string
-  fallbackId: string
 }): ModelInfo[] {
   const staticById = new Map(staticModels.map(model => [model.id, model]))
   const models: ModelInfo[] = []
@@ -465,18 +472,25 @@ function materializeModels({
     }
   }
   for (const id of ids) addModel(id)
-  if (!seen.has(fallbackId)) addModel(fallbackId)
   return models
 }
 
 async function chooseModel(models: readonly ModelInfo[], defaultModel: string, ui: InitWizardUI): Promise<string> {
-  const modelRows = models.slice(0, 12).map((model, index) => `  ${index + 1}. ${model.label} (${model.id})`)
-  ui.panel('Model', [...modelRows, '  free-form model id accepted if not in list'])
-  const answer = await ui.prompt(`Choose model [${defaultModel}]`, '')
-  if (!answer.trim()) return defaultModel
-  const index = Number.parseInt(answer, 10)
-  if (Number.isInteger(index) && index >= 1 && index <= Math.min(models.length, 12)) return models[index - 1].id
-  return models.find(model => model.id === answer.trim())?.id ?? defaultModel
+  ui.plain(`Available models (${models.length}):`)
+  models.forEach((model, index) => ui.plain(`  ${index + 1}. ${model.id}${model.label !== model.id ? ` — ${model.label}` : ''}`))
+  ui.plain('Choose a number or enter a custom model ID.')
+  while (true) {
+    const answer = (await ui.prompt(`Choose model [${defaultModel}]`, '')).trim()
+    if (!answer) return defaultModel
+    if (/^\d+$/.test(answer)) {
+      const index = Number(answer)
+      if (index >= 1 && index <= models.length) return models[index - 1].id
+      ui.plain(`Choose a number from 1 to ${models.length}, or enter a model ID.`)
+      continue
+    }
+    if (/^[a-zA-Z0-9][a-zA-Z0-9._:/@+-]*$/.test(answer)) return answer
+    ui.plain('Invalid model ID. Enter a model ID without spaces or control characters.')
+  }
 }
 
 async function chooseSurface(defaultSurface: string, ui: InitWizardUI): Promise<typeof SURFACES[number]> {
