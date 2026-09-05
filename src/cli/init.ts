@@ -52,9 +52,8 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
 
     const registry = loadStartupProfiles({ homeDir, environment, explicitDefaultProfile: flags.profile })
     const useCases = [...registry.profiles.values()]
-      .filter(profile => profile.use_case)
-      .sort((left, right) => (left.use_case!.rank - right.use_case!.rank) || left.name.localeCompare(right.name))
-    if (!useCases.length) throw new Error('no profiles declare use_case metadata; add use_case: to a profile')
+      .sort((left, right) => ((left.use_case?.rank ?? Number.MAX_SAFE_INTEGER) - (right.use_case?.rank ?? Number.MAX_SAFE_INTEGER)) || left.name.localeCompare(right.name))
+    if (!useCases.length) throw new Error('no valid profiles found; install or configure a profile')
 
     const selected = flags.profile
       ? registry.profiles.get(flags.profile)
@@ -152,7 +151,7 @@ function parseFlags(args: string[]): InitFlags {
 
 async function chooseProfile(profiles: any[], io: InitIO): Promise<any> {
   io.write('\n1. What will you mostly use this for?')
-  profiles.forEach((profile, index) => io.write(`  ${index + 1}. ${profile.use_case.label} — ${profile.use_case.blurb} (${profile.name})`))
+  profiles.forEach((profile, index) => io.write(`  ${index + 1}. ${profile.use_case?.label ?? profile.name} — ${profile.use_case?.blurb ?? profile.description ?? 'Existing profile'} (${profile.name})`))
   const answer = await io.readLine('Choose a use case [1]: ')
   return profiles[choiceIndex(answer, profiles.length, 0)]
 }

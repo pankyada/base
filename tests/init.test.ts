@@ -95,3 +95,16 @@ describe('harness init', () => {
     } finally { rmSync(home, { recursive: true, force: true }) }
   })
 })
+
+it('onboards legacy profiles without use_case metadata without rewriting the profile', async () => {
+  const home = fixtureHome()
+  try {
+    const path = join(home, '.harness', 'profiles', 'coding.yaml')
+    const legacy = readFileSync(path, 'utf8').replace(/use_case:\n(?:  .*\n)+/, '')
+    writeFileSync(path, legacy)
+    const lines: string[] = []
+    expect(await runInit(['--yes', '--offline'], { homeDir: home, environment: { OPENAI_API_KEY: 'fixture-key' }, io: io(lines, []), doctor })).toBe(0)
+    expect(readUserConfig(home)?.default_profile).toBe('coding')
+    expect(readFileSync(path, 'utf8')).toBe(legacy)
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
