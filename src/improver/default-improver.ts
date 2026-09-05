@@ -9,15 +9,27 @@ import { Profile } from '../profiles/schema.js'
 import { saveSession } from '../session/store.js'
 import { aggregateRouting } from '../analysis/routing.js'
 import { parseRoutingPolicy, updateRoutingPolicy } from '../workflow/adaptive.js'
+import type { ProviderClient } from '../provider/types.js'
+import { isProviderControlFailure } from '../provider/errors.js'
 
 export class DefaultImprover implements Improver {
   constructor(
     private readonly profile: Profile,
-    private readonly openai: OpenAI
+    private readonly openai?: OpenAI,
+    private readonly provider?: ProviderClient,
   ) {}
 
   private get modelId(): string {
     return this.profile.improvement?.model_id ?? this.profile.model.id
+  }
+
+  private async complete(content: string, purpose: string): Promise<string> {
+    if (this.provider) {
+      return (await this.provider.generate({ model: this.modelId, stream: false, messages: [{ role: 'user', content }] }, { purpose })).text
+    }
+    if (!this.openai) throw new Error('improvement provider unavailable')
+    const response = await this.openai.chat.completions.create({ model: this.modelId, messages: [{ role: 'user', content }] })
+    return response.choices[0]?.message?.content ?? ''
   }
 
   async reflect(session: Session, memory: MemoryProvider): Promise<void> {
@@ -25,7 +37,7 @@ export class DefaultImprover implements Improver {
 
     const transcript = (session.messages as any[])
       .filter(m => m.role !== 'system')
-      .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content.slice(0, 500) : JSON.stringify(m.content).slice(0, 500)}`)
+      .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content.slice(0, 500) : JSON.stringify(m.content, (key, value) => key === 'providerState' ? undefined : value).slice(0, 500)}`)
       .join('\n')
       .slice(0, 8_000)
 
@@ -33,14 +45,7 @@ export class DefaultImprover implements Improver {
 
     let memories: Array<{ key: string; content: string; temporal?: TemporalMeta }> = []
     try {
-      const response = await this.openai.chat.completions.create({
-        model: this.modelId,
-        messages: [{
-          role: 'user',
-          content: `Review this agent session. Identify 0-3 things worth remembering for future sessions. Output ONLY JSON: {"summary":"one short line describing the session","memories":[{"key":"slug","content":"markdown","temporal":{"valid_from":"ISO-8601 with offset","valid_until":"ISO-8601 with offset","recur":"optional supported recurrence","timezone":"optional IANA timezone","entity":"optional entity","confidence":0.0,"supersedes":"optional memory key"}}]} (memories may be empty). Add temporal metadata only when the session gives a clear explicit signal; never invent dates or recurrence.\n\nCurrent memory:${memSection}\n\nTranscript:\n${transcript}`,
-        }],
-      })
-      const raw = response.choices[0].message.content ?? '{}'
+      const raw = await this.complete(`Review this agent session. Identify 0-3 things worth remembering for future sessions. Output ONLY JSON: {"summary":"one short line describing the session","memories":[{"key":"slug","content":"markdown","temporal":{"valid_from":"ISO-8601 with offset","valid_until":"ISO-8601 with offset","recur":"optional supported recurrence","timezone":"optional IANA timezone","entity":"optional entity","confidence":0.0,"supersedes":"optional memory key"}}]} (memories may be empty). Add temporal metadata only when the session gives a clear explicit signal; never invent dates or recurrence.\n\nCurrent memory:${memSection}\n\nTranscript:\n${transcript}`, 'improvement-reflection')
       // strip markdown code fences if present
       const cleaned = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim()
       const parsed = JSON.parse(cleaned) as { summary?: string; memories?: Array<{ key: string; content: string; temporal?: TemporalMeta }> }
@@ -51,7 +56,8 @@ export class DefaultImprover implements Improver {
         session.summary = parsed.summary.trim()
         saveSession(session)
       }
-    } catch {
+    } catch (error) {
+      if (isProviderControlFailure(error)) throw error
       return
     }
 
@@ -101,18 +107,12 @@ export class DefaultImprover implements Improver {
 
     let skills: ProposedSkill[] = []
     try {
-      const response = await this.openai.chat.completions.create({
-        model: this.modelId,
-        messages: [{
-          role: 'user',
-          content: `Based on ${sessions.length} sessions and these tool frequencies, propose 1-2 skills that could automate common workflows. Tool frequencies: ${JSON.stringify(topTools)}. Output ONLY a JSON array: [{"name":"skill-slug","description":"one line","content":"full markdown with ---\\nname: slug\\ndescription: one line\\n--- frontmatter"}]. Empty array if nothing compelling.`,
-        }],
-      })
-      const raw = response.choices[0].message.content ?? '[]'
+      const raw = await this.complete(`Based on ${sessions.length} sessions and these tool frequencies, propose 1-2 skills that could automate common workflows. Tool frequencies: ${JSON.stringify(topTools)}. Output ONLY a JSON array: [{"name":"skill-slug","description":"one line","content":"full markdown with ---\\nname: slug\\ndescription: one line\\n--- frontmatter"}]. Empty array if nothing compelling.`, 'improvement-skill-mining')
       const cleaned = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim()
       skills = JSON.parse(cleaned)
       if (!Array.isArray(skills)) skills = []
-    } catch {
+    } catch (error) {
+      if (isProviderControlFailure(error)) throw error
       return []
     }
 

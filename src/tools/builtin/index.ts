@@ -23,6 +23,8 @@ import { recallTool } from './recall.js'
 import { notifyTool } from './notify.js'
 import { webSearchTool } from './web-search.js'
 import { webFetchTool } from './web-fetch.js'
+import { postTool } from './post.js'
+import { boardTool } from './board.js'
 import type { Profile } from '../../profiles/schema.js'
 import type { ChannelRuntime } from '../../channels/runtime.js'
 
@@ -48,6 +50,8 @@ export function registerAll(channels?: ChannelRuntime, profile?: Profile): void 
   registerTool(todoReadTool)
   registerTool(executeCodeTool)
   registerTool(webFetchTool)
+  registerTool(postTool)
+  registerTool(boardTool)
   registerTool(renderUiTool)
   registerTool(contextRestoreTool)
   registerTool(recallTool)

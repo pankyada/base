@@ -215,7 +215,7 @@ export function HarnessApp() {
 
         {workspaceOpen && (
           <div className="col-work">
-            <Workspace projectId={state.activeProject} tabs={state.tabs} activeTab={state.activeTab} onTabChange={i => dispatch({ type: 'SET_TAB', payload: i })} surfaces={state.surfaces} allowedPackages={state.allowedPackages ?? []} onSurfaceEmit={handleSurfaceEmit} onSurfaceResult={result => send({ type: 'ui_result', id: result.id, ok: result.ok, errors: result.errors, stdout: result.stdout, duration_ms: result.duration_ms, bytes: result.bytes })} datasetBaseUrl={wsUrl.replace(/^ws/, 'http')} onDatasetContext={context => dispatch({ type: 'INPUT', payload: `${state.input}${state.input ? '\n' : ''}${context}` })} />
+            <Workspace projectId={state.activeProject} tabs={state.tabs} activeTab={state.activeTab} onTabChange={i => dispatch({ type: 'SET_TAB', payload: i })} surfaces={state.surfaces} allowedPackages={state.allowedPackages ?? []} onSurfaceEmit={handleSurfaceEmit} onSurfaceResult={result => send({ type: 'ui_result', id: result.id, ok: result.ok, errors: result.errors, stdout: result.stdout, duration_ms: result.duration_ms, bytes: result.bytes })} datasetBaseUrl={wsUrl.replace(/^ws/, 'http')} datasetUser={userId} onDatasetContext={context => dispatch({ type: 'INPUT', payload: `${state.input}${state.input ? '\n' : ''}${context}` })} />
           </div>
         )}
       </div>
@@ -231,6 +231,7 @@ export function HarnessApp() {
         onToggleTheme={() => dispatch({ type: 'SET_THEME', theme: state.theme === 'dark' ? 'light' : 'dark', palette: state.palette, density: state.density })}
         context={state.context}
         costUsd={state.costUsd}
+        usage={state.usage}
       />
 
       <Toasts toasts={state.notices} />
@@ -262,7 +263,7 @@ export function HarnessApp() {
         />
       )}
       {state.pendingApproval && (
-        <ApprovalModal toolName={state.pendingApproval.name} toolInput={state.pendingApproval.input} risk={state.pendingApproval.risk} reason={state.pendingApproval.reason} onApprove={handleApprove} onDeny={handleDeny} />
+        <ApprovalModal toolName={state.pendingApproval.name} toolInput={state.pendingApproval.input} risk={state.pendingApproval.risk} reason={state.pendingApproval.reason} preview={state.pendingApproval.preview} onApprove={handleApprove} onDeny={handleDeny} />
       )}
       {state.pendingInputRequest && (
         <InputRequestModal

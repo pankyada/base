@@ -19,7 +19,7 @@ export async function runInteractiveTurn(
   session: Session,
   context: ToolContext,
   events: AgentLoopEvents,
-  openai: OpenAI,
+  openai: OpenAI | undefined,
   signal: AbortSignal,
   skipWorkflow = false,
   deps: InteractiveTurnDeps = defaultDeps,

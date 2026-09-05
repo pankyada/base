@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
 import { createServer, Server } from 'http'
 import type { AddressInfo } from 'net'
+import { rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { createRestHandler } from '../src/server/rest.js'
 import { runProfileOnce } from '../src/server/run-profile.js'
 import { RunStore } from '../src/runs/store.js'
 import type { Skill } from '../src/tools/types.js'
+import { ReplayStore } from '../src/replay/store.js'
 
 const FAKE_SKILLS: Skill[] = [
   { name: 'web-search', description: 'Search the web', content: '', filePath: '' },
@@ -64,13 +67,30 @@ describe('REST /health and /run (no auth)', () => {
     expect(await res.json()).toMatchObject({ status: 'ok', profile: 'default' })
   })
 
+  it('returns validated CORS headers and preflight for browser clients', async () => {
+    const res = await fetch(`${base}/health`, { headers: { Origin: 'http://localhost:3000' } })
+    expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:3000')
+    const preflight = await fetch(`${base}/artifacts`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000' } })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-methods')).toContain('POST')
+  })
+
   it('POST /run freeform returns 200 with string output and usage', async () => {
-    const res = await fetch(`${base}/run`, { method: 'POST', body: JSON.stringify({ input: 'hi' }) })
+    const user = `rest-journal-${process.pid}-${Date.now()}`
+    const res = await fetch(`${base}/run`, { method: 'POST', body: JSON.stringify({ input: 'hi', user }) })
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body).toMatchObject({ output: 'hello', usage: { tokens_in: 1, tokens_out: 2, cost_usd: 0.0 }, session_id: 'sess1' })
     expect(typeof body.run_id).toBe('string')
     expect(body.run_id).toHaveLength(8)
+    const journals = new ReplayStore(user).list()
+    expect(journals).toHaveLength(1)
+    expect(journals[0].session_id).toBe('sess1')
+    expect(journals[0].completed_checkpoints).toContain('turn_start')
+    const replay = await fetch(`${base}/replay/${journals[0].id}/playback?user=${user}`, { method: 'POST' })
+    expect(replay.status).toBe(200)
+    expect((await replay.json()).events.length).toBeGreaterThanOrEqual(1)
+    rmSync(join(process.env.HOME ?? '', '.harness', 'replays', user), { recursive: true, force: true })
   })
 
   it('selects a registered profile from the request body and reports all profiles in health', async () => {

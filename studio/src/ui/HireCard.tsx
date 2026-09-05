@@ -1,0 +1,2 @@
+import type { AgentCatalogEntry } from '../protocol.js'
+export function HireCard({ agents, onHire }: { agents: AgentCatalogEntry[]; onHire(agent: AgentCatalogEntry): void }) { return <section className="panel hire"><div className="panel-kicker">Hire a worker</div><h2>Open desks ready</h2>{agents.length ? agents.map(agent => <button className="role" key={agent.name} onClick={() => onHire(agent)}><strong>{agent.label ?? agent.name}</strong><span>{agent.hint ?? agent.profile}</span></button>) : <p className="empty">Waiting for role catalog…</p>}</section> }

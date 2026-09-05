@@ -17,6 +17,15 @@ export interface TemporalMeta {
   supersedes?: string
 }
 
+export interface ClaimMeta {
+  entity: string
+  predicate: string
+  normalized_value?: string
+  source_evidence?: string[]
+  last_verified_at?: string
+  tainted?: boolean
+}
+
 export interface RecallQuery {
   at?: string
   window?: string
@@ -32,6 +41,7 @@ export interface MemoryRecord {
   temporal?: TemporalMeta
   provenance?: 'trusted' | 'untrusted'
   source?: string
+  claim?: ClaimMeta
 }
 
 export interface MemoryEntry {
@@ -40,11 +50,12 @@ export interface MemoryEntry {
   content?: string
   links?: MemoryLink[]
   temporal?: TemporalMeta
+  claim?: ClaimMeta
 }
 
 export interface MemoryProvider {
   read(scope: MemoryScope, key: string): Promise<MemoryRecord | null>
-  write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }): Promise<void>
+  write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }, claim?: ClaimMeta): Promise<void>
   delete(scope: MemoryScope, key: string): Promise<void>
   list(scope: MemoryScope): Promise<MemoryEntry[]>
   query(scope: MemoryScope, query: RecallQuery): Promise<MemoryEntry[]>

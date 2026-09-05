@@ -1,3 +1,5 @@
+import type { UsageMetadataWire } from '../lib/protocol'
+
 interface Props {
   busy: boolean
   focusPane: 'conv' | 'work'
@@ -7,12 +9,13 @@ interface Props {
   approvalMode?: string
   context?: { tokens: number; window?: number }
   costUsd?: number
+  usage?: UsageMetadataWire
 }
 
 import { ContextGauge } from './chrome/ContextGauge'
 import { CostTicker } from './chrome/CostTicker'
 
-export function StatusBar({ busy, focusPane, tokens, theme, approvalMode, onToggleTheme, context, costUsd }: Props) {
+export function StatusBar({ busy, focusPane, tokens, theme, approvalMode, onToggleTheme, context, costUsd, usage }: Props) {
   return (
     <div className="statusbar">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0' }}>
@@ -26,7 +29,7 @@ export function StatusBar({ busy, focusPane, tokens, theme, approvalMode, onTogg
         <span style={{ color: 'var(--border-hi)', margin: '0 0.5rem' }}>│</span>
         <span style={{ color: 'var(--faint)' }}>{tokens.in} in / {tokens.out} out</span>
         <ContextGauge tokens={context?.tokens} window={context?.window} />
-        <CostTicker costUsd={costUsd} tokensIn={tokens.in} tokensOut={tokens.out} />
+        <CostTicker costUsd={costUsd} tokensIn={tokens.in} tokensOut={tokens.out} usage={usage} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <span>approval: {approvalMode ?? '…'}</span>

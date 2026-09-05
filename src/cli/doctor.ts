@@ -6,6 +6,9 @@ import { readUserConfig } from '../config/user-config.js'
 import { loadStartupProfiles } from '../server/profile-startup.js'
 import { listServers } from '../server/process-registry.js'
 import { createProviderClient } from '../provider/client.js'
+import { createProvider } from '../provider/factory.js'
+import { codexAuthStatus } from '../provider/auth/store.js'
+import { sanitizeError } from '../provider/auth/redact.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 export interface DoctorCheck { name: string; ok: boolean; detail: string; fix: string }
@@ -35,8 +38,18 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
     checks.push(fail('profile', error.message, 'harness init --reconfigure'))
   }
 
-  if (profile) {
+  let credentialReady = false
+  if (profile?.model.auth === 'codex_oauth') {
+    try {
+      const status = codexAuthStatus(homeDir)
+      credentialReady = status.status === 'active' || status.status === 'expired'
+      checks.push(credentialReady
+        ? pass('codex_auth', `Codex subscription: ${status.status}; ${status.accountHint ?? 'account linked'}`)
+        : fail('codex_auth', `Codex subscription: ${status.status}`, 'harness auth login openai --method browser'))
+    } catch (error) { checks.push(fail('codex_auth', sanitizeError(error), 'inspect the Codex credential store')) }
+  } else if (profile) {
     const key = environment[profile.model.api_key_env]
+    credentialReady = Boolean(key)
     checks.push(key
       ? pass('api_key', `${profile.model.api_key_env} is set`)
       : fail('api_key', `${profile.model.api_key_env} is not set`, 'harness init --reconfigure'))
@@ -46,15 +59,21 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorResu
 
   if (options.offline) {
     checks.push(pass('reachability', 'skipped (--offline)'))
-  } else if (!profile || !environment[profile.model.api_key_env]) {
-    checks.push(fail('reachability', 'not attempted without an API key', 'harness init --reconfigure'))
+  } else if (!profile || !credentialReady) {
+    checks.push(fail('reachability', 'not attempted without configured provider credentials', 'harness init --reconfigure'))
   } else {
     try {
-      const client = createProviderClient(profile)
-      await client.chat.completions.create({ model: profile.model.id, messages: [{ role: 'user', content: 'ping' }], max_completion_tokens: 5 })
+      if (profile.model.auth === 'codex_oauth') {
+        await createProvider(profile, { home: homeDir }).generate({
+          model: profile.model.id, messages: [{ role: 'user', content: 'Reply with pong.' }], maxCompletionTokens: 5,
+        }, { purpose: 'doctor', deadline: Date.now() + 15_000 })
+      } else {
+        const client = createProviderClient(profile, environment)
+        await client.chat.completions.create({ model: profile.model.id, messages: [{ role: 'user', content: 'ping' }], max_completion_tokens: 5 })
+      }
       checks.push(pass('reachability', `${profile.model.id} accepted a smoke request`))
     } catch (error: any) {
-      checks.push(fail('reachability', error.message, 'check the provider base URL and API key'))
+      checks.push(fail('reachability', sanitizeError(error), profile.model.auth === 'codex_oauth' ? 'harness auth status openai' : 'check the provider base URL and API key'))
     }
   }
 

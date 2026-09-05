@@ -24,6 +24,12 @@ describe('FsMemoryProvider', () => {
     await expect(provider.read('user', 'unsafe')).resolves.toMatchObject({ provenance: 'untrusted', source: 'MCP inbox' })
   })
 
+  it('persists structured claim metadata for conflict analysis', async () => {
+    await provider.write('user', 'city-sydney', 'Sydney', undefined, { valid_from: '2026-01-01T00:00:00Z', valid_until: '2026-12-31T00:00:00Z' }, undefined, { entity: 'user', predicate: 'city', normalized_value: 'Sydney', source_evidence: ['receipt-1'] })
+    await expect(provider.read('user', 'city-sydney')).resolves.toMatchObject({ claim: { entity: 'user', predicate: 'city', normalized_value: 'Sydney', source_evidence: ['receipt-1'] } })
+    await expect(provider.list('user')).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ key: 'city-sydney', claim: expect.objectContaining({ normalized_value: 'Sydney' }) })]))
+  })
+
   it('returns null for missing session key', async () => {
     expect(await provider.read('session', 'missing')).toBeNull()
   })

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta } from './interface.js'
+import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta, ClaimMeta } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths, projectPaths } from '../session/user-paths.js'
 import { imminentEntries, queryEntries } from './query.js'
@@ -13,6 +13,7 @@ interface GraphNode {
   temporal?: TemporalMeta
   provenance?: 'trusted' | 'untrusted'
   source?: string
+  claim?: ClaimMeta
 }
 
 interface GraphData {
@@ -72,7 +73,7 @@ export class GraphMemoryProvider implements MemoryProvider {
       if (!val) return null
       try {
         const parsed = JSON.parse(val)
-        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source }
+        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source, claim: parsed.claim }
       } catch {
         return { content: val }
       }
@@ -80,17 +81,17 @@ export class GraphMemoryProvider implements MemoryProvider {
     const graph = this.loadGraph(scope)
     const node = graph.nodes[key]
     if (!node) return null
-    return { content: node.content, links: node.links, temporal: node.temporal, provenance: node.provenance, source: node.source }
+    return { content: node.content, links: node.links, temporal: node.temporal, provenance: node.provenance, source: node.source, claim: node.claim }
   }
 
-  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }): Promise<void> {
+  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }, claim?: ClaimMeta): Promise<void> {
     validateTemporal(temporal)
     if (scope === 'session') {
-      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source })
+      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim })
       return
     }
     const graph = this.loadGraph(scope)
-    graph.nodes[key] = { key, content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source }
+    graph.nodes[key] = { key, content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim }
     this.saveGraph(scope, graph)
     await this.rebuildIndex(scope)
   }
@@ -117,7 +118,7 @@ export class GraphMemoryProvider implements MemoryProvider {
           const parsed = JSON.parse(val)
           preview = (parsed.content as string).slice(0, 100)
           links = parsed.links
-          return { key, preview, content: parsed.content, links, temporal: parsed.temporal }
+          return { key, preview, content: parsed.content, links, temporal: parsed.temporal, claim: parsed.claim }
         } catch { /* ignore */ }
         return { key, preview, content: preview, links }
       })
@@ -128,7 +129,7 @@ export class GraphMemoryProvider implements MemoryProvider {
       preview: node.content.slice(0, 100),
       content: node.content,
       links: node.links,
-      temporal: node.temporal,
+      temporal: node.temporal, claim: node.claim,
     }))
   }
 

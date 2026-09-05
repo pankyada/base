@@ -24,6 +24,13 @@ func TestApprovalModalActionsSendExactlyOneDecision(t *testing.T) {
 	}
 }
 
+func TestApprovalModalShowsRehearsalPreview(t *testing.T) {
+	view := approvalModal(ApprovalRequest{ID: "a1", Name: "MemoryWrite", Preview: map[string]interface{}{"before_hash": "old", "after_hash": "new"}}, 100, 30)
+	if !strings.Contains(view, "PROPOSED EFFECT") || !strings.Contains(view, "before_hash") {
+		t.Fatalf("approval preview missing: %s", view)
+	}
+}
+
 func TestInputRequestMultiSelectAndEscapeResolve(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

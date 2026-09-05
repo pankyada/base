@@ -75,3 +75,7 @@ runs as insufficient data.
 - [Deployment guide](docs/DEPLOYMENT.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+
+### Optional Codex subscription authentication
+
+API keys remain the default. Experimental Codex OAuth can be selected explicitly through the existing onboarding/profile flow. See [Codex authentication](docs/CODEX_AUTH.md) for login commands, configuration, usage-estimate semantics, and pending live acceptance.

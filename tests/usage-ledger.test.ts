@@ -60,4 +60,11 @@ describe('recordUsage', () => {
     expect(readUsage('alice', tmpDir)!.total.input).toBe(100)
     expect(readUsage('bob', tmpDir)!.total.input).toBe(200)
   })
+
+  it('preserves subscription metadata and merges mixed billing modes', () => {
+    recordUsage('alice', { input: 10, output: 5, cost_usd: 0.01, billing_mode: 'subscription', cost_basis: 'api_equivalent', api_equivalent_usd: 0.01, model_attempts: 1, usage_status: 'complete', billed_cost_usd: null }, tmpDir)
+    recordUsage('alice', { input: 4, output: 2, cost_usd: 0.002, billing_mode: 'api', cost_basis: 'api_estimate', api_estimate_usd: 0.002, model_attempts: 1, usage_status: 'estimated' }, tmpDir)
+    const total = readUsage('alice', tmpDir)!.total
+    expect(total).toMatchObject({ billing_mode: 'mixed', cost_basis: 'mixed', billed_cost_usd: null, api_equivalent_usd: 0.01, api_estimate_usd: 0.002, model_attempts: 2, usage_status: 'estimated' })
+  })
 })

@@ -11,6 +11,8 @@ import { SkillsQueue } from '../../components/ops/SkillsQueue'
 import { Channels } from '../../components/ops/Channels'
 import { AuditTable } from '../../components/ops/AuditTable'
 import { ApprovalQueue, type ApprovalItem } from '../../components/ops/ApprovalQueue'
+import { MissionCard } from '../../components/ops/MissionCard'
+import type { MissionWire } from '../../lib/protocol'
 
 interface ChannelStatus { name: string; transport: string; binding: 'paired' | 'open' | 'unbound' | 'off'; capabilities?: Record<string, unknown>; degraded?: string }
 
@@ -21,6 +23,9 @@ export default function OpsPage() {
   const [report, setReport] = useState<Record<string, unknown>>({})
   const [channels, setChannels] = useState<ChannelStatus[]>([])
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set())
+  const missionMessage = [...events].reverse().find(event => event.type === 'mission')
+  const mission = missionMessage?.type === 'mission' ? missionMessage.mission as MissionWire : undefined
+  const receiptMessage = [...events].reverse().find(event => event.type === 'receipt')
 
   useEffect(() => {
     send({ type: 'skills_list' })
@@ -45,6 +50,7 @@ export default function OpsPage() {
 
   return <Shell><main className="route-page">
     <RunBoard baseUrl={base} liveEvents={events} onCancel={id => { void fetch(base + '/runs/' + encodeURIComponent(id), { method: 'DELETE' }) }} />
+    <MissionCard mission={mission} receipt={receiptMessage?.type === 'receipt' ? receiptMessage.receipt : undefined} />
     <ApprovalQueue items={approvals} onApprove={id => resolveApproval(id, true)} onDeny={id => resolveApproval(id, false)} onRemember={rememberApproval} />
     <Inbox items={pending} onAnswer={(id, value) => send({ type: 'pending_answer', pending_id: id, value })} />
     <UndoDrawer entries={undoEntries} onUndo={(id, force, reason) => send({ type: 'undo_apply', id, force, ...(reason ? { reason } : {}) })} />

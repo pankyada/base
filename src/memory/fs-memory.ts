@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import matter from 'gray-matter'
-import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta } from './interface.js'
+import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta, ClaimMeta } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths, projectPaths } from '../session/user-paths.js'
 import { imminentEntries, queryEntries } from './query.js'
@@ -37,7 +37,7 @@ export class FsMemoryProvider implements MemoryProvider {
       if (!val) return null
       try {
         const parsed = JSON.parse(val)
-        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source }
+        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source, claim: parsed.claim }
       } catch {
         return { content: val }
       }
@@ -49,19 +49,19 @@ export class FsMemoryProvider implements MemoryProvider {
     return {
       content: parsed.content.trim(),
       links: parsed.data.links as MemoryLink[] | undefined,
-      temporal: parseTemporal(parsed.data), provenance: parsed.data.tainted ? 'untrusted' : 'trusted', source: typeof parsed.data.taint_source === 'string' ? parsed.data.taint_source : undefined,
+      temporal: parseTemporal(parsed.data), provenance: parsed.data.tainted ? 'untrusted' : 'trusted', source: typeof parsed.data.taint_source === 'string' ? parsed.data.taint_source : undefined, claim: parsed.data.claim as ClaimMeta | undefined,
     }
   }
 
-  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }): Promise<void> {
+  async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }, claim?: ClaimMeta): Promise<void> {
     validateTemporal(temporal)
     if (scope === 'session') {
-      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source })
+      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim })
       return
     }
     const dir = this.dirFor(scope)
     mkdirSync(dir, { recursive: true })
-    const data = { ...(links?.length ? { links } : {}), ...serializeTemporal(temporal), ...(provenance?.tainted ? { tainted: true, taint_source: provenance.source } : {}) }
+    const data = { ...(links?.length ? { links } : {}), ...serializeTemporal(temporal), ...(provenance?.tainted ? { tainted: true, taint_source: provenance.source } : {}), ...(claim ? { claim } : {}) }
     const fileContent = Object.keys(data).length > 0 ? matter.stringify(content, data) : content
     writeFileSync(join(dir, `${key}.md`), fileContent, 'utf-8')
     await this.rebuildIndex(scope)
@@ -88,7 +88,7 @@ export class FsMemoryProvider implements MemoryProvider {
           const parsed = JSON.parse(val)
           preview = (parsed.content as string).slice(0, 100)
           links = parsed.links
-          return { key, preview, content: parsed.content, links, temporal: parsed.temporal }
+          return { key, preview, content: parsed.content, links, temporal: parsed.temporal, claim: parsed.claim }
         } catch { /* ignore */ }
         return { key, preview, content: preview, links }
       })
@@ -106,7 +106,7 @@ export class FsMemoryProvider implements MemoryProvider {
           preview: parsed.content.trim().slice(0, 100),
           content: parsed.content.trim(),
           links: parsed.data.links as MemoryLink[] | undefined,
-          temporal: parseTemporal(parsed.data),
+          temporal: parseTemporal(parsed.data), claim: parsed.data.claim as ClaimMeta | undefined,
         }
       })
   }

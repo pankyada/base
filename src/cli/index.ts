@@ -8,6 +8,10 @@ import { runAuditCommand } from './audit.js'
 import { runDoctorCommand } from './doctor.js'
 import { runInit } from './init.js'
 import { runServerCommand } from './server.js'
+import { runMissionCommand } from './missions.js'
+import { runReplayCommand } from './replay.js'
+import { runEvaluationCommand, runEvaluationCommandAsync } from './evaluation.js'
+import { runAuthCommand } from './auth.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(`harness ${pkg.version}`)
@@ -38,6 +42,11 @@ if (process.argv[2] === 'doctor') {
   process.exit()
 }
 
+if (process.argv[2] === 'auth') {
+  process.exitCode = await runAuthCommand(process.argv.slice(3))
+  process.exit()
+}
+
 if (process.argv[2] === 'init') {
   process.exitCode = await runInit(process.argv.slice(3))
   process.exit()
@@ -45,6 +54,21 @@ if (process.argv[2] === 'init') {
 
 if (process.argv[2] === 'server') {
   process.exitCode = await runServerCommand(process.argv.slice(3))
+  process.exit()
+}
+
+if (process.argv[2] === 'mission') {
+  process.exitCode = runMissionCommand(process.argv.slice(3))
+  process.exit()
+}
+
+if (process.argv[2] === 'replay') {
+  process.exitCode = await runReplayCommand(process.argv.slice(3))
+  process.exit()
+}
+
+if (process.argv[2] === 'evaluation' || process.argv[2] === 'eval') {
+  process.exitCode = await runEvaluationCommandAsync(process.argv.slice(3))
   process.exit()
 }
 

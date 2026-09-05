@@ -5,6 +5,9 @@ YAML — copy it into `~/.harness/profiles/<name>.yaml` (plus a `<name>.md`
 prompt beside it) and run it. They're ordered from simplest to most
 autonomous, and each builds on concepts from the previous one.
 
+Prefer to watch first? **[How it Works](./how-it-works)** animates each of
+these four scenarios beat by beat before you read the YAML.
+
 | # | Profile | Trust model | Runs how |
 |---|---|---|---|
 | 1 | [Coding assistant](#1-coding-assistant) | `developer` — you're in the loop | Interactive, TUI |

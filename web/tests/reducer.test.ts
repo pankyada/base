@@ -58,4 +58,14 @@ describe('protocol reducer', () => {
     expect(state.budget).toEqual({ cost: 1, limit: 1 })
     expect(state.runs?.['budget-run']?.status).toBe('budget_exceeded')
   })
+
+  it('retains server-owned runtime and mission receipts for attached clients', () => {
+    let state = reducer(base, { type: 'SERVER_MSG', payload: { type: 'runtime', snapshot: { session_id: 's', user: 'u', revision: 2, status: 'running', last_seq: 4, events: [], gap: false } } })
+    state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'mission', mission: { id: 'm', status: 'accepted', revision: 2, outcome: 'ship', criteria: [{ id: 'c', description: 'works', state: 'verified' }] }, receipts: [{ id: 'r' }] } })
+    state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'receipt', receipt: { id: 'r', accepted: true } } })
+    expect(state.runtime?.last_seq).toBe(4)
+    expect(state.mission?.status).toBe('accepted')
+    expect(state.missionReceipts).toEqual([{ id: 'r' }])
+    expect(state.receipt).toEqual({ id: 'r', accepted: true })
+  })
 })

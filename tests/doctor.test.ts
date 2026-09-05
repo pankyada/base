@@ -4,6 +4,7 @@ import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import { writeUserConfig } from '../src/config/user-config.js'
 import { runDoctor, runDoctorCommand } from '../src/cli/doctor.js'
+import { writeCodexCredential } from '../src/provider/auth/store.js'
 
 function profile(dir: string): void {
   const profiles = join(dir, '.harness', 'profiles')
@@ -13,6 +14,20 @@ function profile(dir: string): void {
 }
 
 describe('doctor', () => {
+  it('checks a Codex profile offline without requiring an API key', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-doctor-codex-'))
+    try {
+      profile(home)
+      writeFileSync(join(home, '.harness/profiles/coding.yaml'), 'name: coding\nmodel:\n  auth: codex_oauth\n  id: gpt-5.4-mini\nsystem_prompt: ./prompt.md\nartifact_dir: ./artifacts\n')
+      writeUserConfig({ version: 1, default_profile: 'coding', profiles_dir: '~/.harness/profiles', surface: 'cli', initialised_at: '2026-09-06T00:00:00Z', harness_version: '0.8.1' }, home)
+      await writeCodexCredential({ kind: 'codex_oauth', access_token: 'doctor-access-canary', refresh_token: 'doctor-refresh-canary', expires_at: Date.now() + 600000, account_id: 'doctor-account' }, home)
+      const result = await runDoctor({ homeDir: home, environment: { PATH: join(home, '.local/bin') }, offline: true, portCheck: async () => true })
+      expect(result.ok).toBe(true)
+      expect(result.checks.find(check => check.name === 'api_key')).toBeUndefined()
+      expect(result.checks.find(check => check.name === 'codex_auth')?.ok).toBe(true)
+      expect(JSON.stringify(result)).not.toMatch(/doctor-access-canary|doctor-refresh-canary/)
+    } finally { rmSync(home, { recursive: true, force: true }) }
+  })
   it('reports stable checks and fails independently without a config', async () => {
     const home = mkdtempSync(join(tmpdir(), 'harness-doctor-'))
     try {

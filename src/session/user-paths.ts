@@ -13,6 +13,9 @@ export interface UserPaths {
   sessionsDir: string
   privateMemDir: string
   usageFile: string
+  missionsDir: string
+  evaluationsDir: string
+  artifactsDir: string
 }
 
 export function userPaths(user: string, artifactDir: string): UserPaths {
@@ -21,6 +24,9 @@ export function userPaths(user: string, artifactDir: string): UserPaths {
     sessionsDir: join(homedir(), '.harness', 'sessions', safe),
     privateMemDir: join(artifactDir, 'users', safe, 'memory'),
     usageFile: join(homedir(), '.harness', 'usage', `${safe}.json`),
+    missionsDir: join(homedir(), '.harness', 'missions', safe),
+    evaluationsDir: join(homedir(), '.harness', 'evaluations', safe),
+    artifactsDir: join(homedir(), '.harness', 'artifacts', safe),
   }
 }
 

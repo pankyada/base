@@ -4,6 +4,7 @@ import type { Profile } from '../profiles/schema.js'
 import { resolveRole } from '../profiles/schema.js'
 import type { MemoryLink, MemoryProvider, TemporalMeta } from '../memory/interface.js'
 import type { Stage } from './types.js'
+import type { ProviderClient } from '../provider/types.js'
 
 export interface KnowledgeNode {
   key: string
@@ -31,16 +32,14 @@ function stripJson(raw: string): string {
   return raw.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim()
 }
 
-export async function extractKnowledge(artifact: string, stage: Stage, openai: OpenAI, profile: Profile): Promise<{ nodes: KnowledgeNode[]; edges: MemoryLink[] }> {
+export async function extractKnowledge(artifact: string, stage: Stage, openai: OpenAI | undefined, profile: Profile, provider?: ProviderClient): Promise<{ nodes: KnowledgeNode[]; edges: MemoryLink[] }> {
   if (!profile.workflow?.knowledge.graph) return { nodes: [], edges: [] }
   try {
-    const response = await (openai.chat.completions as any).create({
-      model: resolveRole(profile, 'cheap'),
-      messages: [{ role: 'user', content: `Extract durable project knowledge from this ${stage} artifact. Return ONLY JSON with nodes and typed edges. Add optional temporal metadata only when the artifact gives a clear explicit signal; use ISO-8601 timestamps with offsets and do not infer dates or recurrence.\n${artifact}` }],
-      max_tokens: 500,
-      temperature: 0,
-    })
-    const parsed = ExtractSchema.parse(JSON.parse(stripJson(response.choices?.[0]?.message?.content ?? '{}')))
+    const prompt = `Extract durable project knowledge from this ${stage} artifact. Return ONLY JSON with nodes and typed edges. Add optional temporal metadata only when the artifact gives a clear explicit signal; use ISO-8601 timestamps with offsets and do not infer dates or recurrence.\n${artifact}`
+    const content = provider
+      ? (await provider.generate({ model: resolveRole(profile, 'cheap'), stream: false, maxTokens: 500, temperature: 0, messages: [{ role: 'user', content: prompt }] }, { purpose: 'workflow-knowledge' })).text
+      : openai ? String((await (openai.chat.completions as any).create({ model: resolveRole(profile, 'cheap'), messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0 })).choices?.[0]?.message?.content ?? '{}') : '{}'
+    const parsed = ExtractSchema.parse(JSON.parse(stripJson(content)))
     return { nodes: parsed.nodes, edges: parsed.edges }
   } catch {
     return { nodes: [], edges: [] }

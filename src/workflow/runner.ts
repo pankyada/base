@@ -17,6 +17,9 @@ import { chooseExploration, promoteTier, resolveTier } from './policy.js'
 import { parseRoutingPolicy } from './adaptive.js'
 import type { RoutingPolicyDoc } from './adaptive.js'
 import { maybeShadow } from './shadow.js'
+import type { ProviderClient, UsageMetadata } from '../provider/types.js'
+import { bindRunProvider } from '../provider/invocation.js'
+import { mergeUsageDelta, usageDeltaFromSession } from '../usage/ledger.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
@@ -90,34 +93,78 @@ function childSession(root: Session, stageId: string, seed: string): Session {
 }
 
 function stageEvents(root: Session, events: AgentLoopEvents): AgentLoopEvents {
-  return { ...events, onSessionEnd: () => {}, onStats: (input, output, cost, contextTokens, agentId) => events.onStats?.(root.usage.input + input, root.usage.output + output, root.usage.cost_usd + cost, contextTokens, agentId) }
+  const combineUsage = (stageUsage?: UsageMetadata): UsageMetadata | undefined => {
+    if (!stageUsage && !root.usage.billing_mode && !root.usage.cost_basis && root.usage.billed_cost_usd === undefined && root.usage.api_estimate_usd === undefined && root.usage.api_equivalent_usd === undefined && root.usage.usage_status === undefined && root.usage.cached_input_tokens === undefined && root.usage.reasoning_output_tokens === undefined && root.usage.model_attempts === undefined) return undefined
+    const combined: UsageMetadata = {
+      billing_mode: root.usage.billing_mode,
+      cost_basis: root.usage.cost_basis,
+      billed_cost_usd: root.usage.billed_cost_usd,
+      api_estimate_usd: root.usage.api_estimate_usd,
+      api_equivalent_usd: root.usage.api_equivalent_usd,
+      usage_status: root.usage.usage_status,
+      cached_input_tokens: root.usage.cached_input_tokens,
+      reasoning_output_tokens: root.usage.reasoning_output_tokens,
+      model_attempts: root.usage.model_attempts,
+    }
+    if (stageUsage) {
+      if (stageUsage.billing_mode !== undefined) combined.billing_mode = combined.billing_mode && combined.billing_mode !== stageUsage.billing_mode ? 'mixed' : stageUsage.billing_mode
+      if (stageUsage.cost_basis !== undefined) combined.cost_basis = combined.cost_basis && combined.cost_basis !== stageUsage.cost_basis ? 'mixed' : stageUsage.cost_basis
+      if (combined.billed_cost_usd === null || stageUsage.billed_cost_usd === null) combined.billed_cost_usd = null
+      else if (combined.billed_cost_usd === undefined) combined.billed_cost_usd = stageUsage.billed_cost_usd
+      else if (stageUsage.billed_cost_usd !== undefined) combined.billed_cost_usd += stageUsage.billed_cost_usd
+      for (const key of ['api_estimate_usd', 'api_equivalent_usd', 'cached_input_tokens', 'reasoning_output_tokens', 'model_attempts'] as const) {
+        if (stageUsage[key] !== undefined) combined[key] = (combined[key] ?? 0) + stageUsage[key]!
+      }
+      const rank = { complete: 0, partial: 1, unknown: 2, estimated: 3 }
+      if (stageUsage.usage_status !== undefined && (combined.usage_status === undefined || rank[stageUsage.usage_status] > rank[combined.usage_status])) combined.usage_status = stageUsage.usage_status
+    }
+    return combined
+  }
+  return { ...events, onSessionEnd: () => {}, onStats: (input, output, cost, contextTokens, agentId, usage) => events.onStats?.(root.usage.input + input, root.usage.output + output, root.usage.cost_usd + cost, contextTokens, agentId, combineUsage(usage)) }
 }
 
-async function shadowCompletion(openai: OpenAI, model: string, prompt: string): Promise<string> {
+function mergeStageUsage(root: Session, staged: Session): void {
+  mergeUsageDelta(root.usage, staged.usage)
+}
+
+async function shadowCompletion(openai: OpenAI | undefined, provider: ProviderClient | undefined, model: string, prompt: string): Promise<string> {
+  if (provider) return (await provider.generate({ model, stream: false, maxTokens: 800, temperature: 0, messages: [{ role: 'user', content: prompt }] }, { purpose: 'workflow-shadow' })).text
+  if (!openai) throw new Error('workflow provider unavailable')
   const response = await (openai.chat.completions as any).create({ model, messages: [{ role: 'user', content: prompt }], max_tokens: 800, temperature: 0 })
   return String(response.choices?.[0]?.message?.content ?? '')
 }
 
-async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true): Promise<StageResult> {
+async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true): Promise<StageResult> {
   const modelId = tier === 'critic' ? (profile.models?.roles.critic ?? profile.model.id) : (profile.models?.roles?.[tier] ?? profile.model.id)
   const contract = loadPlaybook(profile.workflow?.playbook ?? 'generic').contract(stage, intensity)
   const seed = buildStageContext(request, prior, contract, stage === 'recon' ? graphSlice : '')
   const stageId = newStageId()
   const staged = childSession(root, stageId, seed)
-  const stageContext = { ...context, session: staged, events: stageEvents(root, events) }
+  const stageBudget = context.budget
+    ? context.budget.allocate(context.budget.remainingCost())
+    : undefined
+  const stageContext = {
+    ...context,
+    session: staged,
+    events: stageEvents(root, events),
+    ...(stageBudget ? { budget: stageBudget } : {}),
+  }
+  if (context.provider) stageContext.provider = bindRunProvider(context.provider, stageContext)
   const started = Date.now()
   events.onStage?.(stage, intensity, tier, modelId, 'start')
   logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: profile.workflow?.playbook ?? 'generic', attempt, model: modelId, state: 'start' })
-  await loop(seed, profile, staged, stageContext, stageContext.events, openai, signal, { modelId, stage: { task_id: taskId, stage_id: stageId, stage, attempt, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, playbook: profile.workflow?.playbook ?? 'generic', explore } })
-  root.tool_calls.push(...staged.tool_calls)
-  root.usage.input += staged.usage.input
-  root.usage.output += staged.usage.output
-  root.usage.cost_usd += staged.usage.cost_usd
+  try {
+    await loop(seed, profile, staged, stageContext, stageContext.events, openai, signal, { modelId, stage: { task_id: taskId, stage_id: stageId, stage, attempt, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, playbook: profile.workflow?.playbook ?? 'generic', explore } })
+  } finally {
+    root.tool_calls.push(...staged.tool_calls)
+    mergeStageUsage(root, staged)
+    if (stageBudget && context.budget) context.budget.absorbChildUsage(stageBudget, staged.usage.cost_usd)
+  }
   const body = stageBody(staged)
   const validation = validateArtifact(body, contract)
   if (persistArtifact) writeArtifact(profile, root, stage, body, { intensity, tier, model: modelId, confidence: plan.confidence, contract_ok: validation.ok, attempt, task_id: taskId })
   if (profile.workflow?.knowledge.graph) {
-    const knowledge = await extractKnowledge(body, stage, openai, profile)
+    const knowledge = await extractKnowledge(body, stage, openai, profile, context.provider)
     const generalized = stage === 'review' && profile.workflow.knowledge.generalization_probe ? generalizationFromReview(body) : { nodes: [], edges: [] }
     await persistKnowledge(context.memory, [...knowledge.nodes, ...generalized.nodes], [...knowledge.edges, ...generalized.edges]).catch(() => {})
   }
@@ -133,44 +180,52 @@ function cloneSession(session: Session): Session {
 }
 
 /** Run only recon and plan against an isolated session for interactive rehearsal. */
-export async function runPlanPreview(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal = new AbortController().signal, loop: typeof runAgentLoop = runAgentLoop): Promise<PlanPreview> {
+export async function runPlanPreview(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal = new AbortController().signal, loop: typeof runAgentLoop = runAgentLoop): Promise<PlanPreview> {
   const taskId = newTaskId()
   const playbook = loadPlaybook(profile.workflow?.playbook ?? 'generic')
   const previewSession = cloneSession(session)
   const previewContext = { ...context, session: previewSession }
-  const fixedTriage = triageIsFixed(profile)
-  const triage = fixedTriage
-    ? { task_class: playbook.task_classes[0] ?? 'general', recon_intensity: Math.max(1, profile.workflow?.min_intensity.recon ?? 1) as Intensity }
-    : await triageA(request, playbook, openai, profile)
-  const graphSlice = await queryProjectGraph(previewContext.memory, request).catch(() => 'no prior project knowledge')
-  const reconPlan: TaskPlan = {
-    task_class: triage.task_class,
-    blast_radius: 'module',
-    reversibility: 'easy',
-    intensity: { recon: triage.recon_intensity, plan: 1, design: 0, build: 0, verify: 0, review: 0 },
-    confidence: 0.5,
-    why: 'interactive plan request',
+  if (context.provider) previewContext.provider = bindRunProvider(context.provider, previewContext)
+  const usageBefore = { ...previewSession.usage }
+  try {
+    const fixedTriage = triageIsFixed(profile)
+    const triage = fixedTriage
+      ? { task_class: playbook.task_classes[0] ?? 'general', recon_intensity: Math.max(1, profile.workflow?.min_intensity.recon ?? 1) as Intensity }
+      : await triageA(request, playbook, openai, profile, previewContext.provider)
+    const graphSlice = await queryProjectGraph(previewContext.memory, request).catch(() => 'no prior project knowledge')
+    const reconPlan: TaskPlan = {
+      task_class: triage.task_class,
+      blast_radius: 'module',
+      reversibility: 'easy',
+      intensity: { recon: triage.recon_intensity, plan: 1, design: 0, build: 0, verify: 0, review: 0 },
+      confidence: 0.5,
+      why: 'interactive plan request',
+    }
+    const prior: Array<{ stage: Stage; body: string }> = []
+    const reconRouting = resolveTier(profile, 'recon', reconPlan.task_class, undefined, playbook.name)
+    const recon = await executeStage(request, 'recon', Math.max(1, reconPlan.intensity.recon) as Intensity, reconRouting.tier, 1, taskId, reconPlan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
+    prior.push({ stage: 'recon', body: recon.body })
+    const plan = fixedTriage
+      ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
+      : await triageB(request, recon.body, playbook, openai, profile, triage.task_class, previewContext.provider)
+    const intensity = Math.max(1, plan.intensity.plan) as Intensity
+    const routing = resolveTier(profile, 'plan', plan.task_class, undefined, playbook.name)
+    const result = await executeStage(request, 'plan', intensity, routing.tier, 1, taskId, plan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
+    return { taskId, body: result.body, intensity, tier: routing.tier, model: result.modelId, contract_ok: result.contract_ok, attempt: result.attempt }
+  } finally {
+    mergeUsageDelta(session.usage, usageDeltaFromSession(usageBefore, previewSession.usage))
   }
-  const prior: Array<{ stage: Stage; body: string }> = []
-  const reconRouting = resolveTier(profile, 'recon', reconPlan.task_class, undefined, playbook.name)
-  const recon = await executeStage(request, 'recon', Math.max(1, reconPlan.intensity.recon) as Intensity, reconRouting.tier, 1, taskId, reconPlan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
-  prior.push({ stage: 'recon', body: recon.body })
-  const plan = fixedTriage
-    ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
-    : await triageB(request, recon.body, playbook, openai, profile, triage.task_class)
-  const intensity = Math.max(1, plan.intensity.plan) as Intensity
-  const routing = resolveTier(profile, 'plan', plan.task_class, undefined, playbook.name)
-  const result = await executeStage(request, 'plan', intensity, routing.tier, 1, taskId, plan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
-  return { taskId, body: result.body, intensity, tier: routing.tier, model: result.modelId, contract_ok: result.contract_ok, attempt: result.attempt }
 }
 
-export async function runWorkflow(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI, signal: AbortSignal = new AbortController().signal, options: WorkflowRunOptions = {}): Promise<void> {
+export async function runWorkflow(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal = new AbortController().signal, options: WorkflowRunOptions = {}): Promise<void> {
   const taskId = options.taskId ?? newTaskId()
   const playbook = loadPlaybook(profile.workflow?.playbook ?? 'generic')
   const loop = options.loop ?? runAgentLoop
   const maxRetries = profile.workflow?.budget.max_stage_retries ?? 2
   const maxCost = profile.workflow?.budget.max_usd_per_task ?? 2
   const startedAt = Date.now()
+  const workflowDeadline = startedAt + (profile.workflow?.budget.max_stage_minutes ?? 15) * 60_000
+  context.deadline = Math.min(context.deadline ?? Infinity, workflowDeadline)
   let adaptivePolicy: RoutingPolicyDoc | undefined
   if (profile.workflow?.routing.policy === 'adaptive') {
     try { adaptivePolicy = parseRoutingPolicy((await context.memory.read('project', 'routing-policy'))?.content) } catch { adaptivePolicy = undefined }
@@ -179,7 +234,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   const fixedTriage = triageIsFixed(profile)
   const triage = fixedTriage
     ? { task_class: playbook.task_classes[0] ?? 'general', recon_intensity: Math.max(1, profile.workflow?.min_intensity.recon ?? 1) as Intensity }
-    : await triageA(request, playbook, openai, profile)
+    : await triageA(request, playbook, openai, profile, context.provider)
   const graphSlice = await queryProjectGraph(context.memory, request).catch(() => 'no prior project knowledge')
   const reconPlan: TaskPlan = {
     task_class: triage.task_class,
@@ -199,7 +254,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   const failureCounts = new Map<Stage, number>()
   let finalResult: StageResult | undefined
 
-  const budgetExhausted = () => session.usage.cost_usd >= maxCost || Date.now() - startedAt >= (profile.workflow?.budget.max_stage_minutes ?? 15) * 60_000
+  const budgetExhausted = () => session.usage.cost_usd >= maxCost || Date.now() >= workflowDeadline || (context.deadline !== undefined && Date.now() >= context.deadline)
   const plainFallback = async (reason: string) => {
     emitTaskOutcome(session, { task_id: taskId, stages_run: artifacts.length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason })
     await loop(request, profile, session, context, events, openai, signal, { appendUser: false })
@@ -238,8 +293,8 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
         stage,
         activePlan,
         profile,
-        model => shadowCompletion(openai, model, buildStageContext(request, artifacts.slice(0, -1), contract)),
-        (blind, critic) => shadowCompletion(openai, critic, `Judge Artifact A and Artifact B blind. State which is stronger and why.\n${blind}`),
+        model => shadowCompletion(openai, context.provider, model, buildStageContext(request, artifacts.slice(0, -1), contract)),
+        (blind, critic) => shadowCompletion(openai, context.provider, critic, `Judge Artifact A and Artifact B blind. State which is stronger and why.\n${blind}`),
         { chosenTier: exploration.tier },
       )
       if (shadow) {
@@ -263,7 +318,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
       }
       plan = fixedTriage
         ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
-        : await triageB(request, result.body, playbook, openai, profile, triage.task_class)
+        : await triageB(request, result.body, playbook, openai, profile, triage.task_class, context.provider)
       pointer++
       continue
     }

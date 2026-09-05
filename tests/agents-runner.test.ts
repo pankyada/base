@@ -63,7 +63,7 @@ function makeParams(overrides: Partial<SubAgentParams> = {}): SubAgentParams {
     input: { query: 'test query' },
     context: {
       profile: {} as any,
-      session: { user: 'testuser', messages: [], tool_calls: [] } as any,
+      session: { user: 'testuser', messages: [], tool_calls: [], usage: { input: 0, output: 0, cost_usd: 0 } } as any,
       workingDir: '/tmp',
       memory: {} as any,
       skills: [],
@@ -204,4 +204,16 @@ describe('runSubAgent', () => {
     const result = await runSubAgent(makeParams())
     expect(result).toContain('output validation failed')
   })
+})
+
+
+it('merges failed child usage into parent before returning its error', async () => {
+  const params = makeParams()
+  vi.mocked(runAgentLoop).mockImplementationOnce(async (_message, _profile, session) => {
+    session.usage = { input: 100, output: 50, cost_usd: 0.25, billing_mode: 'subscription', cost_basis: 'api_equivalent', api_equivalent_usd: 0.25, usage_status: 'estimated', billed_cost_usd: null, model_attempts: 1 }
+    throw new Error('stream interrupted')
+  })
+  const result = await runSubAgent(params)
+  expect(result).toContain('stream interrupted')
+  expect(params.context.session.usage).toMatchObject({ cost_usd: 0.25, input: 100, api_equivalent_usd: 0.25, usage_status: 'estimated' })
 })

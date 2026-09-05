@@ -22,6 +22,7 @@ pointer to what replaced them.
 
 | ADR | Decision | Status | Area |
 |---|---|---|---|
+| [79](#adr-79) | Explicit Codex OAuth transport alongside API-key defaults | 🔄 | providers |
 | [1](#adr-1) | Profile-driven generic runtime | ✅ | foundations |
 | [2](#adr-2) | OpenAI-compatible client against any `base_url` | ✅ | foundations |
 | [3](#adr-3) | Four-level discovery, last-write-wins, for all extension points | ✅ | foundations |
@@ -932,6 +933,50 @@ default widget renderer or grant them fixed-kit guarantees.
 *Consequences:* The two paths can evolve independently and their security and
 export contracts remain explicit.
 
+### ADR-73
+**Use-case films are narrative, the architecture explorer stays the map** — ✅
+
+*Context:* `docs/architecture-site/` already animates one generic 11-step
+request lifecycle across every layer, module, and file — it answers "what
+exists and where." The four documented use cases (`docs-site/use-cases.md`)
+had no animation at all, and the obvious failure mode was bolting four more
+lifecycle buttons onto the explorer, which would blur a spatial map with
+scenario-specific narrative it was never designed to carry.
+*Decision:* Build a second, deliberately separate animation surface —
+`docs-site/how-it-works.md` — with one short scripted film per use case,
+each citing the real source paths it depicts. The explorer keeps exactly one
+generic lifecycle and does not grow per-use-case branches; the films do not
+attempt to be a component map and carry no node/edge/file browser.
+*Consequences:* Two animation surfaces exist on purpose, cross-linked in both
+directions (`architecture.md` ↔ `how-it-works.md`) so neither reads as
+redundant with the other. A future contributor tempted to "unify" them should
+read this entry first — the split is the design, not an oversight.
+
+### ADR-74
+**Use-case films are declarative data rendered by SVG+DOM, not canvas** — ✅
+
+*Context:* The architecture explorer renders on a Konva canvas. Reusing that
+approach for the films would mean canvas-painted captions — not selectable,
+not searchable by VitePress's local search, not readable by a screen reader —
+and would couple four scenario scripts to one rendering engine.
+*Decision:* One file (`docs-site/.vitepress/theme/films.ts`) holds both the
+architecture model — nodes, subsystem groups, zones, and a deterministic
+layout function — and the four `Film`/`Beat[]` scripts that move through it.
+Node ids are the SAME ids the explorer uses, so the two surfaces share one
+vocabulary. The stage renders as inline SVG (server container, subsystem
+bands, node rects, edge paths) with captions as real DOM text beside it,
+animated with `motion`'s vanilla DOM API plus a packet driven along
+`getPointAtLength`. `tests/use-case-films.test.ts` asserts every cited path
+exists AND that the computed layout keeps every server node inside the server
+box with no intra-band overlap — geometry regressions fail CI, not review.
+Under `prefers-reduced-motion` the same data renders as a static numbered
+list, so there is no second content source to maintain.
+*Consequences:* Captions stay real, accessible text; layout is testable
+because it is computed rather than hand-placed; and the scene model stays
+renderer-agnostic, so a future Remotion pass for shareable video is additive
+rather than a rewrite. This is a deliberate divergence from the sibling Konva
+app, which owns the full 40-node map and its own generic lifecycle.
+
 ### ADR-75
 **Default profile is a pointer, never a profile-pruning operation** — ✅
 
@@ -978,3 +1023,43 @@ legacy backup helper; it does not write profiles or prompts.
 *Consequences:* Every surface gets the same onboarding behavior and security
 guarantees. Contributors adding onboarding policy must change the Node wizard
 and its tests, not re-add a native Go flow.
+
+### ADR-78
+**Verifiable work uses additive file records and deterministic validators** — 📋
+
+*Context:* Missions, replay journals, evaluations, rehearsals, conflicts,
+correction proposals, artifact recipes, and challenge rounds need inspectable
+state without introducing a database or a second execution engine.
+*Decision:* Persist versioned records below the existing per-user harness paths
+with same-directory temp + rename writes, monotonic revisions, bounded previews,
+content hashes, and explicit unknown/stale/unresolved states. Deterministic
+validators may verify evidence; model prose and model judges remain advisory.
+Playback and branches never fall back to live effects, and promotion/apply steps
+reuse explicit operator gates.
+*Consequences:* Records remain readable and recoverable with the existing file
+workflow. Multi-process transactions, exactly-once external effects, and seeded
+model determinism remain deliberately unclaimed.
+
+### ADR-79
+
+**Explicit provider transport with separate Codex credentials** — 🔄
+
+*Context:* Personal Codex subscription access requires OAuth and a Responses
+backend. ADR-2's configurable OpenAI-compatible API client remains the default;
+replacing its API key with an OAuth token would not supply the required protocol.
+
+*Decision:* Select `model.auth: codex_oauth` explicitly. Keep API-key profiles,
+ambient environment precedence and existing profile selection intact. Base owns
+OAuth state under its private auth directory and keeps ownership of tool
+execution, approvals and safety. Use a normalized provider seam with a direct
+Responses adapter. Provider-only continuation must remain account-bound and
+excluded from ordinary exports, prompts and UI readers. No automatic fallback
+changes billing mode. No Claude subscription support is included.
+
+*Consequences:* ADR-43 budgets continue to constrain estimated work. Subscription
+token costs are API-equivalent estimates with unknown actual billed cost, not
+zero-cost work. Shared attempt limits and deadlines must include helpers and
+children. Mock tests establish local contracts; live client registration,
+entitlement, continuation and billing acceptance remain separate gates.
+
+*Implementation checkpoint (2026-09-06):* Local experimental code and automated validation complete; live acceptance pending. See [acceptance evidence](superpowers/reports/codex-implementation-acceptance.md).

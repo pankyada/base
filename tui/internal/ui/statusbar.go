@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"harness-tui/internal/protocol"
 )
 
 // statusBadge is the one unambiguous answer to "what is the agent doing right
@@ -21,7 +22,7 @@ func statusBadge(running bool, frame int) string {
 		Render(thinkingSpinChar(frame) + " RUNNING")
 }
 
-func statusBar(running bool, model, approval string, tokensIn, tokensOut int, cost float64, contextTokens, contextWindow, queued, width, frame int) string {
+func statusBar(running bool, model, approval string, tokensIn, tokensOut int, cost float64, contextTokens, contextWindow, queued, width, frame int, usage ...protocol.Usage) string {
 	mode := statusBadge(running, frame)
 	approvalStyle := StDim
 	if approval == "danger" {
@@ -40,6 +41,11 @@ func statusBar(running bool, model, approval string, tokensIn, tokensOut int, co
 			StFaint.Render(fmt.Sprintf("in %d · out %d", tokensIn, tokensOut)),
 			StFaint.Render(fmt.Sprintf("$%.4f", cost)),
 		)
+		if len(usage) > 0 {
+			if label := usageLabel(usage[0]); label != "" {
+				segments = append(segments, StDim.Render(label))
+			}
+		}
 	}
 	if contextWindow > 0 {
 		segments = append(segments, StFaint.Render(contextGaugeCompact(contextTokens, contextWindow)))
@@ -52,4 +58,20 @@ func statusBar(running bool, model, approval string, tokensIn, tokensOut int, co
 		segments = segments[:len(segments)-1]
 	}
 	return lipgloss.NewStyle().MaxWidth(maxInt(0, width)).Inline(true).Render(strings.Join(segments, "  "))
+}
+
+func usageLabel(usage protocol.Usage) string {
+	switch usage.CostBasis {
+	case "api_equivalent":
+		if usage.BillingMode == "subscription" {
+			return "Codex · API-equivalent est."
+		}
+		return "API-equivalent est."
+	case "api_estimate":
+		return "API est."
+	case "mixed":
+		return "Mixed est."
+	default:
+		return ""
+	}
 }

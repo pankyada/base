@@ -3,6 +3,8 @@ use_case:
   label: Data analysis
   blurb: Query data and produce read-only reports.
   rank: 2
+description: "Data analyst. Read-only SQL, reports, and insights — no writes outside artifacts, no shell."
+mode: analyst
 model:
   base_url: https://api.openai.com/v1
   api_key_env: OPENAI_API_KEY

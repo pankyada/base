@@ -12,11 +12,12 @@ import (
 )
 
 type ApprovalRequest struct {
-	ID     string
-	Name   string
-	Input  map[string]interface{}
-	Risk   string
-	Reason string
+	ID      string
+	Name    string
+	Input   map[string]interface{}
+	Risk    string
+	Reason  string
+	Preview interface{}
 }
 
 type InputRequest struct {
@@ -61,6 +62,12 @@ func approvalModal(req ApprovalRequest, width, height int) string {
 	}
 	if req.Reason != "" {
 		lines = append(lines, StDim.Render(req.Reason))
+	}
+	if req.Preview != nil {
+		proposal, proposalErr := json.MarshalIndent(req.Preview, "", "  ")
+		if proposalErr == nil {
+			lines = append(lines, StInfo.Render("PROPOSED EFFECT"), StFaint.Render(truncate(string(proposal), maxInt(80, width/2))))
+		}
 	}
 	lines = append(lines, "", StFaint.Render(truncate(string(preview), maxInt(80, width/2))), "", StDim.Render("y/enter approve · n/esc deny · a approve + yolo"))
 	return modalFrame(strings.Join(lines, "\n"), width, height)

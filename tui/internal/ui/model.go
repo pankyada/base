@@ -71,6 +71,7 @@ type Model struct {
 	tokensIn           int
 	tokensOut          int
 	costUSD            float64
+	usage              protocol.Usage
 	displayCost        float64
 	contextTokens      int
 	contextWindow      int
@@ -1971,6 +1972,10 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		}
 	case "artifacts":
 		m.artifacts = append(m.artifacts, msg.Artifacts...)
+	case "mission":
+		m.notices.Add(NoticeInfo, "mission status", string(msg.Mission), "receipt and criteria available")
+	case "receipt":
+		m.notices.Add(NoticeInfo, "mission receipt", string(msg.Receipt), "execution evidence recorded")
 	case "skills":
 		m.proposedSkills = msg.Proposed
 		m.installedSkills = msg.Installed
@@ -2090,6 +2095,9 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			m.notices.Add(NoticeWarn, "context above 80%", "conversation is nearing the model limit", "run /compact")
 		}
 		m.currentAgent().Tokens = msg.TokensOut
+		if msg.Usage != nil {
+			m.usage = *msg.Usage
+		}
 	case "stage":
 		m.stageCosts[msg.Stage] += msg.CostUSD
 		m.workflowStages[msg.Stage] = StageItem{Stage: msg.Stage, State: msg.State, Cost: m.stageCosts[msg.Stage]}
@@ -2134,7 +2142,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		}
 		m.addServerError(msg.Message)
 	case "tool_prompt":
-		m.pendingApproval = &ApprovalRequest{ID: msg.ID, Name: msg.Name, Input: msg.Input, Risk: msg.Risk, Reason: msg.Reason}
+		m.pendingApproval = &ApprovalRequest{ID: msg.ID, Name: msg.Name, Input: msg.Input, Risk: msg.Risk, Reason: msg.Reason, Preview: msg.Preview}
 		agent := m.currentAgent()
 		for i := len(agent.Sections) - 1; i >= 0; i-- {
 			section := &agent.Sections[i]
@@ -2296,7 +2304,7 @@ func (m Model) View() string {
 	}
 	parts = append(parts,
 		m.composer.View(),
-		statusBar(m.running, m.model, m.approvalMode, m.tokensIn, m.tokensOut, m.displayCost, m.contextTokens, m.contextWindow, len(m.queue), m.width, m.frame),
+		statusBar(m.running, m.model, m.approvalMode, m.tokensIn, m.tokensOut, m.displayCost, m.contextTokens, m.contextWindow, len(m.queue), m.width, m.frame, m.usage),
 	)
 	background := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	if m.pendingApproval != nil {

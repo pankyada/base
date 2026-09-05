@@ -1,0 +1,2 @@
+import type { SceneState } from '../scene/reducer.js'
+export function Vault({ spend }: Pick<SceneState, 'spend'>) { return <section className="panel vault"><div className="panel-kicker">Vault</div><h2>${spend.usd.toFixed(4)}</h2><p>run spend</p><div className="meter"><i style={{ width: `${Math.min(100, spend.usd * 100)}%` }} /></div><small>{spend.tokens_in.toLocaleString()} in · {spend.tokens_out.toLocaleString()} out</small></section> }

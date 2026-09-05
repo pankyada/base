@@ -13,6 +13,11 @@ durable deferred asks, watch/poll triggers, autonomy budgets, temporal
 memory, channels). This page is the shorter operator-facing summary: request
 lifecycle, runtime boundaries, and how to actually run and extend the thing.
 
+For a narrative view of the same runtime — what a specific use case actually
+does, beat by beat, rather than the full component map — see
+**[How it Works](./how-it-works)**. The explorer is the map; the films are
+the story. (See ADR-73.)
+
 ## System map
 
 ```mermaid

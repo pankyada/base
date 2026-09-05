@@ -1,5 +1,7 @@
 export interface Run {
   id: string
+  revision?: number
+  updated_at?: string
   profile: string
   user: string
   trigger: 'rest' | 'stream' | 'cron' | 'watch' | 'poll' | 'webhook' | 'a2a' | 'acp'

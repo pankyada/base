@@ -14,9 +14,15 @@ export interface ContextState {
 }
 
 import type { TodoItem } from '../types.js'
+import type { UsageMetadata } from '../provider/types.js'
+
+export interface SessionUsage extends UsageMetadata { input: number; output: number; cost_usd: number }
 
 export interface Session {
   id: string
+  /** Monotonic local revision. Legacy sessions may omit it. */
+  revision?: number
+  updated_at?: string
   user: string
   profile: string
   project: string
@@ -26,7 +32,7 @@ export interface Session {
   messages: unknown[]
   context?: ContextState
   tool_calls: SessionToolCall[]
-  usage: { input: number; output: number; cost_usd: number }
+  usage: SessionUsage
   session_memory: Record<string, string>
   todos: TodoItem[]
   /** Monotonic within a turn. Reset only when a genuine human message starts one. */
@@ -54,5 +60,5 @@ export interface SessionSummary {
   title?: string
   summary?: string
   created_at: string
-  usage: { input: number; output: number; cost_usd: number }
+  usage: SessionUsage
 }

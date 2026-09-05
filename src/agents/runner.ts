@@ -1,8 +1,11 @@
+import { mergeUsageDelta } from '../usage/ledger.js'
 import { readFileSync } from 'fs'
 import type { ValidateFunction } from 'ajv'
 import { parseJsonContract } from '../shared/json-contract.js'
 import { loadProfile } from '../profiles/loader.js'
 import { createProviderClient } from '../provider/client.js'
+import { createProvider } from '../provider/factory.js'
+import { bindRunProvider } from '../provider/invocation.js'
 import { createMcpClients, destroyMcpClients } from '../mcp/client.js'
 import { createSession } from '../session/store.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
@@ -48,14 +51,13 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
   // 4. Run sub-agent
   try {
     const subProfile = loadProfile(subProfilePath)
-    const subOpenai = createProviderClient(subProfile)
+    const subProvider = createProvider(subProfile)
+    const subOpenai = subProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(subProfile)
     const subMcpEntries = await createMcpClients(subProfile)
-    const childBudget = context.budget && context.budget.remainingCost() > 0
-      ? context.budget.allocate(context.budget.remainingCost())
-      : context.budget
+    const childBudget = context.budget?.allocate(context.budget.remainingCost())
 
+    const subSession = createSession(subProfile.name, context.session.user)
     try {
-      const subSession = createSession(subProfile.name, context.session.user)
       const frame = createAgentFrame({
         agentName,
         parent: context.agentFrame,
@@ -90,6 +92,10 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         mcpEntries: subMcpEntries,
         events: subEvents,
         openai: subOpenai,
+        provider: subProvider,
+        attemptBudget: context.attemptBudget,
+        deadline: context.deadline,
+        usageSink: context.usageSink,
         signal: context.signal,
         delegateDepth: (context.delegateDepth ?? 0) + 1,
         maxDepth,
@@ -99,6 +105,7 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
         agentFrame: frame,
         protocolVersion: context.protocolVersion,
       }
+      subContext.provider = bindRunProvider(subProvider, subContext)
 
       try {
         await runAgentLoop(
@@ -144,6 +151,8 @@ export async function runSubAgent(params: SubAgentParams): Promise<string> {
       }
     } finally {
       await destroyMcpClients(subMcpEntries).catch(() => {})
+      mergeUsageDelta(context.session.usage, subSession.usage)
+      if (context.budget && childBudget) context.budget.absorbChildUsage(childBudget, subSession.usage.cost_usd)
       childBudget?.release()
     }
   } catch (e: any) {

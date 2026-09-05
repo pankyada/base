@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"harness-tui/internal/protocol"
 )
 
 func TestBarsFitNarrowWidths(t *testing.T) {
@@ -16,6 +17,18 @@ func TestBarsFitNarrowWidths(t *testing.T) {
 		if got := lipgloss.Width(statusBar(true, "claude-3-5-sonnet", "danger", 123, 456, 0.0123, 1000, 10000, 1, width, 0)); got > width {
 			t.Errorf("status bar width = %d, want <= %d", got, width)
 		}
+	}
+}
+
+func TestUsageLabelShowsBillingBasis(t *testing.T) {
+	if got := usageLabel(protocol.Usage{BillingMode: "subscription", CostBasis: "api_equivalent"}); got != "Codex · API-equivalent est." {
+		t.Fatalf("subscription label = %q", got)
+	}
+	if got := usageLabel(protocol.Usage{BillingMode: "api", CostBasis: "api_estimate"}); got != "API est." {
+		t.Fatalf("api label = %q", got)
+	}
+	if got := usageLabel(protocol.Usage{BillingMode: "mixed", CostBasis: "mixed"}); got != "Mixed est." {
+		t.Fatalf("mixed label = %q", got)
 	}
 }
 

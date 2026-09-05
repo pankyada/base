@@ -1,4 +1,5 @@
 import type OpenAI from 'openai'
+import type { ProviderClient } from '../provider/types.js'
 import type { Profile } from '../profiles/schema.js'
 import { ensureContextState, type Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
@@ -136,9 +137,10 @@ function fitPrefix(session: Session, projection: any[], maxTokens: number): any[
 export async function project(
   session: Session,
   profile: Profile,
-  openai: OpenAI,
+  openai?: OpenAI,
   memory?: MemoryProvider,
   onNotice?: (message: string, detail?: string) => void,
+  provider?: ProviderClient,
 ): Promise<unknown[]> {
   const state = ensureContextState(session)
   const metrics: ProjectionTelemetry = { elided_count: 0, elided_bytes: 0, digest_calls: 0 }
@@ -182,7 +184,7 @@ export async function project(
   if (foldable.length > 0) {
     const upto = foldable[foldable.length - 1].end
     metrics.digest_calls += 1
-    const digest = await buildDigest(session, profile, openai, upto, memory)
+    const digest = await buildDigest(session, profile, openai, upto, memory, provider)
     if (digest) {
       state.digest = { upto, text: digest.text }
       liveStart = upto

@@ -2,9 +2,12 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFile
 import { homedir } from 'os'
 import { createInterface } from 'readline'
 import { join } from 'path'
-import { MODEL_REGISTRY } from '../models/registry.js'
+import { MODEL_REGISTRY, listModels } from '../models/registry.js'
 import type { ModelInfo } from '../types.js'
 import { loadProfile } from '../profiles/loader.js'
+import { ProfileSchema, type Profile } from '../profiles/schema.js'
+import { codexAuthStatus } from '../provider/auth/store.js'
+import { load as loadYaml } from 'js-yaml'
 import { loadStartupProfiles } from '../server/profile-startup.js'
 import { readUserConfig, writeUserConfig } from '../config/user-config.js'
 import { loadUserEnv, userEnvPath, writeUserEnv } from '../config/user-env.js'
@@ -62,29 +65,42 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
 
     let profile = selected
     io.write(`\nSelected profile: ${profile.name}`)
-    const defaultProvider = providerForBaseUrl(profile.model.base_url)
+    const isCodex = profile.model.auth === 'codex_oauth'
+    const defaultProvider = isCodex ? 'OpenAI Codex subscription' : providerForBaseUrl(profile.model.base_url!)
     const provider = flags.yes ? defaultProvider : await chooseProvider(defaultProvider, io)
-    const baseUrl = provider === 'Other OpenAI-compatible' ? await ask(io, 'Base URL', profile.model.base_url) : baseUrlForProvider(provider, profile.model.base_url)
-    const models = MODEL_REGISTRY.filter(model => model.provider === provider)
-    const defaultModel = models.some(model => model.id === profile.model.id) ? profile.model.id : models[0]?.id ?? profile.model.id
-    const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, io)
-    const apiKeyEnv = provider === 'Anthropic' ? 'ANTHROPIC_API_KEY' : provider === 'OpenAI' ? 'OPENAI_API_KEY' : profile.model.api_key_env
-    const ambientKey = environment[apiKeyEnv]
-    loadUserEnv(homeDir, environment)
-    let key = environment[apiKeyEnv]
-    if (!ambientKey || flags.reconfigure) {
-      if (flags.yes && !key) throw new Error(`API key required for ${apiKeyEnv}; rerun without --yes`)
-      if (!flags.yes) {
-        key = await io.readSecret(`\nAPI key for ${apiKeyEnv}: `)
-        if (!key) throw new Error(`API key required for ${apiKeyEnv}`)
-        if (!flags.reconfigure) backupFile(userEnvPath(homeDir), now, io, true)
-        writeUserEnv(apiKeyEnv, key, homeDir)
-        environment[apiKeyEnv] = key
+    let selectedModel: Profile['model']
+    if (provider === 'OpenAI Codex subscription') {
+      const catalogProfile = { ...profile, model: { auth: 'codex_oauth' as const, id: profile.model.id, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } } }
+      const models = listModels(catalogProfile)
+      const defaultModel = models.some(item => item.id === profile.model.id) ? profile.model.id : models[0].id
+      const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, io)
+      if (!models.some(item => item.id === model)) throw new Error('Choose a model from the Codex compatibility catalog')
+      selectedModel = { auth: 'codex_oauth', id: model, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } }
+      const status = codexAuthStatus(homeDir)
+      io.write(`Codex subscription: ${status.status}. Login uses harness auth login openai --method browser.`)
+    } else {
+      const currentUrl = profile.model.base_url ?? 'https://api.openai.com/v1'
+      const baseUrl = provider === 'Other OpenAI-compatible' ? await ask(io, 'Base URL', currentUrl) : baseUrlForProvider(provider, currentUrl)
+      const models = MODEL_REGISTRY.filter(model => model.provider === provider)
+      const defaultModel = models.some(model => model.id === profile.model.id) ? profile.model.id : models[0]?.id ?? profile.model.id
+      const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, io)
+      const apiKeyEnv = provider === 'Anthropic' ? 'ANTHROPIC_API_KEY' : provider === 'OpenAI' ? 'OPENAI_API_KEY' : profile.model.api_key_env ?? 'OPENAI_API_KEY'
+      const ambientKey = environment[apiKeyEnv]
+      loadUserEnv(homeDir, environment)
+      let key = environment[apiKeyEnv]
+      if (!ambientKey || flags.reconfigure) {
+        if (flags.yes && !key) throw new Error(`API key required for ${apiKeyEnv}; rerun without --yes`)
+        if (!flags.yes) {
+          key = await io.readSecret(`\nAPI key for ${apiKeyEnv}: `)
+          if (!key) throw new Error(`API key required for ${apiKeyEnv}`)
+          if (!flags.reconfigure) backupFile(userEnvPath(homeDir), now, io, true)
+          writeUserEnv(apiKeyEnv, key, homeDir)
+          environment[apiKeyEnv] = key
+        }
       }
+      selectedModel = { auth: 'api_key', base_url: baseUrl, api_key_env: apiKeyEnv, id: model }
     }
-
-    const selectedModel = { base_url: baseUrl, api_key_env: apiKeyEnv, id: model }
-    if (profile.model.base_url !== selectedModel.base_url || profile.model.api_key_env !== selectedModel.api_key_env || profile.model.id !== selectedModel.id) {
+    if ((profile.model.auth ?? 'api_key') !== selectedModel.auth || profile.model.base_url !== selectedModel.base_url || profile.model.api_key_env !== selectedModel.api_key_env || profile.model.id !== selectedModel.id) {
       const applied = await confirmModelChange(profile.profile_path, selectedModel, flags, io, now)
       if (applied && profile.profile_path) profile = loadProfile(profile.profile_path)
       else io.write('model change declined; keeping the existing profile model')
@@ -142,7 +158,7 @@ async function chooseProfile(profiles: any[], io: InitIO): Promise<any> {
 }
 
 async function chooseProvider(defaultProvider: string, io: InitIO): Promise<string> {
-  const providers = ['Anthropic', 'OpenAI', 'Other OpenAI-compatible']
+  const providers = ['Anthropic', 'OpenAI', 'Other OpenAI-compatible', 'OpenAI Codex subscription']
   io.write('\n2. Provider?')
   providers.forEach((provider, index) => io.write(`  ${index + 1}. ${provider}`))
   const answer = await io.readLine(`Choose provider [${defaultProvider}]: `)
@@ -192,11 +208,21 @@ function baseUrlForProvider(provider: string, current: string): string {
   return current
 }
 
-async function confirmModelChange(profilePath: string | undefined, model: { base_url: string; api_key_env: string; id: string }, flags: InitFlags, io: InitIO, now: () => Date): Promise<boolean> {
+async function confirmModelChange(profilePath: string | undefined, model: Profile['model'], flags: InitFlags, io: InitIO, now: () => Date): Promise<boolean> {
   if (!profilePath) return false
   const before = readFileSync(profilePath, 'utf-8')
-  const after = replaceModelBlock(before, model)
-  io.write(`\nProfile model diff (${profilePath}):\n- ${profileModelSummary(before)}\n+ ${model.base_url} / ${model.id} / ${model.api_key_env}`)
+  let after = replaceModelBlock(before, model)
+  const helperChanges: string[] = []
+  if (model.auth === 'codex_oauth') {
+    after = after.replace(/^(models|safety|context|context_window|improvement):[^\n]*\n(?:[ \t]+.*(?:\n|$)|\n)*/gm, block => block.replace(/^(\s+(?:cheap|balanced|frontier|critic|classifier_model_id|digest_model_id|model_id):)\s*[^\n]+/gm, (line, key: string) => {
+      const replacement = `${key} ${model.id}`
+      if (line !== replacement) helperChanges.push(`- ${line.trim()}\n+ ${replacement.trim()}`)
+      return replacement
+    }))
+  }
+  ProfileSchema.parse(loadYaml(after))
+  io.write(`\nProfile model diff (${profilePath}):\n- ${profileModelSummary(before)}\n+ ${model.auth === 'codex_oauth' ? 'Codex subscription' : model.base_url} / ${model.id} / ${model.api_key_env ?? 'OAuth'}`)
+  if (helperChanges.length) io.write(`Helper model changes:\n${helperChanges.join('\n')}`)
   if (flags.yes) return false
   const answer = await io.readLine('Apply this model change? [y/N]: ')
   if (answer.trim().toLowerCase() !== 'y') return false
@@ -205,10 +231,11 @@ async function confirmModelChange(profilePath: string | undefined, model: { base
   return true
 }
 
-function replaceModelBlock(content: string, model: { base_url: string; api_key_env: string; id: string }): string {
+function replaceModelBlock(content: string, model: Profile['model']): string {
   const match = /^model:\r?\n(?:[ \t]+.*(?:\r?\n|$))*/m.exec(content)
   if (!match) throw new Error('profile has no model block')
   const fallback = `  fallback_id: ${model.id}\n`
+  if (model.auth === 'codex_oauth') return content.replace(match[0], `model:\n  auth: codex_oauth\n  id: ${model.id}\n${fallback}  codex:\n    max_model_calls_per_run: 64\n    request_timeout_ms: 120000\n`)
   const replacement = `model:\n  base_url: ${model.base_url}\n  api_key_env: ${model.api_key_env}\n  id: ${model.id}\n${fallback}`
   return content.replace(match[0], replacement)
 }

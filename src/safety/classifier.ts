@@ -5,6 +5,8 @@ import type { RiskLevel } from '../types.js'
 import { logEvent } from '../telemetry/logger.js'
 import { classifyStatic } from './rules.js'
 import { DangerCache, verdictKey } from './cache.js'
+import { createApiKeyProvider } from '../provider/api-key.js'
+import { isProviderControlFailure } from '../provider/errors.js'
 
 export interface Classification {
   risk: RiskLevel
@@ -60,21 +62,25 @@ export async function classify(toolName: string, input: Record<string, unknown>,
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
   try {
-    const response = await (ctx.openai.chat.completions as any).create({
+    const provider = ctx.provider ?? (ctx.openai ? createApiKeyProvider(ctx.profile, ctx.openai) : undefined)
+    if (!provider) throw new Error('classifier provider unavailable')
+    const response = await provider.generate({
       model: classifierModel(ctx),
-      max_tokens: 64,
+      stream: false,
       messages: [
         { role: 'system', content: 'Classify tool safety. Return strict JSON only: {"risk":"safe|caution|danger","reason":"12 words or fewer"}.' },
         { role: 'user', content: JSON.stringify({ tool: toolName, input }) },
-      ],
-    }, { signal: controller.signal })
-    const content = response.choices?.[0]?.message?.content ?? ''
+        ],
+      signal: controller.signal,
+    }, { signal: controller.signal, profileName: ctx.profile.name, purpose: 'safety-classifier', deadline: Date.now() + timeout })
+    const content = response.text
     const verdict = parseVerdict(content)
     if (!verdict) throw new Error('invalid classifier response')
     cache.set(key, verdict)
     logEvent({ session: ctx.session.id, profile: ctx.profile.name, kind: 'safety', name: toolName, duration_ms: Date.now() - started, ok: true })
     return { ...verdict, source: 'model' }
-  } catch {
+  } catch (error) {
+    if (isProviderControlFailure(error)) throw error
     logEvent({ session: ctx.session.id, profile: ctx.profile.name, kind: 'safety', name: toolName, duration_ms: Date.now() - started, ok: false })
     return { risk: 'danger', reason: 'classification unavailable', source: 'failsafe' }
   } finally {

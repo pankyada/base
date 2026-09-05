@@ -1,5 +1,6 @@
 import type { Profile } from '../profiles/schema.js'
 import type { ModelInfo } from '../types.js'
+import { CODEX_MODELS } from '../provider/codex/models.js'
 
 interface ModelPricing {
   input: number
@@ -118,6 +119,7 @@ function providerForBaseUrl(baseUrl: string): string {
 }
 
 function unknownModel(profile: Profile): ModelInfo {
+  if (profile.model.auth === 'codex_oauth') throw new Error('Unknown Codex models are not available')
   return {
     id: profile.model.id,
     label: profile.model.id,
@@ -133,6 +135,14 @@ function unknownModel(profile: Profile): ModelInfo {
 }
 
 export function listModels(profile: Profile): ModelInfo[] {
+  if (profile.model.auth === 'codex_oauth') {
+    return CODEX_MODELS.map(model => ({
+      id: model.id, label: `${model.id} · Codex subscription`, provider: 'OpenAI Codex', base_url: '',
+      context_window: model.contextWindow, input_price: MODEL_PRICES[model.id]?.input ?? FALLBACK_PRICES.input,
+      output_price: MODEL_PRICES[model.id]?.output ?? FALLBACK_PRICES.output,
+      tags: ['subscription', 'experimental'], available: true,
+    }))
+  }
   const activeBaseUrl = normalizeBaseUrl(profile.model.base_url)
   const models = MODEL_REGISTRY.map((model) => {
     const available = normalizeBaseUrl(model.base_url) === activeBaseUrl

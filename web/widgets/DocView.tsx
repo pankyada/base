@@ -1,1 +1,4 @@
-export function DocView({ data }: { data: unknown }) { return <article className="doc-view">{String(data ?? '')}</article> }
+export function DocView({ data }: { data: unknown }) {
+  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+  return <article className="doc-view">{text ?? ''}</article>
+}

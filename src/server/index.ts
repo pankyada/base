@@ -5,9 +5,10 @@ import { checkOrigin, loadOriginPolicy } from './origin.js'
 import { WebSocketServer, WebSocket } from 'ws'
 import { resolve } from 'path'
 import { homedir, userInfo } from 'os'
+import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
-import { sanitizeUserId } from '../session/user-paths.js'
-import { recordUsage } from '../usage/ledger.js'
+import { sanitizeUserId, userPaths } from '../session/user-paths.js'
+import { mergeUsageDelta, recordUsage, usageDeltaFromSession } from '../usage/ledger.js'
 import { RunStore } from '../runs/store.js'
 import { PendingStore } from '../runs/pending.js'
 import { TriggerManager } from '../triggers/manager.js'
@@ -23,6 +24,9 @@ import { buildAgentCatalog } from '../agents/catalog.js'
 import { runBoundedPool } from '../agents/pool.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
 import { createProviderClient } from '../provider/client.js'
+import { createProvider } from '../provider/factory.js'
+import type { ProviderClient } from '../provider/types.js'
+import { bindRunProvider } from '../provider/invocation.js'
 import { createMcpClients, destroyMcpClients, McpEntry } from '../mcp/client.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { GraphMemoryProvider } from '../memory/graph-memory.js'
@@ -30,6 +34,7 @@ import { MemoryProvider } from '../memory/interface.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
 import { commandSummaries, loadAllCommands, resolveCommandDirs } from '../skills/commands.js'
 import { registerAll, clearRegistry, registerTool } from '../tools/builtin/index.js'
+import { getAllTools } from '../tools/registry.js'
 import { resolveToolsDirs, loadAllCustomTools } from '../tools/loader.js'
 import { buildSkillIndex } from '../skills/indexer.js'
 import { buildInteractiveSystemPrompt } from './interactive-prompt.js'
@@ -42,7 +47,7 @@ import { listModels } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
-import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type InputRequestKind } from '../types.js'
+import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type InputRequestKind, type UsageMetadataWire } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
@@ -60,7 +65,16 @@ import { RunBudget, BudgetExceeded } from '../runs/budget.js'
 import { sessionEndFromError, type SessionEndStatus } from './session-status.js'
 import { createRootFrame } from '../agents/frames.js'
 import { delegateTool } from '../tools/builtin/delegate.js'
+import { Bulletin } from '../agents/bulletin.js'
 import pkg from '../../package.json' with { type: 'json' }
+import { SessionRuntimeRegistry } from './session-runtime.js'
+import { MissionStore, completeHumanCriterion, createMission, evidenceRef, evaluateCriterion, finalizeMission, type EvidenceRef } from '../missions/index.js'
+import { ReplayStore } from '../replay/store.js'
+import { hashArguments, markCheckpoint, newJournal, recordEffect, recordEvent, type EffectReceipt, type RunJournal } from '../replay/index.js'
+import { ChallengeDesk } from '../agents/challenges.js'
+import { ArtifactStore, promoteArtifact } from '../artifacts/index.js'
+import { createArtifactGenerator } from '../artifacts/runtime.js'
+import { codexAuthStatus } from '../provider/auth/store.js'
 
 if (process.argv.includes('--version') || process.argv.includes('-v')) {
   console.log(`harness-server ${pkg.version}`)
@@ -75,6 +89,15 @@ function randomRunId(): string {
 
 function makeRunEmitter(runId: string, send: (message: ServerMessage) => void): (message: { type: ServerMessage['type'] } & Record<string, unknown>) => void {
   return message => send({ ...message, run_id: runId } as ServerMessage)
+}
+
+function usageMetadata(usage: object | undefined): UsageMetadataWire | undefined {
+  if (!usage) return undefined
+  const values = usage as Record<string, unknown>
+  const keys: Array<keyof UsageMetadataWire> = ['billing_mode', 'cost_basis', 'billed_cost_usd', 'api_estimate_usd', 'api_equivalent_usd', 'usage_status', 'cached_input_tokens', 'reasoning_output_tokens', 'model_attempts']
+  const result: Partial<UsageMetadataWire> = {}
+  for (const key of keys) if (values[key] !== undefined) (result as Record<string, unknown>)[key] = values[key]
+  return Object.keys(result).length ? result : undefined
 }
 
 function readSessionCount(artifactDir: string): number {
@@ -225,8 +248,9 @@ async function main() {
   }
   for (const provider of await loadVoiceProviders()) registerVoiceProvider(provider)
 
-  const openai = createProviderClient(profile)
-  const improver = new DefaultImprover(profile, openai)
+  const provider = createProvider(profile)
+  const openai = profile.model.auth === 'codex_oauth' ? undefined : createProviderClient(profile)
+  const improver = new DefaultImprover(profile, openai, provider)
   const skills = loadAllSkills(resolveSkillsDirs())
   const skillIndex = buildSkillIndex(skills)
   const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
@@ -256,7 +280,7 @@ async function main() {
   for (const scheduler of schedulers) scheduler.init()
   for (const owner of profiles.values()) if (owner.triggers?.cron) console.log(`[cron] registered schedule '${owner.triggers.cron}' for profile '${owner.name}'`)
 
-  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore, originPolicy })
+  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore, originPolicy, artifactGenerator: createArtifactGenerator(skills) })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
   const wss = new WebSocketServer({
     server: httpServer,
@@ -295,11 +319,21 @@ async function main() {
   })
 
   const openSockets = new Set<WebSocket>()
+  const sessionRuntimes = new SessionRuntimeRegistry()
+  const runtimePeers = new Map<string, Set<WebSocket>>()
+  const addRuntimePeer = (sessionId: string, socket: WebSocket): void => { const peers = runtimePeers.get(sessionId) ?? new Set<WebSocket>(); peers.add(socket); runtimePeers.set(sessionId, peers) }
+  const removeRuntimePeer = (sessionId: string, socket: WebSocket): void => { const peers = runtimePeers.get(sessionId); peers?.delete(socket); if (peers?.size === 0) runtimePeers.delete(sessionId) }
+  const runtimeCleanupTimer = setInterval(() => sessionRuntimes.cleanup(), 30_000)
+  runtimeCleanupTimer.unref()
 
   wss.on('connection', (ws: WebSocket) => {
     openSockets.add(ws)
     let userId = sanitizeUserId(process.env.HARNESS_USER ?? userInfo().username)
+    let challengeDesk = new ChallengeDesk(3, 1, join(userPaths(userId, '').missionsDir, 'challenges.json'))
     let session = createSession(profile.name, userId)
+    // Runtime owns lifecycle beyond this socket; disconnect cleanup is bounded.
+    let sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
+    addRuntimePeer(session.id, ws)
     let memory: MemoryProvider = profile.memory?.provider === 'graph'
       ? new GraphMemoryProvider(profile.artifact_dir, session)
       : new FsMemoryProvider(profile.artifact_dir, session)
@@ -312,7 +346,7 @@ async function main() {
     const pendingRenders = new Map<string, (result: any) => void>()
     const agentControllers = new Map<string, AbortController>()
 
-    const requestToolApproval = (sendForRun: (message: any) => void, id: string, name: string, input: Record<string, unknown>, risk?: 'safe' | 'caution' | 'danger', reason?: string, agentId?: string): Promise<boolean> => new Promise(resolve => {
+    const requestToolApproval = async (sendForRun: (message: any) => void, id: string, name: string, input: Record<string, unknown>, risk?: 'safe' | 'caution' | 'danger', reason?: string, agentId?: string): Promise<boolean> => new Promise(resolve => {
       // This callback is reached only after ACL resolution produced a prompt.
       // Session grants never widen a deny decision; deny never reaches this path.
       const grant = sessionApprovalGrants.check(name, 'prompt')
@@ -322,7 +356,11 @@ async function main() {
         return
       }
       pendingApprovals.set(id, { resolve, name })
-      sendForRun({ type: 'tool_prompt', id, name, input, risk, reason, ...(agentId ? { agent_id: agentId } : {}) })
+      const tool = getAllTools().find(item => item.name === name) ?? connectionAgentTools.find(item => item.name === name)
+      let preview: unknown
+      if (tool?.preview && activeContext) {
+        void tool.preview(input, activeContext).then(value => sendForRun({ type: 'tool_prompt', id, name, input, risk, reason, preview: value, ...(agentId ? { agent_id: agentId } : {}) })).catch((error: any) => sendForRun({ type: 'tool_prompt', id, name, input, risk, reason, preview: { state: 'preview_failed', reason: error.message }, ...(agentId ? { agent_id: agentId } : {}) }))
+      } else sendForRun({ type: 'tool_prompt', id, name, input, risk, reason, ...(agentId ? { agent_id: agentId } : {}) })
     })
 
     const resolvePendingClientWork = (reason: string): void => {
@@ -347,6 +385,8 @@ async function main() {
     let connectionProfile = profile
     let connectionChannels = channels
     let connectionOpenai = openai
+    let connectionProvider: ProviderClient = provider
+    let connectionRawProvider: ProviderClient = provider
     let connectionImprover = improver
     let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let approvalLimit: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
@@ -356,26 +396,53 @@ async function main() {
     let protocolVersion = PROTOCOL_VERSION
     let connectionAgentTools: ToolDefinition[] = []
     let activeContext: ToolContext | undefined
+    const maintenanceControllers = new Set<AbortController>()
+    const maintenanceControllerByContext = new WeakMap<ToolContext, AbortController>()
     let operatorBudget: RunBudget | undefined
+    let bulletin = new Bulletin()
+    let activeMissionId: string | undefined
+    let missionEvidence: EvidenceRef[] = []
+    let controllerId = randomUUID()
+    let controllerLease: string | undefined
+    let observerOnly = false
+    try { controllerLease = sessionRuntime.claim(controllerId).lease } catch { /* another controller may own an attached session */ }
 
     const rebuildConnectionProfile = () => {
       connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
+      connectionProvider = createProvider(connectionProfile)
+      connectionRawProvider = connectionProvider
+      connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
+      connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai, connectionProvider)
+    }
+
+    const flushConnectionUsage = (): void => {
+      const delta = usageDeltaFromSession(usageAtConnectionStart, session.usage)
+      saveSession(session)
+      recordUsage(session.user, delta)
+      usageAtConnectionStart = { ...session.usage }
     }
 
     const activateProfile = async (name: string | undefined): Promise<string | null> => {
       const selected = name ? profiles.get(name) : profile
       if (!selected) return `unknown profile "${name}"; available: ${[...profiles.keys()].sort().join(', ')}`
+      flushConnectionUsage()
       baseProfile = selected
       connectionProfile = selected
       approvalLimit = resolveApprovalLimit(connectionProfile)
       approvalMode = approvalLimit
       connectionModel = connectionProfile.model.id
-      connectionOpenai = createProviderClient(connectionProfile)
-      connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
+      connectionProvider = createProvider(connectionProfile)
+      connectionRawProvider = connectionProvider
+      connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
+      connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai, connectionProvider)
       connectionChannels = channelsByProfile.get(selected.name)!
       voiceInput?.cancel(); voiceInput = null
       voiceOutput?.cancel(); voiceOutput = null
+      removeRuntimePeer(sessionRuntime.session_id, ws)
       session = createSession(connectionProfile.name, userId)
+      sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
+      addRuntimePeer(session.id, ws)
+      controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false; activeMissionId = undefined; missionEvidence = []
       memory = connectionProfile.memory?.provider === 'graph'
         ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
         : new FsMemoryProvider(connectionProfile.artifact_dir, session)
@@ -388,6 +455,7 @@ async function main() {
       connectionAgentTools = await loadAgentTools(connectionProfile)
       operatorBudget = connectionProfile.triggers?.budget ? new RunBudget(connectionProfile.triggers.budget) : undefined
       activeContext = undefined
+      bulletin = new Bulletin()
       return null
     }
 
@@ -413,17 +481,55 @@ async function main() {
     }
 
     const send = (msg: ServerMessage) => {
+      // Journal every wire event before delivery. Observer reconnect can catch
+      // up from this server-owned sequence without replaying execution.
+      sessionRuntime.emit(msg.type, msg)
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+      if (msg.type !== 'runtime') {
+        const runtime = sessionRuntime.state
+        for (const peer of runtimePeers.get(sessionRuntime.session_id) ?? []) {
+          if (peer === ws || peer.readyState !== peer.OPEN) continue
+          peer.send(JSON.stringify({ type: 'runtime', snapshot: { ...runtime, controller: runtime.controller ? { id: runtime.controller.id, expires_at: runtime.controller.expires_at } : undefined, gap: false } } satisfies ServerMessage))
+        }
+      }
+    }
+
+    const missionStore = () => new MissionStore(userId)
+    const missionWire = (mission: Awaited<ReturnType<MissionStore['get']>>) => mission ? ({ id: mission.id, status: mission.status, revision: mission.revision, outcome: mission.outcome, criteria: mission.criteria.map(item => ({ id: item.id, description: item.description, state: item.state })) }) : null
+    const challengeWire = (challenge: ReturnType<ChallengeDesk['get']>) => ({ id: challenge.id, mission_id: challenge.mission_id, ...(challenge.criterion_id ? { criterion_id: challenge.criterion_id } : {}), challenger: challenge.challenger, question: challenge.question, state: challenge.state, round: challenge.round, cost_usd: challenge.cost_usd, evidence_count: challenge.evidence.length, resolution_evidence_count: challenge.resolution_evidence?.length ?? 0 })
+    const sendMission = (missionId: string, receipts = false): void => { const mission = missionStore().get(missionId); if (mission) send({ type: 'mission', mission: missionWire(mission)!, ...(receipts ? { receipts: missionStore().receipts(missionId) } : {}) }) }
+    const finishMission = (execution: 'finished' | 'failed' | 'cancelled'): void => {
+      if (!activeMissionId) return
+      const store = missionStore(); const mission = store.get(activeMissionId); if (!mission) return
+      try {
+        const receipt = finalizeMission(mission, execution, missionEvidence, [], session.usage.cost_usd, [])
+        store.saveReceipt(receipt)
+        const next = {
+          ...mission,
+          revision: mission.revision + 1,
+          criteria: mission.criteria.map(criterion => evaluateCriterion(criterion, missionEvidence)),
+          status: receipt.accepted ? 'accepted' as const : execution === 'failed' ? 'failed' as const : 'needs_human' as const,
+          updated_at: new Date().toISOString(),
+        }
+        store.save(next)
+        send({ type: 'receipt', receipt }); sendMission(next.id, true)
+      } catch (error: any) { send({ type: 'notice', level: 'error', message: 'mission receipt failed', detail: error.message }) }
     }
 
     const sendSessionReady = () => {
       const budget = connectionProfile.triggers?.budget
+      const providerStatus = connectionProfile.model.auth === 'codex_oauth'
+        ? (() => {
+            try { return { auth: 'codex_oauth' as const, status: codexAuthStatus().status } }
+            catch { return { auth: 'codex_oauth' as const, status: 'error' as const } }
+          })()
+        : { auth: 'api_key' as const, status: 'active' as const }
       send({
         type: 'session_ready', sessionId: session.id, profile: connectionProfile.name,
         model: connectionProfile.model.id, working_dir: connectionProfile.working_dir,
         allowed_packages: connectionProfile.executor?.allowed_packages ?? [],
         ...(budget ? { budget: { max_cost_usd: budget.max_cost_usd } } : {}),
-        yolo: isYoloEnabled(approvalMode), protocol_version: protocolVersion,
+        yolo: isYoloEnabled(approvalMode), protocol_version: protocolVersion, provider_status: providerStatus,
       })
     }
 
@@ -440,15 +546,64 @@ async function main() {
         onToken: (token, agentId) => sendForRun({ type: 'token', content: token, ...(agentId ? { agent_id: agentId } : {}) }),
         onToolStart: (id, name, input, agentId) => sendForRun({ type: 'tool_start', id, name, input, ...(agentId ? { agent_id: agentId } : {}) }),
         onToolEnd: (id, name, result, ok, agentId) => sendForRun({ type: 'tool_end', id, name, result, ok, ...(agentId ? { agent_id: agentId } : {}) }),
+        onEvidence: (id, name, input, result, ok, provenance) => { if (!activeMissionId) return; missionEvidence.push(evidenceRef({ kind: 'tool_result', source: { user: userId, session: session.id, run: runId, tool_call: id }, content: result, provenance, ok })); void name; void input },
         onToolPrompt: (id, name, input, risk, reason, agentId) => requestToolApproval(sendForRun, id, name, input, risk, reason, agentId),
         onInputRequest: (id, prompt, kind, options, agentId) => requestInput(runId, prompt, kind, options, id, agentId),
         onSessionEnd: () => {},
-        onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+        onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId, usage) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, usage: usageMetadata(agentId ? usage : usage ?? session.usage), context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
         onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
         onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
-        onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
+        onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools, usage) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools, usage: usageMetadata(usage) }),
         onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
+        onAgentMessage: post => { if (protocolVersion >= 4) sendForRun({ type: 'agent_message', post: { ...post, body_preview: post.body.slice(0, 240) } }) },
       }
+    }
+
+    // Explicit maintenance actions run in their own bounded invocation. A
+    // completed turn's context may carry a dead signal or exhausted budget.
+    const maintenanceContext = (): ToolContext => {
+      const runId = randomRunId()
+      if (!activeContext && abortController.signal.aborted) abortController = new AbortController()
+      const operationController = new AbortController()
+      maintenanceControllers.add(operationController)
+      const context: ToolContext = {
+        profile: connectionProfile,
+        session,
+        workingDir: connectionProfile.working_dir,
+        memory,
+        skills,
+        mcpEntries,
+        events: fleetEvents(runId),
+        openai: connectionOpenai,
+        provider: connectionRawProvider,
+        signal: AbortSignal.any([abortController.signal, operationController.signal]),
+        deadline: Date.now() + (connectionProfile.model.auth === 'codex_oauth'
+          ? connectionProfile.model.codex.request_timeout_ms
+          : 600_000),
+        delegateDepth: 0,
+        agentTools: connectionAgentTools,
+        maxDepth: connectionProfile.max_depth ?? 2,
+        wasmSupported,
+        approvalMode,
+        channels: connectionChannels,
+        runId,
+        pendingInputs: pendingStore,
+        agentFrame: createRootFrame(connectionProfile.name, session.id),
+        protocolVersion,
+        agentControllers,
+        bulletin,
+      }
+      context.provider = bindRunProvider(connectionRawProvider, context)
+      maintenanceControllerByContext.set(context, operationController)
+      return context
+    }
+
+    const releaseMaintenanceContext = (context: ToolContext): void => {
+      const controller = maintenanceControllerByContext.get(context)
+      if (!controller) return
+      maintenanceControllerByContext.delete(context)
+      maintenanceControllers.delete(controller)
+      flushConnectionUsage()
     }
 
     const handlePlanRequest = async (request: string): Promise<void> => {
@@ -474,10 +629,10 @@ async function main() {
         onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
         onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
         onSessionEnd: () => {},
-        onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+        onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId, usage) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, usage: usageMetadata(agentId ? usage : usage ?? previewSession.usage), context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
         onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
         onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
-        onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
+        onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools, usage) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools, usage: usageMetadata(usage) }),
         onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
         onInputRequest: (id, prompt, kind, options, agentId) => requestInput(runId, prompt, kind, options, id, agentId),
         onTodosUpdate: (todos, agentId) => sendForRun({ type: 'todos', todos, ...(agentId ? { agent_id: agentId } : {}) }),
@@ -487,14 +642,23 @@ async function main() {
         const agentTools = await loadAgentTools(connectionProfile)
         const previewContext: ToolContext = {
           profile: connectionProfile, session: previewSession, workingDir: connectionProfile.working_dir, memory: previewMemory, skills, mcpEntries,
-          events: planEvents, openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0, agentTools,
+          events: planEvents, openai: connectionOpenai, provider: connectionProvider, signal: abortController.signal, delegateDepth: 0, agentTools,
           maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode, channels: connectionChannels, runId,
           pendingInputs: pendingStore,
           agentFrame: createRootFrame(connectionProfile.name, previewSession.id),
           protocolVersion,
           agentControllers,
         }
-        const preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
+        previewContext.provider = bindRunProvider(connectionRawProvider, previewContext)
+        const previewUsageBefore = { ...previewSession.usage }
+        let preview!: Awaited<ReturnType<typeof runPlanPreview>>
+        try {
+          preview = await runPlanPreview(request, connectionProfile, previewSession, previewContext, planEvents, connectionOpenai, abortController.signal)
+        } finally {
+          // Preview uses a cloned session. Carry only its inference delta into
+          // the live session, including cancellation and provider failures.
+          mergeUsageDelta(session.usage, usageDeltaFromSession(previewUsageBefore, previewSession.usage))
+        }
         sendForRun({ type: 'plan', content: preview.body })
         const choice = (await requestInput(runId, 'Plan ready — proceed, edit, or cancel?', 'select', ['proceed', 'edit', 'cancel'])).trim().toLowerCase()
         if (choice !== 'proceed' && choice !== 'edit') {
@@ -546,12 +710,20 @@ async function main() {
       }
       const input = { ...(msg.input ?? {}) }
       const promptValue = typeof input.prompt === 'string' ? input.prompt : typeof input.text === 'string' ? input.text : undefined
-      if (entry.prompt_field && promptValue !== undefined && input[entry.prompt_field] === undefined) input[entry.prompt_field] = promptValue
+      if (entry.prompt_field && promptValue !== undefined && input[entry.prompt_field] === undefined) {
+        input[entry.prompt_field] = promptValue
+        if (entry.prompt_field !== 'prompt') delete input.prompt
+        if (entry.prompt_field !== 'text') delete input.text
+      }
 
       const parentContext = activeContext
       const parentBudget = parentContext?.budget ?? operatorBudget
       const requestedBudget = msg.budget_usd ?? entry.budget_usd
       const implicitShare = parentBudget ? parentBudget.remainingCost() / count : undefined
+      if (msg.budget_usd !== undefined && (!Number.isFinite(msg.budget_usd) || msg.budget_usd < 0)) {
+        send({ type: 'notice', level: 'warn', message: 'spawn refused: invalid budget', detail: 'budget_usd must be a finite non-negative number' })
+        return
+      }
       if (requestedBudget !== undefined && parentBudget) {
         const remainder = parentBudget.remainingCost()
         if (requestedBudget * count > remainder) {
@@ -566,12 +738,13 @@ async function main() {
         ? { ...parentContext, signal: abortController.signal, agentOrigin: 'operator', taintSources: session.taint_sources, agentControllers }
         : {
             profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
-            events: fleetEvents(runId), openai: connectionOpenai, signal: abortController.signal, delegateDepth: 0,
+            events: fleetEvents(runId), openai: connectionOpenai, provider: connectionRawProvider, signal: abortController.signal, delegateDepth: 0,
             agentTools: connectionAgentTools, maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode,
             channels: connectionChannels, runId, pendingInputs: pendingStore, budget: operatorBudget,
             agentFrame: createRootFrame(connectionProfile.name, session.id), protocolVersion,
-            agentOrigin: 'operator', agentControllers,
+            agentOrigin: 'operator', agentControllers, bulletin,
           }
+      if (!parentContext) context.provider = bindRunProvider(connectionRawProvider, context)
       context.agentOrigin = 'operator'
 
       const namedTool = connectionAgentTools.find(tool => tool.name === msg.agent && tool.name !== 'DelegateFanout')
@@ -595,7 +768,7 @@ async function main() {
             try {
               return await executor(input, childBudget ? { ...childContext, budget: childBudget } : childContext)
             } finally {
-              childBudget?.release()
+              if (childBudget && parentBudget) parentBudget.absorbChildUsage(childBudget, 0)
             }
           },
         })),
@@ -627,16 +800,20 @@ async function main() {
         return
       }
 
+      const mutatingMessages = new Set(['message', 'plan_request', 'cancel', 'tool_approve', 'tool_deny', 'input_response', 'code_result', 'ui_result', 'set_profile', 'set_model', 'set_approval_mode', 'skill_save', 'skill_promote', 'skill_discard', 'skills_mine', 'compact', 'pending_answer', 'undo_apply', 'spawn', 'agent_cancel', 'project_create', 'project_assign', 'mission_create', 'mission_human', 'challenge_open', 'challenge_answer'])
+      if (observerOnly && mutatingMessages.has(msg.type)) { send({ type: 'error', message: 'observer connection cannot mutate session; claim control first' }); return }
+
       if (msg.type === 'hello') {
 		const requestedProtocolVersion = msg.protocol_version ?? 1
-		if (requestedProtocolVersion !== 2 && requestedProtocolVersion !== PROTOCOL_VERSION) {
-		  send({ type: 'error', message: `Unsupported protocol version ${requestedProtocolVersion}; client must use version 2 or ${PROTOCOL_VERSION}.` })
+		if (requestedProtocolVersion !== 2 && requestedProtocolVersion !== 3 && requestedProtocolVersion !== PROTOCOL_VERSION) {
+		  send({ type: 'error', message: `Unsupported protocol version ${requestedProtocolVersion}; client must use version 2, 3, or ${PROTOCOL_VERSION}.` })
 		  return
 		}
 		protocolVersion = requestedProtocolVersion
         // Only honour hello before the session has any messages
         if (session.messages.length === 0) {
           userId = sanitizeUserId(msg.user_id)
+          challengeDesk = new ChallengeDesk(3, 1, join(userPaths(userId, '').missionsDir, 'challenges.json'))
           wasmSupported = msg.wasm_supported ?? false
           audioSupported = msg.audio_supported ?? false
           const error = await activateProfile(msg.profile)
@@ -648,7 +825,90 @@ async function main() {
         return
       }
 
+      if (msg.type === 'attach') {
+        try {
+          const target = sessionRuntimes.get(msg.session_id, userId)
+          if (!target) { send({ type: 'error', message: 'session not found or belongs to another user' }); return }
+          removeRuntimePeer(sessionRuntime.session_id, ws)
+          if (controllerLease) {
+            try { sessionRuntime.release(controllerId, controllerLease) } catch { /* expired or already transferred */ }
+          }
+          if (msg.mode === 'control') {
+            const claimed = target.claim(controllerId)
+            controllerLease = claimed.lease; observerOnly = false
+          } else { controllerLease = undefined; observerOnly = true }
+          sessionRuntime = target
+          addRuntimePeer(sessionRuntime.session_id, ws)
+          const sub = target.subscribe(0)
+          send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap } })
+        } catch (error: any) { send({ type: 'error', message: error.message }) }
+        return
+      }
+
+      if (msg.type === 'runtime_subscribe') {
+        const target = sessionRuntimes.get(msg.session_id, userId)
+        if (!target) { send({ type: 'error', message: 'session not found or belongs to another user' }); return }
+        const sub = target.subscribe(msg.after_seq ?? 0)
+        send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap } })
+        return
+      }
+
+      if (msg.type === 'mission_list') {
+        for (const mission of missionStore().list()) send({ type: 'mission', mission: missionWire(mission)!, receipts: missionStore().receipts(mission.id) })
+        return
+      }
+      if (msg.type === 'mission_create') {
+        try {
+          const mission = createMission({ user: userId, profile: connectionProfile.name, project: session.project, session_id: session.id, outcome: msg.outcome, constraints: msg.constraints ?? [], criteria: msg.criteria as any })
+          missionStore().save(mission); activeMissionId = mission.id; missionEvidence = []; send({ type: 'mission', mission: missionWire(mission)! })
+        } catch (error: any) { send({ type: 'error', message: error.message }) }
+        return
+      }
+      if (msg.type === 'mission_human') {
+        try {
+          const store = missionStore(); const mission = store.get(msg.mission_id); if (!mission) throw new Error('mission not found')
+          const updated = completeHumanCriterion(mission, msg.criterion_id, userId, msg.revision); store.save(updated); send({ type: 'mission', mission: missionWire(updated)!, receipts: store.receipts(updated.id) })
+        } catch (error: any) { send({ type: 'error', message: error.message }) }
+        return
+      }
+      if (msg.type === 'challenge_list') {
+        for (const challenge of challengeDesk.list(msg.mission_id)) send({ type: 'challenge', challenge: challengeWire(challenge) })
+        return
+      }
+      if (msg.type === 'challenge_open') {
+        try {
+          const mission = missionStore().get(msg.mission_id); if (!mission) throw new Error('mission not found')
+          const challenge = challengeDesk.open({ missionId: mission.id, criterionId: msg.criterion_id, challenger: userId, question: msg.question }); send({ type: 'challenge', challenge: challengeWire(challenge) })
+        } catch (error: any) { send({ type: 'error', message: error.message }) }
+        return
+      }
+      if (msg.type === 'challenge_answer') {
+        try {
+          const challenge = challengeDesk.get(msg.challenge_id)
+          const answer = challengeDesk.answer(challenge.id, { by: userId, unresolved: msg.unresolved, note: msg.note, evidence: msg.unresolved ? undefined : missionEvidence })
+          send({ type: 'challenge', challenge: challengeWire(answer) })
+          // Required challenges are part of mission acceptance. Persist an
+          // unresolved answer immediately so reconnecting Studio clients see
+          // the human gate, even when no active execution is attached.
+          if (answer.state === 'unresolved') {
+            const store = missionStore()
+            const mission = store.get(answer.mission_id)
+            if (mission && mission.status !== 'needs_human' && mission.status !== 'accepted') {
+              store.save({ ...mission, revision: mission.revision + 1, status: 'needs_human', updated_at: new Date().toISOString() })
+              sendMission(mission.id, true)
+            } else if (mission) sendMission(mission.id, true)
+          } else {
+            sendMission(answer.mission_id, true)
+          }
+        } catch (error: any) { send({ type: 'error', message: error.message }) }
+        return
+      }
+
       if (msg.type === 'set_profile') {
+        if (activeContext || pendingApprovals.size > 0 || maintenanceControllers.size > 0) {
+          send({ type: 'notice', level: 'warn', message: 'profile change refused while a turn is active', detail: 'cancel and wait for the current turn to finish first' })
+          return
+        }
         const error = await activateProfile(msg.profile)
         if (error) { send({ type: 'error', message: error }); return }
         sendSessionReady()
@@ -755,10 +1015,10 @@ async function main() {
             onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
             onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
             onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
-            onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+            onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId, usage) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, usage: usageMetadata(agentId ? usage : usage ?? session.usage), context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
             onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
             onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
-            onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
+            onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools, usage) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools, usage: usageMetadata(usage) }),
             onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
             onInputRequest: (id, prompt, kind, options, agentId) => requestInput(resumedRunId, prompt, kind, options, id, agentId),
           },
@@ -799,12 +1059,20 @@ async function main() {
       }
 
       if (msg.type === 'set_model') {
+        if (activeContext || pendingApprovals.size > 0 || maintenanceControllers.size > 0) {
+          send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active', detail: 'cancel and wait for the current turn to finish first' })
+          return
+        }
         const candidate = listModels(baseProfile).find(model => model.id === msg.model)
         if (candidate && !candidate.available) {
           send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason })
           return
         }
         if (!candidate) {
+          if (connectionProfile.model.auth === 'codex_oauth') {
+            send({ type: 'notice', level: 'error', message: `unknown Codex model ${msg.model}`, detail: 'choose a model from models_list' })
+            return
+          }
           send({ type: 'notice', level: 'warn', message: `unknown model ${msg.model}`, detail: 'fallback pricing applies' })
         }
         connectionModel = msg.model
@@ -882,7 +1150,13 @@ async function main() {
         miningSkills = true
         send({ type: 'notice', level: 'info', message: 'mining skills…' })
         try {
-          await connectionImprover.mineSkills([session])
+          const helper = activeContext ?? maintenanceContext()
+          const improver = new DefaultImprover(connectionProfile, connectionOpenai, helper.provider)
+          try {
+            await improver.mineSkills([session])
+          } finally {
+            releaseMaintenanceContext(helper)
+          }
           sendSkills()
         } catch (error: any) {
           send({ type: 'notice', level: 'error', message: 'skills mining failed', detail: error.message })
@@ -893,7 +1167,10 @@ async function main() {
       }
 
       if (msg.type === 'compact') {
-        const before = estimateTokens(await project(session, connectionProfile, connectionOpenai, memory))
+        const helper = activeContext ?? maintenanceContext()
+        const providerForProjection = helper.provider
+        try {
+          const before = estimateTokens(await project(session, connectionProfile, connectionOpenai, memory, undefined, providerForProjection))
         const compactProfile = {
           ...connectionProfile,
           context: {
@@ -907,16 +1184,20 @@ async function main() {
             project_files: connectionProfile.context?.project_files ?? true,
           },
         }
-        const afterProjection = await project(session, compactProfile, connectionOpenai, memory)
-        const after = estimateTokens(afterProjection, session)
-        saveSession(session)
-        send({ type: 'stats', tokens_in: session.usage.input, tokens_out: session.usage.output, cost_usd: session.usage.cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens: after })
-        send({ type: 'notice', level: 'info', message: before > after ? `compacted context · ${before - after} tokens saved` : 'context already compact', detail: before > after ? `${before} → ${after} tokens` : 'no condensation needed' })
+          const afterProjection = await project(session, compactProfile, connectionOpenai, memory, undefined, providerForProjection)
+          const after = estimateTokens(afterProjection, session)
+          saveSession(session)
+          send({ type: 'stats', tokens_in: session.usage.input, tokens_out: session.usage.output, cost_usd: session.usage.cost_usd, usage: usageMetadata(session.usage), context_window: contextWindowFor(connectionProfile), context_tokens: after })
+          send({ type: 'notice', level: 'info', message: before > after ? `compacted context · ${before - after} tokens saved` : 'context already compact', detail: before > after ? `${before} → ${after} tokens` : 'no condensation needed' })
+        } finally {
+          releaseMaintenanceContext(helper)
+        }
         return
       }
 
       if (msg.type === 'cancel') {
         abortController.abort()
+        for (const controller of maintenanceControllers) controller.abort()
         for (const controller of agentControllers.values()) controller.abort()
         agentControllers.clear()
         abortController = new AbortController()
@@ -978,11 +1259,18 @@ async function main() {
       if (msg.type === 'resume') {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
+          flushConnectionUsage()
           session = loaded
+          sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
+          addRuntimePeer(session.id, ws)
+          controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false
           baseProfile = profiles.get(loaded.profile) ?? baseProfile
           connectionProfile = baseProfile
-          connectionOpenai = createProviderClient(connectionProfile)
-          connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai)
+          connectionModel = connectionProfile.model.id
+          connectionProvider = createProvider(connectionProfile)
+          connectionRawProvider = connectionProvider
+          connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
+          connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai, connectionProvider)
           connectionAgentTools = await loadAgentTools(connectionProfile)
           operatorBudget = connectionProfile.triggers?.budget ? new RunBudget(connectionProfile.triggers.budget) : undefined
           activeContext = undefined
@@ -1020,6 +1308,11 @@ async function main() {
           id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream',
           input: msg.content, status: 'running', started_at: new Date().toISOString(),
         })
+        const runJournal: RunJournal = newJournal({ user: userId, session_id: session.id, profile: connectionProfile.name, config_fingerprint: hashArguments({ profile: connectionProfile.name, model: connectionModel, approval: approvalMode }), mode: 'live-branch' })
+        const replayStore = new ReplayStore(userId)
+        const effects = new Map<string, EffectReceipt>()
+        const persistJournal = (): void => { try { replayStore.save(runJournal) } catch (error: any) { console.warn(`[replay] journal save failed: ${error.message}`) } }
+        recordEvent(runJournal, 'result', { input: msg.content }, 'turn_start'); markCheckpoint(runJournal, 'turn_start'); persistJournal()
         // Build system prompt with memory on first turn
         if (session.messages.length === 0) {
           session.messages.push({
@@ -1041,25 +1334,30 @@ async function main() {
           : null
         voiceOutput?.start()
         const events: AgentLoopEvents = {
-          onToken: (t, agentId) => { sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }); voiceOutput?.push(t) },
-          onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
-          onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
+          onToken: (t, agentId) => { recordEvent(runJournal, 'token', t); persistJournal(); sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }); voiceOutput?.push(t) },
+          onToolStart: (id, n, i, agentId) => { recordEvent(runJournal, 'tool_start', i, n); effects.set(id, recordEffect(runJournal, { tool: n, argument_hash: hashArguments(i), state: 'started' })); persistJournal(); sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }) },
+          onToolEnd: (id, n, r, ok, agentId) => { recordEvent(runJournal, 'tool_end', { result: r, ok }, n); const effect = effects.get(id); if (effect) { effect.state = ok ? 'completed' : 'failed'; effect.completed_at = new Date().toISOString(); effect.result_hash = hashArguments(r) }; persistJournal(); sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }) },
+          onEvidence: (id, name, input, result, ok, provenance, source) => { recordEvent(runJournal, 'result', { tool_call_id: id, ok, provenance, source }, name); persistJournal(); if (!activeMissionId) return; missionEvidence.push(evidenceRef({ kind: 'tool_result', source: { user: userId, session: session.id, run: runId, tool_call: id }, content: result, provenance, ok })); void input },
           onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
           onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
           onSessionEnd: (id) => {
             voiceOutput?.end()
             saveSession(session)
             const status = runSignal.aborted ? 'cancelled' : terminalStatus
+            recordEvent(runJournal, 'result', { status }, 'session_end'); markCheckpoint(runJournal, 'session_end'); persistJournal()
+            sessionRuntime.setStatus(status === 'completed' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed')
             sendForRun({ type: 'session_end', sessionId: id, status, ...(terminalReason ? { reason: terminalReason } : {}) })
+            finishMission(status === 'completed' ? 'finished' : status === 'cancelled' ? 'cancelled' : 'failed')
             closeMcpWhenIdle()
           },
-          onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId) => {
-            sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) })
+          onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId, usage) => {
+            sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, usage: usageMetadata(agentId ? usage : usage ?? session.usage), context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) })
           },
           onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
           onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
-          onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools }),
+          onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools, usage) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools, usage: usageMetadata(usage) }),
           onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
+          onAgentMessage: post => { if (protocolVersion >= 4) sendForRun({ type: 'agent_message', post: { ...post, body_preview: post.body.slice(0, 240) } }) },
           onSafetyNotice: (classifierModel) => {
             if (safetyDisclosed) return
             safetyDisclosed = true
@@ -1067,7 +1365,21 @@ async function main() {
           },
           onNotice: (level, message, detail, agentId) => sendForRun({ type: 'notice', level, message, detail, ...(agentId ? { agent_id: agentId } : {}) }),
           onArtifacts: (sessionId, artifacts, agentId) => {
-            sendForRun({ type: 'artifacts', sessionId, artifacts, ...(agentId ? { agent_id: agentId } : {}) })
+            const surfaced = artifacts.map((artifact: any) => {
+              const sourceTool = typeof artifact.source_tool_name === 'string' ? artifact.source_tool_name : typeof artifact.generating_tool === 'string' ? artifact.generating_tool : undefined
+              const sourceCode = typeof artifact.source_code_id === 'string' ? artifact.source_code_id : typeof artifact.code_ref === 'string' ? artifact.code_ref : undefined
+              const sourceSession = typeof artifact.source_session_id === 'string' ? artifact.source_session_id : sessionId
+              const sourceCall = typeof artifact.source_tool_call_id === 'string' ? artifact.source_tool_call_id : undefined
+              if (!sourceTool || !sourceCode || !sourceSession || !sourceCall) return { ...artifact, promotion: { state: 'blocked', reason: 'artifact source tool, code, session, and tool-call IDs required' } }
+              try {
+                const recipe = promoteArtifact(userId, { profile: connectionProfile.name, generatingTool: sourceTool, codeRef: sourceCode, parameters: artifact.parameters ?? {}, payload: artifact.data ?? artifact, sessionId: sourceSession, toolCallId: sourceCall, source: 'agent-loop' })
+                new ArtifactStore(userId).save(recipe)
+                return { ...artifact, recipe_id: recipe.id, version: recipe.last_good?.version, promotion: { state: 'promoted', provenance: recipe.provenance } }
+              } catch (error: any) {
+                return { ...artifact, promotion: { state: 'blocked', reason: error.message } }
+              }
+            })
+            sendForRun({ type: 'artifacts', sessionId, artifacts: surfaced, ...(agentId ? { agent_id: agentId } : {}) })
           },
           onInputRequest: (id, prompt, kind, options, agentId) => requestInput(runId, prompt, kind, options, id, agentId),
           onTodosUpdate: (todos, agentId) => {
@@ -1087,7 +1399,7 @@ async function main() {
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
           profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
-          events, openai: connectionOpenai, signal: runSignal, delegateDepth: 0,
+          events, openai: connectionOpenai, provider: connectionRawProvider, signal: runSignal, delegateDepth: 0,
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
@@ -1099,7 +1411,9 @@ async function main() {
           agentFrame: createRootFrame(connectionProfile.name, session.id),
           protocolVersion,
           agentControllers,
+          bulletin,
         }
+        context.provider = bindRunProvider(connectionRawProvider, context)
         activeContext = context
 
         try {
@@ -1108,6 +1422,8 @@ async function main() {
           runStore.update(runId, { status: terminalStatus, session_id: session.id, finished_at: new Date().toISOString() })
           if (runSignal.aborted) {
             saveSession(session)
+            recordEvent(runJournal, 'result', { status: terminalStatus }, 'session_end'); markCheckpoint(runJournal, 'session_end'); persistJournal()
+            sessionRuntime.setStatus('cancelled')
             sendForRun({ type: 'session_end', sessionId: session.id, status: terminalStatus })
           }
         } catch (e: any) {
@@ -1124,29 +1440,44 @@ async function main() {
           if (e.name !== 'AbortError') {
             sendForRun({ type: 'error', message: e.message })
           }
-		  if (runSignal.aborted || e instanceof BudgetExceeded) {
+
+          if (e.name !== 'AbortError' && terminalStatus !== 'completed') finishMission(terminalStatus === 'cancelled' ? 'cancelled' : 'failed')
+          if (runSignal.aborted || e instanceof BudgetExceeded) {
 		    saveSession(session)
-		    sendForRun({ type: 'session_end', sessionId: session.id, status: terminalStatus, ...(terminalReason ? { reason: terminalReason } : {}) })
-		  }
+		    recordEvent(runJournal, 'result', { status: terminalStatus, reason: terminalReason }, 'session_end'); markCheckpoint(runJournal, 'session_end'); persistJournal()
+		    sessionRuntime.setStatus(terminalStatus === 'cancelled' ? 'cancelled' : terminalStatus === 'budget_exceeded' ? 'failed' : 'failed')
+            sendForRun({ type: 'session_end', sessionId: session.id, status: terminalStatus, ...(terminalReason ? { reason: terminalReason } : {}) })
+          }
+        } finally {
+          // Maintenance operations must never inherit a completed turn's
+          // signal, deadline, or provider budget.
+          if (activeContext === context) activeContext = undefined
+          // A socket close may flush before the aborted provider finalizes its usage.
+          // Flush the remaining delta after completion as well.
+          flushConnectionUsage()
         }
       }
     })
 
     ws.on('close', () => {
       openSockets.delete(ws)
+      abortController.abort()
+      for (const controller of maintenanceControllers) controller.abort()
+      maintenanceControllers.clear()
+      // Disconnect relinquishes the controller lease so a reconnecting local
+      // client can claim control immediately; runtime state stays server-owned.
+      if (controllerLease) {
+        try { sessionRuntime.release(controllerId, controllerLease) } catch { /* expired or already transferred */ }
+        controllerLease = undefined
+      }
+      removeRuntimePeer(sessionRuntime.session_id, ws)
 	  for (const pending of pendingApprovals.values()) pending.resolve(false)
 	  pendingApprovals.clear()
       sessionApprovalGrants.clear()
 	  for (const resolve of pendingInputRequests.values()) resolve('')
 	  pendingInputRequests.clear()
       resolvePendingClientWork('Client disconnected before completion.')
-      saveSession(session)
-      const connectionDelta = {
-        input: session.usage.input - usageAtConnectionStart.input,
-        output: session.usage.output - usageAtConnectionStart.output,
-        cost_usd: session.usage.cost_usd - usageAtConnectionStart.cost_usd,
-      }
-      recordUsage(session.user, connectionDelta)
+      flushConnectionUsage()
 
       // Destroy per-connection MCP clients (fire-and-forget)
       if (mcpIdleTimer) clearTimeout(mcpIdleTimer)
@@ -1156,23 +1487,8 @@ async function main() {
       void runHooks('on_stop', connectionProfile, { SESSION_ID: session.id, PROFILE: connectionProfile.name })
         .catch(e => console.error('[on_stop hook] error:', e.message))
 
-      // self-improvement (fire-and-forget)
-      const userTurns = (session.messages as any[]).filter(m => m.role === 'user').length
-      if (userTurns >= 2 && connectionProfile.improvement?.enabled) {
-        void connectionImprover.reflect(session, memory).catch(e =>
-          console.error('[improver] reflect failed:', e.message)
-        )
-
-        const mineEvery = connectionProfile.improvement?.mine_skills_every_n_sessions ?? 10
-        let count = readSessionCount(connectionProfile.artifact_dir) + 1
-        if (count >= mineEvery) {
-          count = 0
-          void connectionImprover.mineSkills([session]).catch(e =>
-            console.error('[improver] mineSkills failed:', e.message)
-          )
-        }
-        writeSessionCount(connectionProfile.artifact_dir, count)
-      }
+      // Disconnect must not resurrect detached model work. Improvement runs
+      // remain explicit actions while a connection is alive.
     })
     ws.on('error', (e) => console.error('ws error:', e.message))
   })
@@ -1182,6 +1498,7 @@ async function main() {
     if (shuttingDown) return
     shuttingDown = true
     unregisterServer(PORT)
+    clearInterval(runtimeCleanupTimer)
     console.log('\nShutting down...')
     await Promise.all(schedulers.map(scheduler => scheduler.stop()))
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires

@@ -1,8 +1,18 @@
 import type { ArtifactKind } from './protocol'
 
-export interface CanvasArtifact { id: string; kind: ArtifactKind; data: unknown; title?: string }
-export interface Provenance { session: string; toolCall: string; code?: string }
-export interface PinnedArtifact { artifact: CanvasArtifact; provenance: Provenance; stale?: boolean }
+export interface CanvasArtifact {
+  id: string
+  kind: ArtifactKind
+  data: unknown
+  title?: string
+  recipeId?: string
+  version?: number
+  freshness?: 'unknown' | 'stale' | 'refreshing' | 'current'
+  sourceCursor?: string
+  generatingTool?: string
+}
+export interface Provenance { session: string; toolCall: string; code?: string; source?: string }
+export interface PinnedArtifact { artifact: CanvasArtifact; provenance: Provenance; stale?: boolean; staleReason?: string; promoted?: boolean }
 export const CANVAS_MAX_BYTES = 512 * 1024
 const KEY_PREFIX = 'harness-canvas:'
 
@@ -33,6 +43,11 @@ export function saveCanvas(projectId: string, items: PinnedArtifact[]): PinnedAr
 }
 
 export function clampWidth(width: number): number { return Math.min(960, Math.max(160, Math.round(width))) }
-export function pinArtifact(items: PinnedArtifact[], artifact: CanvasArtifact, provenance: Provenance): PinnedArtifact[] { return [...items, { artifact, provenance }] }
+export function pinArtifact(items: PinnedArtifact[], artifact: CanvasArtifact, provenance?: Provenance): PinnedArtifact[] {
+  if (items.some(item => item.artifact.id === artifact.id)) return items
+  return [...items, { artifact, provenance: provenance ?? { session: '', toolCall: '' } }]
+}
 export function reorderArtifacts(items: PinnedArtifact[], from: number, to: number): PinnedArtifact[] { if (from === to || !items[from] || to < 0 || to >= items.length) return items; const next = [...items]; const [item] = next.splice(from, 1); next.splice(to, 0, item); return next }
-export function refreshArtifact(item: PinnedArtifact, artifact: CanvasArtifact, ok: boolean): PinnedArtifact { return ok ? { ...item, artifact, stale: false } : { ...item, stale: true } }
+export function refreshArtifact(item: PinnedArtifact, artifact: CanvasArtifact, ok: boolean, reason?: string): PinnedArtifact {
+  return ok ? { ...item, artifact, stale: false, staleReason: undefined } : { ...item, stale: true, staleReason: reason ?? 'refresh failed' }
+}

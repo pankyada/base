@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Tier, Intensity } from '../workflow/types.js'
+import { codexCapability } from '../provider/codex/models.js'
 
 export const AclValue = z.enum(['allow', 'prompt', 'deny'])
 const PredicateSchema = z.object({
@@ -246,6 +247,13 @@ const WorkflowSchema = z.object({
 })
 export { RoleModelsSchema, WorkflowSchema }
 
+const MissionDefaultsSchema = z.object({
+  outcome: z.string().min(1).optional(),
+  constraints: z.array(z.string()).default([]),
+  criteria: z.array(z.object({ id: z.string().min(1), description: z.string().min(1), kind: z.enum(['tool_result_match', 'artifact_exists', 'artifact_hash', 'artifact_schema', 'human']), expected: z.unknown().optional() })).default([]),
+}).optional()
+export type MissionDefaults = z.infer<typeof MissionDefaultsSchema>
+
 const ContextSchema = z.object({
   max_tokens: z.number().positive().default(100000),
   high_water: z.number().min(0).max(1).default(0.80),
@@ -265,16 +273,27 @@ export type ContextConfig = z.infer<typeof ContextSchema>
 
 export type SafetyConfig = z.infer<typeof SafetySchema>
 
+const ApiModelSchema = z.object({
+  auth: z.literal('api_key').default('api_key'),
+  base_url: z.url(), api_key_env: z.string(), id: z.string(), fallback_id: z.string().optional(),
+})
+const CodexModelSchema = z.object({
+  auth: z.literal('codex_oauth'), id: z.string().min(1), fallback_id: z.string().optional(),
+  base_url: z.never().optional(), api_key_env: z.never().optional(),
+  codex: z.object({
+    reasoning_effort: z.string().optional(),
+    max_model_calls_per_run: z.number().int().min(1).max(1024).default(64),
+    request_timeout_ms: z.number().int().min(1000).max(600000).default(120000),
+  }).strict().prefault({}),
+}).strict()
+const ModelSchema = z.union([ApiModelSchema, CodexModelSchema])
+
 export const ProfileSchema = z.object({
   name: z.string(),
-  model: z.object({
-    base_url: z.url(),
-    api_key_env: z.string(),
-    id: z.string(),
-    fallback_id: z.string().optional(),
-  }),
+  model: ModelSchema,
   models: z.object({ roles: RoleModelsSchema }).optional(),
   workflow: WorkflowSchema.optional(),
+  mission: MissionDefaultsSchema,
   system_prompt: z.string(),
   system_prompt_voice: z.string().optional(),
   working_dir: z.string().default('$CWD'),
@@ -353,6 +372,23 @@ export const ProfileSchema = z.object({
   channels: z.array(ChannelSchema).optional(),
   voice: VoiceSchema,
   mcp: McpRuntimeSchema,
+}).superRefine((profile, ctx) => {
+  if (profile.model.auth !== 'codex_oauth') return
+  const overrides: Array<[Array<string>, string | undefined]> = [
+    [['model', 'id'], profile.model.id], [['model', 'fallback_id'], profile.model.fallback_id],
+    [['safety', 'classifier_model_id'], profile.safety.classifier_model_id],
+    [['context', 'digest_model_id'], profile.context?.digest_model_id],
+    [['context_window', 'model_id'], profile.context_window?.model_id],
+    [['improvement', 'model_id'], profile.improvement.model_id],
+    ...Object.entries(profile.models?.roles ?? {}).map(([role, id]): [string[], string | undefined] => [['models', 'roles', role], id]),
+  ]
+  for (const [path, id] of overrides) {
+    if (id && !codexCapability(id)) ctx.addIssue({ code: 'custom', path, message: `Model ${id} is not in the Codex compatibility catalog` })
+  }
+  const effort = profile.model.codex.reasoning_effort
+  if (effort && !codexCapability(profile.model.id)?.efforts.includes(effort)) {
+    ctx.addIssue({ code: 'custom', path: ['model', 'codex', 'reasoning_effort'], message: 'Unsupported Codex reasoning effort' })
+  }
 }).transform(profile => {
   const channelNames = new Set<string>()
   for (const channel of profile.channels ?? []) {
@@ -369,7 +405,8 @@ export const ProfileSchema = z.object({
 type ParsedProfile = z.infer<typeof ProfileSchema>
 // Keep hand-built test/embedding profiles source-compatible while parsed YAML
 // always receives the safe classifier defaults above.
-export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists'> & {
+export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists' | 'model'> & {
+  model: z.infer<typeof CodexModelSchema> | (Omit<z.infer<typeof ApiModelSchema>, 'auth'> & { auth?: 'api_key' })
   safety?: SafetyConfig
   context?: ContextConfig
   lists?: Record<string, unknown[] | string>

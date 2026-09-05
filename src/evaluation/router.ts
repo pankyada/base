@@ -1,0 +1,27 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { randomUUID } from 'node:crypto'
+import { compare, EvaluationStore, promotionGate, runFixtureEvaluation, summarize } from './index.js'
+
+export interface EvaluationRouterOptions { user: string; store?: EvaluationStore; fixtureRoot?: string }
+function json(res: ServerResponse, status: number, value: unknown): void { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)) }
+/** Read-only evaluation lab endpoints. Runtime command wiring supplies experiment execution. */
+export function handleEvaluationRequest(req: IncomingMessage, res: ServerResponse, options: EvaluationRouterOptions): boolean {
+  if (req.method !== 'GET') return false; const url = new URL(req.url ?? '/', 'http://localhost'); if (!url.pathname.startsWith('/evaluations')) return false; const store = options.store ?? new EvaluationStore(options.user)
+  if (url.pathname === '/evaluations' || url.pathname === '/evaluations/datasets') { json(res, 200, { datasets: store.datasets(), runs: store.runs(), experiments: store.experiments() }); return true }
+  if (url.pathname === '/evaluations/compare') { const baseline = store.runs().find(run => run.id === url.searchParams.get('baseline')); const candidate = store.runs().find(run => run.id === url.searchParams.get('candidate')); if (!baseline || !candidate) { json(res, 404, { error: 'evaluation run not found' }); return true }; json(res, 200, { baseline: summarize(baseline), candidate: summarize(candidate), deltas: compare(summarize(baseline), summarize(candidate)) }); return true }
+  if (url.pathname === '/evaluations/gate') { const dev = store.runs().find(run => run.id === url.searchParams.get('development')); const heldOut = store.runs().find(run => run.id === url.searchParams.get('held_out')); if (!dev || !heldOut) { json(res, 404, { error: 'evaluation run not found' }); return true }; json(res, 200, promotionGate(summarize(dev), summarize(heldOut), { minSamples: Number(url.searchParams.get('min_samples') ?? 1), maxRegression: Number(url.searchParams.get('max_regression') ?? 0) })); return true }
+  json(res, 404, { error: 'evaluation endpoint not found' }); return true
+}
+
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk as Uint8Array)); const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('request body must be an object'); return value as Record<string, unknown> }
+
+/** Async POST execution surface. Mount before generic REST routes and await its result. */
+export async function handleEvaluationExecutionRequest(req: IncomingMessage, res: ServerResponse, options: EvaluationRouterOptions): Promise<boolean> {
+  if (req.method !== 'POST') return false; const url = new URL(req.url ?? '/', 'http://localhost'); if (url.pathname !== '/evaluations/run' && url.pathname !== '/evaluations/experiment') return false; const store = options.store ?? new EvaluationStore(options.user)
+  try {
+    const body = await readBody(req); const datasetId = typeof body.dataset_id === 'string' ? body.dataset_id : ''; const dataset = store.getDataset(datasetId); if (!dataset) { json(res, 404, { error: 'evaluation dataset not found' }); return true }
+    const seed = typeof body.seed === 'number' ? body.seed : 1; const budgetUsd = typeof body.budget_usd === 'number' ? body.budget_usd : undefined; const fixtureRoot = typeof body.fixture_root === 'string' ? body.fixture_root : options.fixtureRoot; const controller = new AbortController(); if (body.cancel === true) controller.abort(); const cancelAfter = typeof body.cancel_after_ms === 'number' ? setTimeout(() => controller.abort(), body.cancel_after_ms) : undefined; const runInput = (profile: unknown, configFingerprint: unknown) => { if (typeof profile !== 'string' || typeof configFingerprint !== 'string' || !profile || !configFingerprint) throw new Error('pinned profile and config_fingerprint required'); return { profile, configFingerprint, seed, budgetUsd, fixtureRoot, signal: controller.signal } }
+    if (url.pathname === '/evaluations/run') { const run = await runFixtureEvaluation(dataset, runInput(body.profile, body.config_fingerprint)); if (cancelAfter) clearTimeout(cancelAfter); store.saveRun(run); json(res, run.status === 'completed' ? 200 : 409, { run, summary: summarize(run) }); return true }
+    const baseline = await runFixtureEvaluation(dataset, runInput(body.baseline_profile, body.baseline_config_fingerprint)); const candidate = await runFixtureEvaluation(dataset, runInput(body.candidate_profile, body.candidate_config_fingerprint)); if (cancelAfter) clearTimeout(cancelAfter); store.saveRun(baseline); store.saveRun(candidate); const experiment = { version: 1 as const, id: randomUUID(), dataset_id: dataset.id, baseline_run_id: baseline.id, candidate_run_id: candidate.id, created_at: new Date().toISOString(), comparison: compare(summarize(baseline), summarize(candidate)) }; store.saveExperiment(experiment); json(res, baseline.status === 'completed' && candidate.status === 'completed' ? 200 : 409, { experiment, baseline: summarize(baseline), candidate: summarize(candidate) }); return true
+  } catch (cause) { json(res, 400, { error: cause instanceof Error ? cause.message : String(cause) }); return true }
+}

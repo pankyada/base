@@ -32,6 +32,8 @@ export class RunBudget {
   private reservedCost = 0
   private observedCost = 0
   private released = false
+  private absorbed = false
+  private releasedCost = 0
   private readonly started: number
 
   constructor(
@@ -46,7 +48,7 @@ export class RunBudget {
 
   checkModel(cost: number, model = 'model call'): void {
     this.checkWall(model, cost)
-    if (Number.isFinite(cost)) this.observedCost = Math.max(this.observedCost, cost)
+    this.observeCost(cost)
     if (!Number.isFinite(cost) || cost + this.childCost + this.reservedCost >= this.config.max_cost_usd) {
       throw new BudgetExceeded('cost', this.snapshot(cost), this.config.max_cost_usd, model)
     }
@@ -72,6 +74,9 @@ export class RunBudget {
     return Math.max(0, this.config.max_cost_usd - this.observedCost - this.childCost - this.reservedCost)
   }
 
+  /** Absolute deadline inherited by helper and delegated model calls. */
+  deadlineAt(): number { return this.started + this.config.max_wall_s * 1000 }
+
   /** Reserve a fixed share before starting a child; release returns unused share. */
   allocate(maxCost: number): RunBudget {
     if (!Number.isFinite(maxCost) || maxCost < 0 || maxCost > this.remainingCost()) {
@@ -81,11 +86,27 @@ export class RunBudget {
     return new RunBudget({ max_cost_usd: maxCost, max_tools: this.config.max_tools, max_wall_s: this.config.max_wall_s }, this.now, this, maxCost)
   }
 
+  /** Record completed/uncertain spend even when inference throws. */
+  observeCost(cost: number): void {
+    if (Number.isFinite(cost)) this.observedCost = Math.max(this.observedCost, cost)
+  }
+
+  /** Parent session now includes this child's spend; move it out of the separate child ledger. */
+  absorbChildUsage(child: RunBudget, cost: number): void {
+    child.observeCost(cost)
+    child.release()
+    if (child.parent !== this || child.absorbed) return
+    child.absorbed = true
+    this.childCost = Math.max(0, this.childCost - child.releasedCost)
+    this.observedCost += child.releasedCost
+  }
+
   release(): void {
     if (this.released || !this.parent) return
     this.released = true
     this.parent.reservedCost = Math.max(0, this.parent.reservedCost - this.allocation)
-    this.parent.childCost += this.observedCost + this.childCost
+    this.releasedCost = this.observedCost + this.childCost
+    this.parent.childCost += this.releasedCost
   }
 
   private recordChildTool(): void {

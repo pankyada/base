@@ -17,12 +17,14 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/getting-started' },
       { text: 'Use Cases', link: '/use-cases' },
+      { text: 'How it Works', link: '/how-it-works' },
       { text: 'Architecture', link: '/architecture' },
       { text: 'Reference', link: '/profiles' },
     ],
     sidebar: [
       { text: 'Getting Started', link: '/getting-started' },
       { text: 'Use Cases', link: '/use-cases' },
+      { text: 'How it Works', link: '/how-it-works' },
       { text: 'Architecture', link: '/architecture' },
       {
         text: 'Reference',

@@ -446,3 +446,329 @@ button:focus-visible,
     transition: none;
   }
 }
+
+
+/* ==========================================================================
+   Use-case films (how-it-works.md) — narrative walkthroughs over a real
+   architecture diagram. Distinct from the spatial Konva explorer; see
+   docs/ADR.md ADR-73/74.
+
+   Tone taxonomy:
+     normal — ordinary progress                        (blue)
+     gate   — a control engaged, the run continued     (amber)
+     deny   — a control refused an action              (red)
+     halt   — the run stopped on a terminal condition  (violet)
+   halt stays visually distinct from deny: a budget abort is not a policy
+   refusal, and the runtime keeps them as separate terminal states.
+   ========================================================================== */
+
+.film-tone--normal { --film-tone: var(--h-blue); }
+.film-tone--gate   { --film-tone: var(--h-amber); }
+.film-tone--deny   { --film-tone: var(--h-red); }
+.film-tone--halt   { --film-tone: var(--h-violet); }
+
+.film {
+  margin: 2.5rem 0;
+  padding: 1.5rem;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 14px;
+  background: var(--vp-c-bg-soft);
+}
+
+.film-head { margin-bottom: 1.1rem; }
+
+.film-title {
+  font-family: var(--h-font-display);
+  margin: 0 0 0.35rem;
+  border: none;
+  padding: 0;
+}
+
+.film-premise {
+  margin: 0;
+  color: var(--vp-c-text-2);
+  max-width: 70ch;
+}
+
+/* ---- stage ---------------------------------------------------------- */
+
+.film-stage {
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--h-ink) 94%, transparent);
+  padding: 0.5rem;
+  overflow-x: auto;
+}
+
+:root:not(.dark) .film-stage {
+  background: color-mix(in srgb, var(--h-ink) 4%, var(--vp-c-bg));
+}
+
+.film-svg {
+  display: block;
+  width: 100%;
+  min-width: 680px;
+  height: auto;
+}
+
+.film-server-box {
+  fill: color-mix(in srgb, var(--h-blue) 4%, transparent);
+  stroke: color-mix(in srgb, var(--h-text-muted) 40%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+}
+
+.film-server-label,
+.film-zone-label {
+  font-family: var(--h-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  fill: var(--h-text-muted);
+}
+
+.film-band {
+  fill: color-mix(in srgb, var(--h-text-muted) 7%, transparent);
+  stroke: color-mix(in srgb, var(--h-text-muted) 16%, transparent);
+  stroke-width: 1;
+}
+
+.film-band-label {
+  font-family: var(--h-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+/* ---- nodes ---------------------------------------------------------- */
+
+.film-node-box {
+  fill: var(--h-ink-elv);
+  stroke: color-mix(in srgb, var(--h-text-muted) 45%, transparent);
+  stroke-width: 1;
+  transition: stroke 0.25s ease, fill 0.25s ease, opacity 0.25s ease;
+}
+
+:root:not(.dark) .film-node-box {
+  fill: var(--vp-c-bg);
+}
+
+.film-node-text {
+  font-family: var(--h-font-mono);
+  font-size: 9.5px;
+  text-anchor: middle;
+  fill: var(--h-text-muted);
+  transition: fill 0.25s ease;
+  pointer-events: none;
+}
+
+:root:not(.dark) .film-node-text { fill: var(--vp-c-text-2); }
+
+.film-node--ghost { opacity: 0.28; }
+.film-node--cast .film-node-box {
+  stroke: color-mix(in srgb, var(--h-text-muted) 70%, transparent);
+}
+.film-node--cast .film-node-text { fill: var(--vp-c-text-1); }
+
+.film-node--target .film-node-box {
+  stroke: var(--h-blue);
+  stroke-width: 1.5;
+}
+.film-node--target .film-node-text { fill: var(--vp-c-text-1); }
+
+.film-node--active .film-node-box {
+  stroke: var(--film-tone, var(--h-blue));
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--film-tone, var(--h-blue)) 18%, var(--h-ink-elv));
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--film-tone, var(--h-blue)) 65%, transparent));
+}
+.film-node--active .film-node-text {
+  fill: var(--vp-c-text-1);
+  font-weight: 600;
+}
+
+:root:not(.dark) .film-node--active .film-node-box {
+  fill: color-mix(in srgb, var(--film-tone, var(--h-blue)) 12%, var(--vp-c-bg));
+}
+
+/* ---- edges + packet -------------------------------------------------- */
+
+.film-route {
+  fill: none;
+  stroke: color-mix(in srgb, var(--h-text-muted) 22%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+}
+
+.film-edge {
+  fill: none;
+  stroke: var(--film-tone, var(--h-blue));
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+
+.film-packet {
+  fill: var(--film-tone, var(--h-blue));
+  filter: drop-shadow(0 0 6px var(--film-tone, var(--h-blue)));
+  opacity: 0;
+}
+
+/* ---- caption + transport --------------------------------------------- */
+
+.film-caption {
+  margin-top: 1.1rem;
+  padding-left: 0.9rem;
+  border-left: 3px solid var(--film-tone, var(--h-blue));
+  min-height: 4.4rem;
+}
+
+.film-caption__text {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--vp-c-text-1);
+}
+
+.film-caption__detail {
+  margin: 0.35rem 0 0;
+  font-size: 0.86rem;
+  color: var(--vp-c-text-2);
+}
+
+.film-caption__source,
+.film-storyboard__source {
+  margin: 0.45rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.film-caption__source code,
+.film-storyboard__source code {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--h-text-muted) 14%, transparent);
+  color: var(--vp-c-text-2);
+}
+
+.film-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  flex-wrap: wrap;
+}
+
+.film-btn {
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.film-btn:hover { border-color: var(--h-blue); }
+.film-btn--play { min-width: 2.2rem; font-weight: 600; }
+
+/* `.vp-doc ol` (0,1,1) sets list-style:decimal and padding-left, which beats a
+   bare `.film-rail` (0,1,0) — the markers then render behind the buttons. Both
+   selectors are listed so the block applies at the higher specificity too. */
+.film-rail,
+.vp-doc .film-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+}
+
+.vp-doc .film-rail > li {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vp-doc .film-rail > li::marker {
+  content: '';
+}
+
+.film-rail__beat {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-2);
+  font-family: var(--h-font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.film-rail__beat:hover { border-color: var(--h-blue); color: var(--vp-c-text-1); }
+
+.film-rail__beat--active {
+  background: var(--h-blue);
+  border-color: var(--h-blue);
+  color: #fff;
+}
+
+/* ---- reduced-motion / no-JS storyboard -------------------------------- */
+
+/* Same `.vp-doc ol` override as the beat rail — this list renders its own
+   numbers in .film-storyboard__index, so a decimal marker would duplicate. */
+.film-storyboard,
+.vp-doc .film-storyboard {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.film-storyboard__item,
+.vp-doc .film-storyboard > li {
+  display: flex;
+  gap: 0.9rem;
+  margin: 0;
+  padding: 0 0 0 0.9rem;
+  list-style: none;
+  border-left: 3px solid var(--film-tone, var(--h-blue));
+}
+
+.vp-doc .film-storyboard > li::marker {
+  content: '';
+}
+
+.film-storyboard__index {
+  font-family: var(--h-font-mono);
+  color: var(--vp-c-text-3);
+  min-width: 1.5rem;
+}
+
+.film-storyboard__actor {
+  display: block;
+  font-family: var(--h-font-mono);
+  font-size: 0.82rem;
+  color: var(--film-tone, var(--h-blue));
+}
+
+.film-storyboard__caption { margin: 0.2rem 0 0; }
+
+.film-storyboard__detail {
+  margin: 0.3rem 0 0;
+  font-size: 0.86rem;
+  color: var(--vp-c-text-2);
+}
+
+@media (max-width: 768px) {
+  .film { padding: 1rem; }
+  .film-caption { min-height: 5.5rem; }
+}

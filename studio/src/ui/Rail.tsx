@@ -1,0 +1,1 @@
+export function Rail({ lines }: { lines: string[] }) { return <aside className="rail" aria-live="polite"><div className="panel-kicker">Plain-English rail</div>{lines.length ? <ol>{lines.map((line, index) => <li key={`${line}-${index}`}>{line}</li>)}</ol> : <p>Waiting for a team.</p>}</aside> }

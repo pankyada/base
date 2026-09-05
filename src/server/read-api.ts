@@ -87,7 +87,15 @@ function defaultMemory(profile: Profile, user: string, sessionId?: string): Memo
 function projection(messages: unknown[], max: number): unknown[] {
   return messages.slice(Math.max(0, messages.length - max)).map(message => {
     if (!message || typeof message !== 'object') return message
-    const item = message as { role?: unknown; content?: unknown }
+    const raw = message as Record<string, unknown>
+    const item: Record<string, unknown> = { role: raw.role, content: raw.content }
+    if (typeof raw.tool_call_id === 'string') item.tool_call_id = raw.tool_call_id
+    if (Array.isArray(raw.tool_calls)) item.tool_calls = raw.tool_calls.map(call => {
+      if (!call || typeof call !== 'object') return null
+      const value = call as Record<string, unknown>
+      return { id: value.id, type: value.type, function: value.function && typeof value.function === 'object' ? { ...(value.function as Record<string, unknown>) } : value.function }
+    })
+    if (raw.interrupted === true) item.interrupted = true
     if (item.role === 'tool' && typeof item.content === 'string' && item.content.length > 2000) return { ...item, content: `${item.content.slice(0, 2000)}…`, restore_handle: 'truncated' }
     return item
   })

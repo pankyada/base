@@ -24,9 +24,23 @@ type Project struct {
 
 // Usage mirrors SessionSummary.usage.
 type Usage struct {
-	Input   int     `json:"input"`
-	Output  int     `json:"output"`
-	CostUSD float64 `json:"cost_usd"`
+	Input                 int      `json:"input"`
+	Output                int      `json:"output"`
+	CostUSD               float64  `json:"cost_usd"`
+	BillingMode           string   `json:"billing_mode,omitempty"`
+	CostBasis             string   `json:"cost_basis,omitempty"`
+	BilledCostUSD         *float64 `json:"billed_cost_usd,omitempty"`
+	APIEstimateUSD        float64  `json:"api_estimate_usd,omitempty"`
+	APIEquivalentUSD      float64  `json:"api_equivalent_usd,omitempty"`
+	UsageStatus           string   `json:"usage_status,omitempty"`
+	CachedInputTokens     int      `json:"cached_input_tokens,omitempty"`
+	ReasoningOutputTokens int      `json:"reasoning_output_tokens,omitempty"`
+	ModelAttempts         int      `json:"model_attempts,omitempty"`
+}
+
+type ProviderStatus struct {
+	Auth   string `json:"auth"`
+	Status string `json:"status"`
 }
 
 // SessionSummary mirrors src/session/types.ts SessionSummary.
@@ -121,6 +135,7 @@ type ServerMessage struct {
 	Name    string                 `json:"name,omitempty"`    // tool_start/end/prompt/parked
 	Risk    string                 `json:"risk,omitempty"`    // tool_prompt
 	Reason  string                 `json:"reason,omitempty"`  // tool_prompt/notice
+	Preview interface{}            `json:"preview,omitempty"` // tool_prompt rehearsal proposal
 	Level   string                 `json:"level,omitempty"`   // notice
 	Detail  string                 `json:"detail,omitempty"`  // notice
 	Input   map[string]interface{} `json:"input,omitempty"`   // tool_start/prompt
@@ -133,18 +148,20 @@ type ServerMessage struct {
 	Kind    string   `json:"kind,omitempty"`    // input_request: text|select|multi_select
 	Options []string `json:"options,omitempty"` // input_request
 
-	SessionID  string `json:"sessionId,omitempty"`   // session_ready/end/resumed, artifacts
-	Profile    string `json:"profile,omitempty"`     // session_ready
-	Model      string `json:"model,omitempty"`       // session_ready
-	WorkingDir string `json:"working_dir,omitempty"` // session_ready
-	Yolo       bool   `json:"yolo,omitempty"`        // session_ready
-	ProtocolVersion int `json:"protocol_version,omitempty"` // hello/session_ready
+	SessionID       string          `json:"sessionId,omitempty"`        // session_ready/end/resumed, artifacts
+	Profile         string          `json:"profile,omitempty"`          // session_ready
+	Model           string          `json:"model,omitempty"`            // session_ready
+	WorkingDir      string          `json:"working_dir,omitempty"`      // session_ready
+	Yolo            bool            `json:"yolo,omitempty"`             // session_ready
+	ProtocolVersion int             `json:"protocol_version,omitempty"` // hello/session_ready
+	ProviderStatus  *ProviderStatus `json:"provider_status,omitempty"`
 
 	TokensIn      int     `json:"tokens_in,omitempty"`      // stats
 	TokensOut     int     `json:"tokens_out,omitempty"`     // stats
 	CostUSD       float64 `json:"cost_usd,omitempty"`       // stats, stage
 	ContextWindow int     `json:"context_window,omitempty"` // stats
 	ContextTokens int     `json:"context_tokens,omitempty"` // stats
+	Usage         *Usage  `json:"usage,omitempty"`          // stats/agent_stats
 	Mode          string  `json:"mode,omitempty"`           // approval_mode_changed
 
 	Message string `json:"message,omitempty"` // error
@@ -168,6 +185,8 @@ type ServerMessage struct {
 	State     string           `json:"state,omitempty"`
 	Pending   []PendingInput   `json:"pending,omitempty"`
 	Undo      []UndoEntry      `json:"entries,omitempty"`
+	Mission   json.RawMessage  `json:"mission,omitempty"`
+	Receipt   json.RawMessage  `json:"receipt,omitempty"`
 }
 
 // DecodeServer parses one server->client frame.
@@ -184,10 +203,10 @@ type ClientMessage interface {
 }
 
 type helloMsg struct {
-	Type    string `json:"type"`
-	UserID  string `json:"user_id"`
-	ProtocolVersion int `json:"protocol_version"`
-	Profile string `json:"profile,omitempty"`
+	Type            string `json:"type"`
+	UserID          string `json:"user_id"`
+	ProtocolVersion int    `json:"protocol_version"`
+	Profile         string `json:"profile,omitempty"`
 }
 
 func (helloMsg) isClientMessage()           {}

@@ -15,13 +15,25 @@ import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
 import { project, projectionTelemetry } from '../context/projection.js'
 import { calibrate, estimateTokens, rawTokens } from '../context/estimator.js'
-import { withRetry } from './retry.js'
 import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
 import type { StageTag } from '../workflow/types.js'
 import { stageAcl } from '../workflow/stage-acl.js'
 import { isParkSignal, ParkSignal } from '../runs/park.js'
+import { bindRunProvider } from '../provider/invocation.js'
+import { createApiKeyProvider } from '../provider/api-key.js'
+import type { ProviderClient, ProviderMessage, ProviderRequest } from '../provider/types.js'
+import { ProviderError } from '../provider/errors.js'
 
 export { estimateCost }
+
+function parseToolArguments(value: string, toolName: string): Record<string, unknown> {
+  let parsed: unknown
+  try { parsed = JSON.parse(value || '{}') } catch { throw new ProviderError(`Invalid arguments for tool ${toolName}`, { code: 'invalid_arguments' }) }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ProviderError(`Invalid arguments for tool ${toolName}`, { code: 'invalid_arguments' })
+  }
+  return parsed as Record<string, unknown>
+}
 
 // Ceiling on a single tool result's contribution to session.messages. Several
 // tools (Read, ExecuteCode, Grep) have no output cap of their own, and a
@@ -48,7 +60,7 @@ export async function runAgentLoop(
   session: Session,
   context: ToolContext,
   events: AgentLoopEvents,
-  openai: OpenAI,
+  openai?: OpenAI,
   signal?: AbortSignal,
   opts?: {
     modelId?: string
@@ -58,6 +70,11 @@ export async function runAgentLoop(
   }
 ): Promise<void> {
   const modelId = opts?.modelId ?? profile.model.id
+  const apiClient = openai ?? context.openai
+  const rawProvider: ProviderClient = context.provider ?? (apiClient ? createApiKeyProvider(profile, apiClient) : (() => { throw new Error('No model provider configured for this run') })())
+  context.signal ??= signal
+  const provider = bindRunProvider(rawProvider, context)
+  context.provider = provider
   const stageOverlay = opts?.stage && opts.stage.stage !== 'triage' ? stageAcl(opts.stage.stage) : undefined
   if (opts?.appendUser !== false) {
     session.taint_sources = [...(context.taintSources ?? [])]
@@ -78,8 +95,13 @@ export async function runAgentLoop(
     isMcp: boolean,
     auditDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } = { decision: 'allow', decided_by: 'default', reason: 'tool executed' },
   ): Promise<ToolResult> => {
+    const owner = [...session.messages].reverse().find((message: any) => message?.role === 'assistant' && message.tool_calls?.some((call: any) => call.id === tc.id)) as any
+    await context.provider?.assertCredentialGeneration?.(owner?.providerState?.accountGeneration)
     context.budget?.checkTool(tc.name, context.session.usage.cost_usd)
     await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
+    signal?.throwIfAborted()
+    context.signal?.throwIfAborted()
+    await context.provider?.assertCredentialGeneration?.(owner?.providerState?.accountGeneration)
 
     const toolDef = allTools.find(t => t.name === tc.name)
     const toolStart = Date.now()
@@ -123,6 +145,10 @@ export async function runAgentLoop(
     if (effect !== 'read') audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect, decision: auditDecision.decision, decided_by: auditDecision.decided_by, decided_reason: auditDecision.reason, tainted: (session.taint_sources?.length ?? 0) > 0, ok, ...(undo ? { undo } : {}) })
     if (provenance === 'untrusted') session.taint_sources = [...new Set([...(session.taint_sources ?? []), source ?? tc.name])].slice(0, 8)
 
+    // Evidence is emitted here, after the real executor returned. Model-supplied
+    // ids and prose never reach this callback.
+    events.onEvidence?.(tc.id, tc.name, input, result, ok, provenance, source)
+
     return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp, provenance, source }
   }
 
@@ -152,83 +178,76 @@ export async function runAgentLoop(
       openai,
       context.memory,
       (message, detail) => events.onNotice?.('warn', message, detail),
+      provider,
     )
     const sentRaw = rawTokens(projectedMessages)
     const contextTokensEst = estimateTokens(projectedMessages, session)
 
-    // Reasoning-family models (o-series, GPT-5.4+) 400 on /v1/chat/completions
-    // when function tools are attached unless reasoning_effort is 'none' —
-    // see requiresReasoningEffortNone for the affected models.
-    const needsReasoningEffortNone = openaiTools.length > 0 && requiresReasoningEffortNone(modelId)
-
     let assistantContent = ''
     const toolCallMap = new Map<number, { id: string; name: string; args: string }>()
+    let completedResult: import('../provider/types.js').ProviderResult | undefined
     let tokensIn = 0
     let tokensOut = 0
     let cacheReadTokens: number | undefined
+    const costBefore = session.usage.cost_usd
     try {
-      const stream = await withRetry<any>(
-        () => (openai.chat.completions as any).create({
-          model: modelId,
-          messages: projectedMessages as OpenAI.ChatCompletionMessageParam[],
-          tools: openaiTools.length > 0 ? openaiTools : undefined,
-          ...(needsReasoningEffortNone ? { reasoning_effort: 'none' } : {}),
-          stream: true,
-          stream_options: { include_usage: true },
-        }, { signal }),
-        3,
-        1000,
-        (_attempt, _delay) => { events.onToken?.('\n[retrying...]\n') }
-      )
-
-      for await (const chunk of stream) {
-        const delta = chunk.choices?.[0]?.delta
-        if (delta?.content) {
-          assistantContent += delta.content
-          events.onToken(delta.content)
-        }
-        if (delta?.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const existing = toolCallMap.get(tc.index)
-            if (!existing) {
-              toolCallMap.set(tc.index, {
-                id: tc.id ?? '',
-                name: tc.function?.name ?? '',
-                args: tc.function?.arguments ?? '',
-              })
-            } else {
-              existing.args += tc.function?.arguments ?? ''
-              if (tc.id) existing.id = tc.id
-              if (tc.function?.name) existing.name = tc.function.name
-            }
+      const request: ProviderRequest = {
+        model: modelId,
+        messages: projectedMessages as ProviderMessage[],
+        tools: allTools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        stream: true,
+        reasoningEffort: profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort : undefined,
+        signal,
+      }
+      for await (const event of provider.stream(request, {
+        signal,
+        sessionId: context.session.id,
+        profileName: profile.name,
+        purpose: 'main',
+        credentialGeneration: context.credentialGeneration,
+      })) {
+        if (event.type === 'text') {
+          assistantContent += event.delta
+          events.onToken(event.delta)
+        } else if (event.type === 'tool_delta') {
+          const existing = [...toolCallMap.values()].find(call => call.id === event.id)
+          if (existing) existing.args += event.argumentsDelta ?? ''
+          else toolCallMap.set(toolCallMap.size, { id: event.id, name: event.name ?? '', args: event.argumentsDelta ?? '' })
+        } else if (event.type === 'usage') {
+          tokensIn = event.usage.inputTokens ?? 0
+          tokensOut = event.usage.outputTokens ?? 0
+          cacheReadTokens = event.usage.cachedInputTokens
+        } else if (event.type === 'done') {
+          completedResult = event.result
+          if (event.result.text && event.result.text !== assistantContent) {
+            events.onToken(event.result.text.startsWith(assistantContent) ? event.result.text.slice(assistantContent.length) : event.result.text)
+            assistantContent = event.result.text
           }
-        }
-        if (chunk.usage) {
-          tokensIn = chunk.usage.prompt_tokens ?? 0
-          tokensOut = chunk.usage.completion_tokens ?? 0
-          const usage = chunk.usage as any
-          cacheReadTokens = usage.cache_read_tokens ?? usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens
-          calibrate(session, tokensIn, sentRaw)
+          toolCallMap.clear()
+          event.result.toolCalls.forEach((call, index) => toolCallMap.set(index, { id: call.id, name: call.name, args: call.arguments }))
+          if (event.result.usage) {
+            tokensIn = event.result.usage.inputTokens ?? tokensIn
+            tokensOut = event.result.usage.outputTokens ?? tokensOut
+            cacheReadTokens = event.result.usage.cachedInputTokens ?? cacheReadTokens
+            }
         }
       }
     } catch (error) {
       if (!signal?.aborted) throw error
     }
 
+    if (tokensIn > 0) calibrate(session, tokensIn, sentRaw)
     if (signal?.aborted) {
       if (assistantContent) session.messages.push({ role: 'assistant', content: assistantContent, interrupted: true } as any)
       events.onSessionEnd(session.id)
       return
     }
 
-    const cost = estimateCost(modelId, tokensIn, tokensOut)
-    session.usage.input += tokensIn
-    session.usage.output += tokensOut
-    session.usage.cost_usd += cost
+    const cost = session.usage.cost_usd - costBefore
     // A provider response can cross the ceiling; abort before any returned
     // tool call executes or a final over-budget turn is accepted.
     context.budget?.checkModel(session.usage.cost_usd, modelId)
-    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(projectedMessages, session))
+    events.onStats?.(session.usage.input, session.usage.output, session.usage.cost_usd, estimateTokens(projectedMessages, session), undefined, session.usage)
     logEvent({
       session: session.id, profile: profile.name, kind: 'llm',
       model: modelId, tokens_in: tokensIn, tokens_out: tokensOut, cost_usd: cost,
@@ -248,14 +267,15 @@ export async function runAgentLoop(
       const contentToStore = markerIdx !== -1
         ? assistantContent.slice(0, markerIdx).trimEnd()
         : assistantContent
-      session.messages.push({ role: 'assistant', content: contentToStore })
+      session.messages.push({ role: 'assistant', content: contentToStore, ...(completedResult?.continuation ? { providerState: completedResult.continuation } : {}) })
 
       if (markerIdx !== -1 && events.onArtifacts) {
         try {
           const artifactsJson = assistantContent.slice(markerIdx + '__ARTIFACTS__'.length).trim()
           const artifacts = JSON.parse(artifactsJson)
           if (Array.isArray(artifacts)) {
-            events.onArtifacts(session.id, artifacts)
+      const sourced = artifacts.map((artifact: any) => ({ ...artifact, source_session_id: session.id, source_tool_call_id: context.currentToolCallId ?? artifact.source_tool_call_id, source_tool_name: context.currentToolName ?? artifact.source_tool_name, source_code_id: context.sourceCodeId ?? artifact.source_code_id }))
+            events.onArtifacts(session.id, sourced)
           }
         } catch {
           // Ignore invalid artifacts format
@@ -275,6 +295,7 @@ export async function runAgentLoop(
         function: { name: tc.name, arguments: tc.args },
       })),
     }
+    if (completedResult?.continuation) assistantMsg.providerState = completedResult.continuation
     session.messages.push(assistantMsg)
 
     // --- Parallel tool execution (Strategy C) ---
@@ -283,9 +304,7 @@ export async function runAgentLoop(
     const toolResults: ToolResult[] = new Array(toolCalls.length)
     let pendingBatch: Array<{ tc: { id: string; name: string; args: string }; input: Record<string, unknown>; isMcp: boolean; idx: number; decision: { decision: 'allow'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } }> = []
 
-    const parsedInputs: Record<string, unknown>[] = toolCalls.map(tc => {
-      try { return JSON.parse(tc.args || '{}') } catch { return {} }
-    })
+    const parsedInputs: Record<string, unknown>[] = toolCalls.map(tc => parseToolArguments(tc.args, tc.name))
 
     const classifications = new Map<number, { risk: 'safe' | 'caution' | 'danger'; reason: string; source: string }>()
     if ((context.approvalMode ?? 'danger') === 'danger') {
@@ -317,6 +336,8 @@ export async function runAgentLoop(
       for (const r of batchResults) {
         events.onToolEnd(r.tool_call_id, r.name, r.content, r.ok)
       }
+      const last = batchResults.at(-1)
+      if (last) { context.currentToolCallId = last.tool_call_id; context.currentToolName = last.name }
       for (let b = 0; b < pendingBatch.length; b++) {
         toolResults[pendingBatch[b].idx] = batchResults[b]
       }

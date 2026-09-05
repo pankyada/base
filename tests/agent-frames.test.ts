@@ -64,6 +64,7 @@ describe('agent frames', () => {
     tagged.onAgentSpawn?.(createRootFrame('researcher', 'child-session'), {})
     tagged.onAgentEnd?.('ag_child', 'completed', undefined, { ok: true }, 12)
 
+    expect(tagged.onToolParked).toBeUndefined()
     expect(messages.map(message => JSON.stringify(message))).toEqual([
       '{"type":"token","content":"child token"}',
       '{"type":"tool_start","id":"tool-1","name":"Read","input":{}}',
@@ -121,5 +122,20 @@ describe('agent frames', () => {
       { agentId: 'ag_one', state: 'running', tool: undefined },
     ])
     expect(stats).toEqual([{ agentId: 'ag_one', tokens_in: 2, tokens_out: 3, cost_usd: 0.04, tools: 1 }])
+  })
+
+  it('forwards child billing metadata through stats and agent stats', () => {
+    const stats: unknown[] = []
+    const agentStats: unknown[] = []
+    const parent = parentEvents([])
+    parent.onStats = (_input, _output, _cost, _context, agentId, usage) => stats.push({ agentId, usage })
+    parent.onAgentStats = (agentId, _input, _output, _cost, _tools, usage) => agentStats.push({ agentId, usage })
+    const tagged = tagEvents(parent, { ...createRootFrame('one', 's1'), agent_id: 'ag_one', agent_name: 'one', parent_agent_id: 'root', depth: 1, origin: 'model', profile: 'one', session_id: 's1' })
+    const usage = { billing_mode: 'api' as const, cost_basis: 'api_estimate' as const }
+
+    tagged.onStats?.(2, 3, 0.04, undefined, undefined, usage)
+
+    expect(stats).toEqual([{ agentId: 'ag_one', usage }])
+    expect(agentStats).toEqual([{ agentId: 'ag_one', usage }])
   })
 })

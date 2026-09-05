@@ -738,3 +738,7 @@ whether anyone opens the web client. Everything after it is additive product wor
 - Parallel tool execution in agent loop
 - Telemetry rotation + lazy reads
 - Delegate tool (sub-agent spawning, foundation for #3)
+
+## Explicitly requested integration track — Codex subscription
+
+🔄 Codex OAuth alongside API-key defaults. Local implementation and automated regression validation passed; live account/client compatibility, subscription attribution, and Windows acceptance pending. No Claude subscription scope. See [design](superpowers/specs/2026-09-05-codex-subscription-design.md), [plan](superpowers/plans/2026-09-05-codex-subscription-plan.md), and [operator guide](CODEX_AUTH.md).

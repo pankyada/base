@@ -1,7 +1,7 @@
 // Generated from src/types.ts by scripts/gen-web-protocol.mjs. Do not edit.
 
 export interface Project { id: string; user: string; name: string; created_at: string; description?: string }
-export interface SessionSummary { id: string; project: string; title?: string; summary?: string; created_at: string; usage: { input: number; output: number; cost_usd: number } }
+export interface SessionSummary { id: string; project: string; title?: string; summary?: string; created_at: string; usage: { input: number; output: number; cost_usd: number } & UsageMetadataWire }
 export interface PendingInput { id: string; run_id: string; session_id: string; user: string; profile: string; prompt: string; kind: 'text' | 'select' | 'multi_select'; options?: string[]; created_at: string; expires_at: string; state: string }
 export type Stage = 'recon' | 'plan' | 'design' | 'build' | 'verify' | 'review'
 export type Intensity = 0 | 1 | 2 | 3
@@ -60,6 +60,23 @@ export interface ProfileInfo {
   name: string
   description?: string
   mode?: 'developer' | 'analyst' | 'assistant' | 'production'
+}
+
+export interface ProviderStatus {
+  auth: 'api_key' | 'codex_oauth'
+  status: 'active' | 'expired' | 'reauth_required' | 'missing' | 'disabled' | 'error'
+}
+
+export interface UsageMetadataWire {
+  billing_mode?: 'api' | 'subscription' | 'mixed'
+  cost_basis?: 'api_estimate' | 'api_equivalent' | 'legacy_estimate' | 'mixed'
+  billed_cost_usd?: number | null
+  api_estimate_usd?: number
+  api_equivalent_usd?: number
+  usage_status?: 'complete' | 'partial' | 'estimated' | 'unknown'
+  cached_input_tokens?: number
+  reasoning_output_tokens?: number
+  model_attempts?: number
 }
 
 export interface SkillSummary {
@@ -182,7 +199,53 @@ export interface AgentCatalogEntry {
   budget_usd?: number
 }
 
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
+
+export interface BulletinPostWire {
+  id: string
+  seq: number
+  from_agent_id: string
+  from_agent_name: string
+  to: 'all' | string[]
+  kind: 'post' | 'ask' | 'answer' | 'handoff' | 'standup'
+  subject: string
+  body_preview: string
+  artifact_ids?: string[]
+  tainted: boolean
+  ts: number
+}
+
+export interface SessionRuntimeWire {
+  session_id: string
+  user: string
+  revision: number
+  status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
+  last_seq: number
+  controller?: { id: string; expires_at: number }
+  events: Array<{ seq: number; type: string; payload: unknown; at: string }>
+  gap: boolean
+}
+
+export interface MissionWire {
+  id: string
+  status: 'open' | 'execution_finished' | 'accepted' | 'failed' | 'needs_human'
+  revision: number
+  outcome: string
+  criteria: Array<{ id: string; description: string; state: 'pending' | 'verified' | 'failed' | 'needs_human' }>
+}
+
+export interface ChallengeWire {
+  id: string
+  mission_id: string
+  criterion_id?: string
+  challenger: string
+  question: string
+  state: 'open' | 'addressed' | 'unresolved'
+  round: number
+  cost_usd: number
+  evidence_count: number
+  resolution_evidence_count: number
+}
 
 export type ClientMessage =
   | { type: 'hello'; user_id: string; protocol_version?: number; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean /** Ignored: approval mode is server-authoritative. */ }
@@ -222,6 +285,15 @@ export type ClientMessage =
   | { type: 'spawn'; agent: string; input: Record<string, unknown>; count?: number; budget_usd?: number }
   | { type: 'agent_cancel'; agent_id: string }
   | { type: 'agents_list' }
+  | { type: 'board_post'; subject: string; body: string; to?: string[] }
+  | { type: 'attach'; session_id: string; mode: 'observe' | 'control' }
+  | { type: 'runtime_subscribe'; session_id: string; after_seq?: number }
+  | { type: 'mission_list' }
+  | { type: 'mission_create'; outcome: string; constraints?: string[]; criteria: Array<{ id: string; description: string; kind: string; expected?: unknown }> }
+  | { type: 'mission_human'; mission_id: string; criterion_id: string; revision: number }
+  | { type: 'challenge_list'; mission_id?: string }
+  | { type: 'challenge_open'; mission_id: string; criterion_id?: string; question: string }
+  | { type: 'challenge_answer'; challenge_id: string; unresolved?: boolean; note?: string; evidence?: unknown[] }
 
 export type ServerMessage =
   | { type: 'turn_start'; agent_id?: string; run_id: string }
@@ -229,12 +301,12 @@ export type ServerMessage =
   | { type: 'tool_start'; id: string; name: string; input: Record<string, unknown>; agent_id?: string; run_id?: string }
   | { type: 'tool_end'; id: string; name: string; result: string; ok?: boolean; agent_id?: string; run_id?: string }
   | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown>; agent_id?: string; run_id?: string }
-  | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; agent_id?: string; run_id?: string }
+  | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; preview?: unknown; agent_id?: string; run_id?: string }
   | { type: 'tool_auto_approved'; id: string; name: string; scope: 'session'; agent_id?: string; run_id?: string }
-  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; budget?: { max_cost_usd: number }; yolo: boolean; protocol_version?: number }
+  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; budget?: { max_cost_usd: number }; yolo: boolean; protocol_version?: number; provider_status?: ProviderStatus }
   | { type: 'session_end'; sessionId: string; agent_id?: string; run_id?: string; status?: 'completed' | 'budget_exceeded' | 'cancelled' | 'failed'; reason?: string }
   | { type: 'session_resumed'; agent_id?: string; sessionId: string }
-  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; agent_id?: string; run_id?: string }
+  | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; usage?: UsageMetadataWire; agent_id?: string; run_id?: string }
   | { type: 'error'; message: string; agent_id?: string; run_id?: string }
   | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[]; agent_id?: string; run_id?: string }
   | { type: 'input_request'; id: string; prompt: string; kind: InputRequestKind; options?: string[]; agent_id?: string; run_id?: string }
@@ -243,9 +315,16 @@ export type ServerMessage =
   | { type: 'ui_render'; surface: SurfaceSpec; agent_id?: string; run_id?: string }
   | { type: 'agent_spawn'; frame: AgentFrame; input: Record<string, unknown>; budget?: { max_cost_usd: number }; run_id?: string }
   | { type: 'agent_state'; agent_id: string; state: 'running' | 'waiting_approval' | 'waiting_input'; tool?: string; run_id?: string }
-  | { type: 'agent_stats'; agent_id: string; tokens_in: number; tokens_out: number; cost_usd: number; tools: number; run_id?: string }
+  | { type: 'agent_stats'; agent_id: string; tokens_in: number; tokens_out: number; cost_usd: number; tools: number; usage?: UsageMetadataWire; run_id?: string }
   | { type: 'agent_end'; agent_id: string; status: 'completed' | 'failed' | 'cancelled' | 'budget_exceeded' | 'contract_violation'; error?: string; output?: unknown; duration_ms: number; run_id?: string }
   | { type: 'agent_catalog'; agents: AgentCatalogEntry[] }
+  | { type: 'agent_message'; post: BulletinPostWire; run_id?: string }
+  | { type: 'standup'; standup_id: string; phase: 'open' | 'answered' | 'closed'; subject: string; expected: string[]; answered: string[]; run_id?: string }
+  | { type: 'fleet_snapshot'; frames: AgentFrame[]; states: { agent_id: string; tool?: string; since: number; state: 'running' | 'waiting_approval' | 'waiting_input'; spend_usd: number; tools: number }[]; board: BulletinPostWire[]; stage?: Stage; queue: { id: string; kind: 'tool_prompt' | 'input_request'; agent_id?: string }[]; feed?: string[]; run_id?: string }
+  | { type: 'runtime'; snapshot: SessionRuntimeWire }
+  | { type: 'mission'; mission: MissionWire; receipts?: unknown[] }
+  | { type: 'receipt'; receipt: unknown }
+  | { type: 'challenge'; challenge: ChallengeWire }
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
