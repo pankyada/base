@@ -6,7 +6,8 @@ import { FALLBACK_PRICES, MODEL_REGISTRY, listModels } from '../models/registry.
 import type { ModelInfo } from '../types.js'
 import { loadProfile } from '../profiles/loader.js'
 import { ProfileSchema, type Profile } from '../profiles/schema.js'
-import { codexAuthStatus } from '../provider/auth/store.js'
+import { codexAuthStatus, readCodexAuth } from '../provider/auth/store.js'
+import { runAuthCommand } from './auth.js'
 import { createProviderClient } from '../provider/client.js'
 import { load as loadYaml } from 'js-yaml'
 import { loadStartupProfiles } from '../server/profile-startup.js'
@@ -14,6 +15,7 @@ import { readUserConfig, writeUserConfig } from '../config/user-config.js'
 import { loadUserEnv, userEnvPath, writeUserEnv } from '../config/user-env.js'
 import { runDoctor, type DoctorResult } from './doctor.js'
 import pkg from '../../package.json' with { type: 'json' }
+import { CODEX_API_ENDPOINT } from '../provider/codex/adapter.js'
 
 export interface InitIO {
   write(line: string): void
@@ -103,10 +105,21 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
     let selectedModel: Profile['model']
     if (provider === 'OpenAI Codex subscription') {
       const catalogProfile = { ...profile, model: { auth: 'codex_oauth' as const, id: profile.model.id, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } } }
-      const models = listModels(catalogProfile)
+      const baselineModels = listModels(catalogProfile)
+      await ensureCodexAuthentication({
+        homeDir,
+        offline: flags.offline,
+        flags,
+        io,
+      })
+      const models = await resolveCodexModels({
+        homeDir,
+        offline: flags.offline,
+        staticModels: baselineModels,
+        fallbackId: profile.model.id,
+      })
       const defaultModel = models.some(item => item.id === profile.model.id) ? profile.model.id : models[0].id
       const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
-      if (!models.some(item => item.id === model)) throw new Error('Choose a model from the Codex compatibility catalog')
       selectedModel = { auth: 'codex_oauth', id: model, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } }
       const status = codexAuthStatus(homeDir)
       ui.step(3, 'Model')
@@ -284,6 +297,75 @@ async function resolveLiveModels({
   } catch {
     return [...staticModels]
   }
+}
+
+async function resolveCodexModels({
+  homeDir,
+  offline,
+  staticModels,
+  fallbackId,
+}: {
+  homeDir: string
+  offline: boolean
+  staticModels: readonly ModelInfo[]
+  fallbackId: string
+}): Promise<ModelInfo[]> {
+  if (offline) return [...staticModels]
+  const record = readCodexAuth(homeDir)
+  if (!record?.credential) return [...staticModels]
+  const endpoints = [
+    `${CODEX_API_ENDPOINT.replace(/\/responses$/, '')}/models`,
+    `${new URL(CODEX_API_ENDPOINT).origin}/backend-api/codex/models`,
+  ]
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${record.credential.access_token}`,
+          'chatgpt-account-id': record.credential.account_id,
+          accept: 'application/json',
+        },
+      })
+      if (!response.ok) continue
+      const body = await response.json()
+      const ids = extractModelIds(body)
+      if (!ids.length) continue
+      return materializeModels({
+        ids,
+        staticModels,
+        providerLabel: 'OpenAI Codex subscription',
+        baseUrl: '',
+        fallbackId,
+      })
+    } catch { continue }
+  }
+  return [...staticModels]
+}
+
+async function ensureCodexAuthentication({
+  homeDir,
+  offline,
+  flags,
+  io,
+}: {
+  homeDir: string
+  offline: boolean
+  flags: InitFlags
+  io: InitIO
+}): Promise<void> {
+  if (offline) return
+  let status = codexAuthStatus(homeDir)
+  if (status.status === 'active') return
+  if (flags.yes) {
+    throw new Error('Codex subscription login required; run `harness auth login openai --method browser`')
+  }
+  const answer = await io.readLine('Authenticate OpenAI Codex subscription now? [Y/n]: ')
+  if (answer.trim().toLowerCase() === 'n') throw new Error('Codex subscription login required; run `harness auth login openai --method browser`')
+  const code = await runAuthCommand(['login', 'openai', '--method', 'browser'], { homeDir, io: { ...io, error: io.write } })
+  if (code !== 0) throw new Error('Codex subscription login failed')
+  status = codexAuthStatus(homeDir)
+  if (status.status !== 'active') throw new Error('Codex subscription login incomplete')
 }
 
 async function resolveAnthropicModels({
