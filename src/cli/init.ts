@@ -2,11 +2,12 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFile
 import { homedir } from 'os'
 import { createInterface } from 'readline'
 import { join } from 'path'
-import { MODEL_REGISTRY, listModels } from '../models/registry.js'
+import { FALLBACK_PRICES, MODEL_REGISTRY, listModels } from '../models/registry.js'
 import type { ModelInfo } from '../types.js'
 import { loadProfile } from '../profiles/loader.js'
 import { ProfileSchema, type Profile } from '../profiles/schema.js'
 import { codexAuthStatus } from '../provider/auth/store.js'
+import { createProviderClient } from '../provider/client.js'
 import { load as loadYaml } from 'js-yaml'
 import { loadStartupProfiles } from '../server/profile-startup.js'
 import { readUserConfig, writeUserConfig } from '../config/user-config.js'
@@ -35,6 +36,30 @@ interface InitFlags { yes: boolean; offline: boolean; reconfigure: boolean; prof
 
 const SURFACES = ['tui', 'cli', 'web'] as const
 
+const WIZARD_STEPS = ['Use case', 'Provider', 'Model', 'Credentials', 'Surface', 'Health'] as const
+const WIZARD_TOTAL_STEPS = WIZARD_STEPS.length
+
+const THEME = {
+  dim: '\u001b[90m',
+  accent: '\u001b[38;5;81m',
+  ok: '\u001b[32m',
+  warn: '\u001b[33m',
+  error: '\u001b[31m',
+  bold: '\u001b[1m',
+  reset: '\u001b[0m',
+}
+
+interface InitWizardUI {
+  step: (index: number, label: string) => void
+  panel: (title: string, lines: string[]) => void
+  status: (label: string, value: string) => void
+  prompt: (label: string, fallback: string) => Promise<string>
+  readSecret: (label: string) => Promise<string>
+  check: (name: string, ok: boolean, detail: string, fix?: string) => void
+  done: (surface: string) => void
+  plain: (line: string) => void
+}
+
 export async function runInit(args: string[] = [], options: InitOptions = {}): Promise<number> {
   const flags = parseFlags(args)
   const homeDir = options.homeDir ?? homedir()
@@ -42,8 +67,14 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
   const io = options.io ?? defaultIO()
   const close = io.close
   const now = options.now ?? (() => new Date())
+  const ui = createInitUI(io)
 
   try {
+    ui.plain('')
+    ui.plain(`${THEME.accent}${THEME.bold}[Harness Setup]${THEME.reset}`)
+    ui.plain(`${THEME.dim}Guided first-run onboarding in terminal${THEME.reset}`)
+    ui.step(0, 'Start')
+
     const existing = readUserConfig(homeDir)
     if (flags.reconfigure) {
       backupFile(userConfigPath(homeDir), now, io)
@@ -59,30 +90,34 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       ? registry.profiles.get(flags.profile)
       : flags.yes
         ? useCases[0]
-        : await chooseProfile(useCases, io)
+        : await chooseProfile(useCases, ui)
     if (!selected) throw new Error(`unknown profile "${flags.profile}"; available: ${[...registry.profiles.keys()].sort().join(', ')}`)
 
     let profile = selected
-    io.write(`\nSelected profile: ${profile.name}`)
+    ui.step(1, 'Use case')
+    ui.status('Profile', profile.name)
     const isCodex = profile.model.auth === 'codex_oauth'
     const defaultProvider = isCodex ? 'OpenAI Codex subscription' : providerForBaseUrl(profile.model.base_url!)
-    const provider = flags.yes ? defaultProvider : await chooseProvider(defaultProvider, io)
+    ui.step(2, 'Provider')
+    const provider = flags.yes ? defaultProvider : await chooseProvider(defaultProvider, ui)
     let selectedModel: Profile['model']
     if (provider === 'OpenAI Codex subscription') {
       const catalogProfile = { ...profile, model: { auth: 'codex_oauth' as const, id: profile.model.id, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } } }
       const models = listModels(catalogProfile)
       const defaultModel = models.some(item => item.id === profile.model.id) ? profile.model.id : models[0].id
-      const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, io)
+      const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
       if (!models.some(item => item.id === model)) throw new Error('Choose a model from the Codex compatibility catalog')
       selectedModel = { auth: 'codex_oauth', id: model, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } }
       const status = codexAuthStatus(homeDir)
-      io.write(`Codex subscription: ${status.status}. Login uses harness auth login openai --method browser.`)
+      ui.step(3, 'Model')
+      ui.status('Model', model)
+      ui.status('Codex subscription', status.status)
     } else {
       const currentUrl = profile.model.base_url ?? 'https://api.openai.com/v1'
-      const baseUrl = provider === 'Other OpenAI-compatible' ? await ask(io, 'Base URL', currentUrl) : baseUrlForProvider(provider, currentUrl)
-      const models = MODEL_REGISTRY.filter(model => model.provider === provider)
-      const defaultModel = models.some(model => model.id === profile.model.id) ? profile.model.id : models[0]?.id ?? profile.model.id
-      const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, io)
+      const baseUrl = provider === 'Other OpenAI-compatible' ? await ask('Base URL', currentUrl, ui) : baseUrlForProvider(provider, currentUrl)
+      ui.step(3, 'Model')
+      ui.status('Provider', provider)
+      ui.status('Base URL', baseUrlForProvider(provider, currentUrl))
       const apiKeyEnv = provider === 'Anthropic' ? 'ANTHROPIC_API_KEY' : provider === 'OpenAI' ? 'OPENAI_API_KEY' : profile.model.api_key_env ?? 'OPENAI_API_KEY'
       const ambientKey = environment[apiKeyEnv]
       loadUserEnv(homeDir, environment)
@@ -90,13 +125,30 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       if (!ambientKey || flags.reconfigure) {
         if (flags.yes && !key) throw new Error(`API key required for ${apiKeyEnv}; rerun without --yes`)
         if (!flags.yes) {
-          key = await io.readSecret(`\nAPI key for ${apiKeyEnv}: `)
+          key = await ui.readSecret(`API key for ${apiKeyEnv}`)
           if (!key) throw new Error(`API key required for ${apiKeyEnv}`)
           if (!flags.reconfigure) backupFile(userEnvPath(homeDir), now, io, true)
           writeUserEnv(apiKeyEnv, key, homeDir)
           environment[apiKeyEnv] = key
+          ui.status('API key', `${apiKeyEnv} (saved)`)
         }
       }
+      const staticModels = getStaticModelsForProvider(provider)
+      const models = await resolveLiveModels({
+        provider,
+        profile,
+        baseUrl,
+        environment,
+        offline: flags.offline,
+        staticModels,
+        key: key ?? '',
+        apiKeyEnv,
+      })
+      const defaultModel = models.some(model => model.id === profile.model.id) ? profile.model.id : models[0]?.id ?? profile.model.id
+      const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
+      ui.step(4, 'Credentials')
+      ui.status('Model', `${model} on ${baseUrl}`)
+      ui.status('API key source', ambientKey ? `${apiKeyEnv} (environment)` : `${apiKeyEnv} (saved)`)
       selectedModel = { auth: 'api_key', base_url: baseUrl, api_key_env: apiKeyEnv, id: model }
     }
     if ((profile.model.auth ?? 'api_key') !== selectedModel.auth || profile.model.base_url !== selectedModel.base_url || profile.model.api_key_env !== selectedModel.api_key_env || profile.model.id !== selectedModel.id) {
@@ -105,7 +157,9 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       else io.write('model change declined; keeping the existing profile model')
     }
 
-    const surface = flags.yes ? 'tui' : await chooseSurface(existing?.surface ?? 'tui', io)
+    const surface = flags.yes ? 'tui' : await chooseSurface(existing?.surface ?? 'tui', ui)
+    ui.step(5, 'Surface')
+    ui.status('Surface', surface)
     const config = {
       ...(existing ?? {}),
       version: 1 as const,
@@ -115,18 +169,25 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       initialised_at: now().toISOString(),
       harness_version: pkg.version,
     }
+    ui.panel('Runtime summary', [
+      `Profile: ${profile.name}`,
+      `Surface: ${surface}`,
+      `Provider: ${provider}`,
+      `Model: ${selectedModel.id}`,
+    ])
     writeUserConfig(config, homeDir)
-    io.write(`\nWrote ${join(homeDir, '.harness', 'config.json')} (default profile: ${profile.name})`)
+    ui.status('Config', `Wrote ${join(homeDir, '.harness', 'config.json')}`)
     if (existsSync(userEnvPath(homeDir))) io.write(`Wrote ${userEnvPath(homeDir)} (mode 0600)`)
 
-    io.write(flags.offline ? 'Checking… skipped (--offline)' : 'Checking…')
+    ui.step(6, 'Health checks')
+    ui.plain(flags.offline ? 'Checking… skipped (--offline)' : 'Checking…')
     const result = await (options.doctor ?? runDoctor)({ homeDir, environment, offline: flags.offline })
-    for (const check of result.checks) io.write(`${check.ok ? '✓' : '✗'} ${check.name}: ${check.detail}${check.ok ? '' : `; fix: ${check.fix}`}`)
+    for (const check of result.checks) ui.check(check.name, check.ok, check.detail, check.fix)
     if (!result.ok) return 1
-    io.write(`\nStart with: harness${surface === 'tui' ? '' : ` ${surface}`}`)
+    ui.done(surface)
     return 0
   } catch (error: any) {
-    io.write(`init failed: ${error?.message ?? String(error)}`)
+    uiError(io, `init failed: ${error?.message ?? String(error)}`)
     return 1
   } finally {
     close?.()
@@ -149,36 +210,196 @@ function parseFlags(args: string[]): InitFlags {
   return flags
 }
 
-async function chooseProfile(profiles: any[], io: InitIO): Promise<any> {
-  io.write('\n1. What will you mostly use this for?')
-  profiles.forEach((profile, index) => io.write(`  ${index + 1}. ${profile.use_case?.label ?? profile.name} — ${profile.use_case?.blurb ?? profile.description ?? 'Existing profile'} (${profile.name})`))
-  const answer = await io.readLine('Choose a use case [1]: ')
+async function chooseProfile(profiles: any[], ui: InitWizardUI): Promise<any> {
+  const entries = profiles.map((profile, index) => `  ${index + 1}. ${profile.use_case?.label ?? profile.name} — ${profile.use_case?.blurb ?? profile.description ?? 'Existing profile'} (${profile.name})`)
+  ui.panel('Use case', entries)
+  const answer = await ui.prompt('Choose a use case', '')
   return profiles[choiceIndex(answer, profiles.length, 0)]
 }
 
-async function chooseProvider(defaultProvider: string, io: InitIO): Promise<string> {
+async function chooseProvider(defaultProvider: string, ui: InitWizardUI): Promise<string> {
   const providers = ['Anthropic', 'OpenAI', 'Other OpenAI-compatible', 'OpenAI Codex subscription']
-  io.write('\n2. Provider?')
-  providers.forEach((provider, index) => io.write(`  ${index + 1}. ${provider}`))
-  const answer = await io.readLine(`Choose provider [${defaultProvider}]: `)
+  ui.panel('Provider', providers.map((provider, index) => `  ${index + 1}. ${provider}`))
+  const answer = await ui.prompt(`Choose provider [${defaultProvider}]`, '')
   if (!answer.trim()) return defaultProvider
   const index = choiceIndex(answer, providers.length, providers.indexOf(defaultProvider))
   return providers[index]
 }
 
-async function chooseModel(models: readonly ModelInfo[], defaultModel: string, io: InitIO): Promise<string> {
-  io.write('\n3. Model?')
-  models.slice(0, 12).forEach((model, index) => io.write(`  ${index + 1}. ${model.label} (${model.id})`))
-  const answer = await io.readLine(`Choose model [${defaultModel}]: `)
+function getStaticModelsForProvider(provider: string): readonly ModelInfo[] {
+  const lookup = provider === 'Other OpenAI-compatible' ? 'OpenAI' : provider
+  return MODEL_REGISTRY.filter(model => model.provider === lookup)
+}
+
+async function resolveLiveModels({
+  provider,
+  profile,
+  baseUrl,
+  environment,
+  offline,
+  staticModels,
+  key,
+  apiKeyEnv,
+}: {
+  provider: string
+  profile: Profile
+  baseUrl: string
+  environment: NodeJS.ProcessEnv
+  offline: boolean
+  staticModels: readonly ModelInfo[]
+  key: string
+  apiKeyEnv: string
+}): Promise<ModelInfo[]> {
+  if (!key || offline) return [...staticModels]
+  if (provider === 'Anthropic') {
+    return resolveAnthropicModels({
+      baseUrl,
+      apiKey: key,
+      staticModels,
+      fallbackId: profile.model.id,
+      providerLabel: provider,
+    })
+  }
+  try {
+    const client = createProviderClient({
+      ...profile,
+      model: {
+        ...profile.model,
+        auth: 'api_key',
+        id: profile.model.id,
+        base_url: baseUrl,
+        api_key_env: apiKeyEnv,
+      },
+    }, environment)
+    const response = await client.models.list()
+    const ids = (response.data ?? []).map((model: any) => (typeof model?.id === 'string' ? model.id : '')).filter((id: string): id is string => !!id)
+    if (!ids.length) return [...staticModels]
+    return materializeModels({
+      ids,
+      staticModels,
+      providerLabel: provider,
+      baseUrl,
+      fallbackId: profile.model.id,
+    })
+  } catch {
+    return [...staticModels]
+  }
+}
+
+async function resolveAnthropicModels({
+  baseUrl,
+  apiKey,
+  staticModels,
+  fallbackId,
+  providerLabel,
+}: {
+  baseUrl: string
+  apiKey: string
+  staticModels: readonly ModelInfo[]
+  fallbackId: string
+  providerLabel: string
+}): Promise<ModelInfo[]> {
+  try {
+    const endpoint = `${baseUrl.replace(/\/+$/, '')}/models`
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        accept: 'application/json',
+      },
+    })
+    if (!response.ok) return [...staticModels]
+    const body = await response.json()
+    const ids = extractModelIds(body)
+    if (!ids.length) return [...staticModels]
+    return materializeModels({
+      ids,
+      staticModels,
+      providerLabel,
+      baseUrl,
+      fallbackId,
+    })
+  } catch {
+    return [...staticModels]
+  }
+}
+
+function extractModelIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return []
+  if ('data' in payload) {
+    const maybe = (payload as { data?: unknown }).data
+    if (Array.isArray(maybe)) {
+      return maybe
+        .map(entry => typeof (entry as { id?: unknown }).id === 'string' ? String((entry as { id?: unknown }).id) : '')
+        .filter((value): value is string => Boolean(value))
+    }
+  }
+  if ('models' in payload) {
+    const maybe = (payload as { models?: unknown }).models
+    if (Array.isArray(maybe)) {
+      return maybe
+        .map(entry => typeof (entry as { id?: unknown }).id === 'string' ? String((entry as { id?: unknown }).id) : '')
+        .filter((value): value is string => Boolean(value))
+    }
+  }
+  return []
+}
+
+function materializeModels({
+  ids,
+  staticModels,
+  providerLabel,
+  baseUrl,
+  fallbackId,
+}: {
+  ids: string[]
+  staticModels: readonly ModelInfo[]
+  providerLabel: string
+  baseUrl: string
+  fallbackId: string
+}): ModelInfo[] {
+  const staticById = new Map(staticModels.map(model => [model.id, model]))
+  const models: ModelInfo[] = []
+  const seen = new Set<string>()
+  const addModel = (id: string): void => {
+    if (seen.has(id)) return
+    seen.add(id)
+    const known = staticById.get(id)
+    if (known) {
+      models.push({ ...known, available: true, reason: undefined })
+    } else {
+      models.push({
+        id,
+        label: id,
+        provider: providerLabel,
+        base_url: baseUrl,
+        context_window: 0,
+        input_price: FALLBACK_PRICES.input,
+        output_price: FALLBACK_PRICES.output,
+        tags: ['available'],
+        available: true,
+      })
+    }
+  }
+  for (const id of ids) addModel(id)
+  if (!seen.has(fallbackId)) addModel(fallbackId)
+  return models
+}
+
+async function chooseModel(models: readonly ModelInfo[], defaultModel: string, ui: InitWizardUI): Promise<string> {
+  const modelRows = models.slice(0, 12).map((model, index) => `  ${index + 1}. ${model.label} (${model.id})`)
+  ui.panel('Model', [...modelRows, '  free-form model id accepted if not in list'])
+  const answer = await ui.prompt(`Choose model [${defaultModel}]`, '')
   if (!answer.trim()) return defaultModel
   const index = Number.parseInt(answer, 10)
   if (Number.isInteger(index) && index >= 1 && index <= Math.min(models.length, 12)) return models[index - 1].id
   return models.find(model => model.id === answer.trim())?.id ?? defaultModel
 }
 
-async function chooseSurface(defaultSurface: string, io: InitIO): Promise<typeof SURFACES[number]> {
-  io.write('\n6. Preferred surface?  1. TUI  2. CLI  3. Web')
-  const answer = await io.readLine(`Choose surface [${defaultSurface}]: `)
+async function chooseSurface(defaultSurface: string, ui: InitWizardUI): Promise<typeof SURFACES[number]> {
+  ui.panel('Surface', ['1. TUI', '2. CLI', '3. Web'])
+  const answer = await ui.prompt(`Choose surface [${defaultSurface}]`, '')
   if (!answer.trim()) return SURFACES.includes(defaultSurface as any) ? defaultSurface as typeof SURFACES[number] : 'tui'
   const index = choiceIndex(answer, SURFACES.length, SURFACES.indexOf(defaultSurface as any))
   return SURFACES[index]
@@ -190,8 +411,8 @@ function choiceIndex(answer: string, length: number, fallback: number): number {
   return Number.isInteger(numeric) && numeric >= 1 && numeric <= length ? numeric - 1 : fallback
 }
 
-async function ask(io: InitIO, label: string, fallback: string): Promise<string> {
-  const answer = await io.readLine(`${label} [${fallback}]: `)
+async function ask(label: string, fallback: string, ui: InitWizardUI): Promise<string> {
+  const answer = await ui.prompt(`${label} [${fallback}]`, '')
   return answer.trim() || fallback
 }
 
@@ -290,4 +511,64 @@ function defaultIO(): InitIO {
     })
   }
   return { write: line => console.log(line), readLine, readSecret, close: () => rl.close() }
+}
+
+function uiError(io: InitIO, message: string): void {
+  io.write(`${THEME.error}[x]${THEME.reset} ${message}`)
+}
+
+function createInitUI(io: InitIO): InitWizardUI {
+  const ansi =
+    process.stdout?.isTTY === true &&
+    process.stderr?.isTTY !== false &&
+    process.env.TERM !== 'dumb'
+  const width = 64
+  const muted = (value: string) => ansi ? `${THEME.dim}${value}${THEME.reset}` : value
+  const accent = (value: string) => ansi ? `${THEME.accent}${value}${THEME.reset}` : value
+  const bright = (value: string) => ansi ? `${THEME.bold}${value}${THEME.reset}` : value
+  const bar = (step: number, total: number) => {
+    const safeStep = Math.max(0, Math.min(total, step))
+    const done = '#'.repeat(safeStep)
+    const remain = '.'.repeat(total - safeStep)
+    return `${done}${remain}`
+  }
+  const pad = (value: string, total: number) => value.length >= total ? value.slice(0, total) : `${value}${' '.repeat(total - value.length)}`
+  const frame = (title: string, body: string[]) => {
+    const top = `+${'-'.repeat(width - 2)}+`
+    const bottom = `+${'-'.repeat(width - 2)}+`
+    const middle = body.map(line => `| ${pad(line, width - 4)} |`)
+    return [accent(top), ...middle, accent(bottom)].join('\n')
+  }
+
+  return {
+    step: (index, label) => {
+      io.write('')
+      const resolved = WIZARD_STEPS[index - 1] ?? label
+      const title = index === 0 ? label : `${index}. ${resolved}`
+      io.write(frame(`${title}`, [
+        `${muted(`[${index}/${WIZARD_TOTAL_STEPS}]`)} ${bright(`${bar(index, WIZARD_TOTAL_STEPS)} ${label}`)}`,
+        '',
+      ]))
+      io.write('')
+    },
+    panel: (title, lines) => {
+      io.write('')
+      io.write(frame(`${title}`, [bright(title), ...lines]))
+      io.write('')
+    },
+    status: (label, value) => io.write(`${muted(label)}: ${accent(value)}`),
+    prompt: async (label, fallback) => {
+      const prompt = fallback ? `${label} [${fallback}]` : label
+      return io.readLine(`${muted(prompt)}: `)
+    },
+    readSecret: async (label) => io.readSecret(`${label}: `),
+    check: (name, ok, detail, fix) => io.write(`${ok ? `${THEME.ok}[ok]` : `${THEME.error}[x]`}${THEME.reset} ${name}: ${detail}${ok ? '' : ` ${THEME.warn}; fix: ${fix}${THEME.reset}`}`),
+    done: (surface) => {
+      io.write('')
+      io.write(bright(`Setup complete`))
+      io.write(`${muted('Launch:')} ${THEME.ok}harness${surface === 'tui' ? '' : ` ${surface}`}${THEME.reset}`)
+      io.write(muted(`Tip: for the full UI, run "harness tui"`))
+    },
+    plain: (line) => io.write(line),
+  }
 }
