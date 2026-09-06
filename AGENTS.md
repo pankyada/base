@@ -48,6 +48,34 @@ See `CLAUDE.md` for the full architecture, key module table, commands, and profi
 - Do not merge to main with failing tests or typecheck errors
 - Do not add npm packages without a clear reason — the stdlib is preferred
 
+## Feature completion release gate
+
+Every completed feature must finish the full release loop before handoff:
+
+1. Run the relevant tests, then the full validation suite, typecheck, build,
+   boundary guard, and Go/Web checks when those surfaces are affected.
+2. Classify the version bump without waiting for approval: use **patch** for
+   fixes, documentation, tests, and internal changes; use **minor** for
+   backward-compatible user-visible features; use **major** for breaking
+   protocol, config, CLI, or runtime changes.
+3. If the bump class is genuinely ambiguous or major-impacting, ask the user
+   before release. Otherwise choose the smallest correct bump.
+4. Commit the feature in scoped logical commit(s). Then run
+   `pnpm release <patch|minor|major>`; this creates the version commit/tag and
+   pushes `main` plus the release tag.
+5. Confirm GitHub Actions release build/publish succeeded. Deploy the latest
+   artifacts through the repository's documented target (`scripts/install.sh`
+   for local installs, Docker/Compose for container deployments, or the
+   configured hosting workflow). Preserve profile, data, CWD, and secrets.
+6. Verify deployed CLI/server/TUI versions, server health, and the relevant
+   live surface. Report implementation, release, deployment, and live
+   acceptance separately; never treat tests as live acceptance.
+
+Do not leave a feature described as complete while its required release,
+deployment, or verification gate remains pending. Inspect existing processes
+and ports before restart; restart only the intended service with its existing
+profile and working directory.
+
 ## Workflow routing
 
 Adaptive workflow is profile-optional. Playbooks under

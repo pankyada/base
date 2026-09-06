@@ -90,6 +90,7 @@ export interface State {
   currentModel?: string
   currentEffort?: string | null
   providerScope?: string
+  modelEffortSelection?: boolean
   profiles?: ProfileInfo[]
   allowedPackages?: string[]
   approvalMode?: ApprovalMode
@@ -199,7 +200,7 @@ export function reducer(state: State, action: Action): State {
         case 'tool_auto_approved': return { ...state, notices: [...(state.notices ?? []), { level: 'info', message: msg.name + ' auto-approved · scope: ' + msg.scope }] }
         case 'input_request': return { ...state, pendingInputRequest: { id: msg.id, prompt: msg.prompt, kind: msg.kind, options: msg.options } }
         case 'todos': return { ...state, todos: msg.todos }
-        case 'session_ready': return { ...state, profile: msg.profile, sessionId: msg.sessionId, currentModel: msg.model, currentEffort: msg.effort, providerScope: msg.provider_scope, allowedPackages: msg.allowed_packages ?? [], providerStatus: msg.provider_status, budget: msg.budget ? { cost: state.costUsd ?? 0, limit: msg.budget.max_cost_usd } : undefined, approvalMode: state.approvalMode }
+        case 'session_ready': return { ...state, profile: msg.profile, sessionId: msg.sessionId, currentModel: msg.model, currentEffort: msg.effort, providerScope: msg.provider_scope, modelEffortSelection: msg.capabilities?.model_effort_selection ?? false, allowedPackages: msg.allowed_packages ?? [], providerStatus: msg.provider_status, budget: msg.budget ? { cost: state.costUsd ?? 0, limit: msg.budget.max_cost_usd } : undefined, approvalMode: state.approvalMode }
         case 'stats': {
           const next = { ...state, tokens: { in: msg.tokens_in, out: msg.tokens_out }, costUsd: msg.cost_usd, usage: msg.usage ?? state.usage, budget: state.budget ? { ...state.budget, cost: msg.cost_usd } : undefined, context: { tokens: msg.context_tokens ?? state.context?.tokens ?? 0, window: msg.context_window ?? state.context?.window } }
           return withLane(next, msg.run_id, current => ({ ...current, stats: { tokensIn: msg.tokens_in, tokensOut: msg.tokens_out, costUsd: msg.cost_usd } }))

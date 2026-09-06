@@ -59,6 +59,14 @@ describe('protocol reducer', () => {
     expect(state.runs?.['budget-run']?.status).toBe('budget_exceeded')
   })
 
+  it('gates effort controls from the server capability handshake', () => {
+    const state = reducer(base, { type: 'SERVER_MSG', payload: {
+      type: 'session_ready', sessionId: 's', profile: 'test', yolo: false,
+      capabilities: { model_effort_selection: true }, model: 'gpt-6-astra', effort: null,
+    } })
+    expect(state.modelEffortSelection).toBe(true)
+  })
+
   it('retains server-owned runtime and mission receipts for attached clients', () => {
     let state = reducer(base, { type: 'SERVER_MSG', payload: { type: 'runtime', snapshot: { session_id: 's', user: 'u', revision: 2, status: 'running', last_seq: 4, events: [], gap: false } } })
     state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'mission', mission: { id: 'm', status: 'accepted', revision: 2, outcome: 'ship', criteria: [{ id: 'c', description: 'works', state: 'verified' }] }, receipts: [{ id: 'r' }] } })

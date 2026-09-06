@@ -30,6 +30,34 @@ pnpm test:watch                 # vitest watch
 npx vitest run tests/agent-loop.test.ts   # single test file
 ```
 
+## Mandatory feature completion release loop
+
+After every feature is complete, finish release and deployment before handing
+off the work:
+
+1. Run relevant tests plus the full suite, typecheck, build, boundary guard,
+   and affected Go/Web validation.
+2. Choose the smallest correct version bump automatically: **patch** for
+   fixes/docs/tests/internal changes, **minor** for backward-compatible
+   user-visible features, and **major** for breaking protocol/config/CLI/
+   runtime changes. Ask the user only when the classification is ambiguous or
+   the change is major-impacting.
+3. Create scoped implementation commit(s). Run
+   `pnpm release <patch|minor|major>` afterward. The release script creates
+   the version commit, tag, and pushes `main` plus the tag to `origin`.
+4. Wait for the GitHub Actions release workflow to build and publish assets.
+   Deploy the latest artifact using the documented deployment target:
+   `scripts/install.sh --no-init` for local binaries, Docker/Compose for
+   containers, or the configured hosting workflow for a hosted client.
+5. Inspect the current process/port before restarting. Preserve the existing
+   profile, data directory, secrets, CWD, and service boundary. Verify binary
+   versions, `/health`, and the relevant live client after deployment.
+
+Separate implementation status, committed/released status, deployed runtime
+status, and live/user acceptance status in the final report. Passing tests do
+not replace live acceptance. Never claim completion while a required build,
+push, deployment, or verification gate is pending.
+
 All entry points are in `dist/` after build; binary aliases are `harness`, `harness-server`, `harness-tui`.
 
 ## Architecture

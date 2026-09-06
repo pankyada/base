@@ -24,6 +24,7 @@ import { NotebookCell } from './data/NotebookCell'
 import { Rail } from './chrome/Rail'
 import { StageStrip } from './turn/StageStrip'
 import { Toasts } from './chrome/Toasts'
+import { ModelEffortSidebar } from './ModelEffortSidebar'
 import { useSharedHarnessWS } from './chrome/SocketProvider'
 import { escapeHtml, sessionToHtml } from '../lib/export'
 
@@ -219,6 +220,13 @@ export function HarnessApp() {
           </div>
         )}
       </div>
+      <ModelEffortSidebar
+        models={state.models}
+        currentModel={state.currentModel}
+        currentEffort={state.currentEffort}
+        effortEnabled={state.modelEffortSelection}
+        onSelect={(model, effort) => send({ type: 'set_model', model, effort, request_id: `web-sidebar-${Date.now()}` })}
+      />
       </div>
       </div>
 
