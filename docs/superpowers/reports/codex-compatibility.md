@@ -1,6 +1,6 @@
 # Codex compatibility evidence
 
-Updated 2026-09-06. Experimental implementation; no live account acceptance recorded.
+Updated 2026-09-06. Live catalog discovery verified; inference and billing acceptance remain separate gates.
 
 ## Source evidence
 
@@ -34,3 +34,18 @@ Still pending:
 6. Verify logout, restart/reconnect and reconnect-required behavior. Windows callback launch, filesystem ACLs and process-lock behavior require separate Windows acceptance.
 
 No deployment, live login, live inference or account billing inspection has been performed during the implementation work recorded so far.
+
+## Live catalog discovery (2026-09-06)
+
+The authenticated Base onboarding request returned HTTP 400 when `client_version`
+was omitted. Using Base's application version returned an empty catalog. The
+catalog now sends the explicit Codex protocol compatibility version `0.153.4`,
+with truthful `originator: base` and `user-agent: base/<version>` headers.
+Source: [official Codex models endpoint, rust-v0.153.4](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/codex-api/src/endpoint/models.rs).
+
+Read-only verification through `runInit` returned seven selectable model IDs:
+`gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`,
+`gpt-5.4-mini`, and `gpt-5.3-codex-spark`. Provider entries marked `visibility:
+hide` are excluded from the picker. Verification stopped before applying any
+profile/config changes. This establishes account catalog discovery only, not
+inference compatibility for every listed model.

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
+import { writeCodexCredential } from '../src/provider/auth/store.js'
 import { readUserConfig } from '../src/config/user-config.js'
 import { userEnvPath } from '../src/config/user-env.js'
 import { runInit, type InitDoctor, type InitIO } from '../src/cli/init.js'
@@ -139,5 +140,23 @@ it('loads every Anthropic page before selection', async () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[1][0])).toContain('after_id=claude-first')
     expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('id: claude-last')
+  } finally { fetchMock.mockRestore(); rmSync(home, { recursive: true, force: true }) }
+})
+
+it('requests the Codex catalog with a protocol version and displays selectable slugs', async () => {
+  const home = fixtureHome()
+  await writeCodexCredential({ kind: 'codex_oauth', access_token: 'fixture-token', refresh_token: 'fixture-refresh', account_id: 'fixture-account', expires_at: Date.now() + 3600000 }, home)
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+    const url = new URL(String(input))
+    if (url.searchParams.get('client_version') !== '0.153.4') return new Response('missing client_version', { status: 400 })
+    return new Response(JSON.stringify({ models: [{ slug: 'gpt-6-astra', visibility: 'list' }, { slug: 'internal-review', visibility: 'hide' }, { slug: 'gpt-5.6-sol', visibility: 'list' }] }))
+  })
+  try {
+    const lines: string[] = []
+    expect(await runInit([], { homeDir: home, environment: {}, io: io(lines, ['1', '4', '2', 'y', '1']), doctor })).toBe(0)
+    expect(lines.join('\n')).toContain('gpt-6-astra')
+    expect(lines.join('\n')).not.toContain('internal-review')
+    expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('id: gpt-5.6-sol')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   } finally { fetchMock.mockRestore(); rmSync(home, { recursive: true, force: true }) }
 })

@@ -321,35 +321,38 @@ async function resolveCodexModels({
   if (offline) return [...staticModels]
   const record = readCodexAuth(homeDir)
   if (!record?.credential) return [...staticModels]
-  const endpoints = [
-    `${CODEX_API_ENDPOINT.replace(/\/responses$/, '')}/models`,
-    `${new URL(CODEX_API_ENDPOINT).origin}/backend-api/codex/models`,
-  ]
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        signal: AbortSignal.timeout(10000),
-        headers: {
-          authorization: `Bearer ${record.credential.access_token}`,
-          'chatgpt-account-id': record.credential.account_id,
-          accept: 'application/json',
-        },
-      })
-      if (!response.ok) continue
-      const body = await response.json()
-      const ids = extractModelIds(body)
-      if (!ids.length) continue
-      return materializeModels({
-        ids,
-        staticModels,
-        providerLabel: 'OpenAI Codex subscription',
-        baseUrl: '',
-      })
-    } catch { continue }
+  // Codex catalog protocol version, independent of Base's package version.
+  // Source: openai/codex rust-v0.153.4, codex-api/src/endpoint/models.rs.
+  const endpoint = new URL(`${CODEX_API_ENDPOINT.replace(/\/responses$/, '')}/models`)
+  endpoint.searchParams.set('client_version', '0.153.4')
+  report('Fetching models from OpenAI Codex subscription…')
+  try {
+    const response = await fetch(endpoint.toString(), {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        authorization: `Bearer ${record.credential.access_token}`,
+        'chatgpt-account-id': record.credential.account_id,
+        originator: 'base',
+        'user-agent': `base/${pkg.version}`,
+        accept: 'application/json',
+      },
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`)
+    const body = await response.json()
+    const selectable = Array.isArray(body.models)
+      ? { models: body.models.filter((model: any) => model?.visibility !== 'hide') }
+      : body
+    const ids = extractModelIds(selectable)
+    if (!ids.length) throw new Error('Provider returned no selectable models')
+    return materializeModels({ ids, staticModels, providerLabel: 'OpenAI Codex subscription', baseUrl: '' })
+  } catch (error) {
+    // Do not print raw provider bodies or credentials.
+    const detail = error instanceof Error && /^(HTTP \d{3}|Provider returned)/.test(error.message)
+      ? error.message : 'Network request failed or timed out'
+    report(`Codex model discovery unavailable (${detail}): showing bundled models.`)
+    return [...staticModels]
   }
-  report('Codex model discovery unavailable: showing bundled models.')
-  return [...staticModels]
 }
 
 async function ensureCodexAuthentication({
