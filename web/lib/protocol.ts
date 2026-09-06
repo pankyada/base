@@ -16,6 +16,26 @@ export type InputRequestKind = 'text' | 'select' | 'multi_select'
 export type ApprovalMode = 'strict' | 'bash' | 'danger' | 'yolo'
 export type RiskLevel = 'safe' | 'caution' | 'danger'
 
+export type EffortCapabilityStatus = 'supported' | 'unsupported' | 'unknown'
+export type EffortCapabilitySource = 'live' | 'documented' | 'cache'
+
+export interface EffortOption {
+  value: string
+  label: string
+  description?: string
+  selectable: boolean
+  unavailable_reason?: string
+}
+
+export interface EffortCapability {
+  status: EffortCapabilityStatus
+  options: EffortOption[]
+  provider_default?: string
+  source: EffortCapabilitySource
+  checked_at: string
+  stale: boolean
+}
+
 /**
  * A unit of generated UI handed to a browser client for rendering inside an
  * isolated surface. The runtime never executes any of these fields — they are
@@ -54,6 +74,9 @@ export interface ModelInfo {
   tags: string[]
   available: boolean
   reason?: string
+  effort?: EffortCapability
+  /** Opaque, server-issued scope. Never an account id or credential. */
+  provider_scope?: string
 }
 
 export interface ProfileInfo {
@@ -267,7 +290,7 @@ export type ClientMessage =
   | { type: 'project_assign'; sessionId: string; projectId: string }
   | { type: 'session_list'; projectId?: string }
   | { type: 'models_list' }
-  | { type: 'set_model'; model: string }
+  | { type: 'set_model'; model: string; effort?: string | null; request_id?: string }
   | { type: 'profiles_list' }
   | { type: 'set_approval_mode'; mode: ApprovalMode }
   | { type: 'skills_list' }
@@ -303,7 +326,7 @@ export type ServerMessage =
   | { type: 'tool_parked'; id: string; name: string; input: Record<string, unknown>; agent_id?: string; run_id?: string }
   | { type: 'tool_prompt'; id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; preview?: unknown; agent_id?: string; run_id?: string }
   | { type: 'tool_auto_approved'; id: string; name: string; scope: 'session'; agent_id?: string; run_id?: string }
-  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; working_dir?: string; allowed_packages?: string[]; budget?: { max_cost_usd: number }; yolo: boolean; protocol_version?: number; provider_status?: ProviderStatus }
+  | { type: 'session_ready'; sessionId: string; profile: string; model?: string; effort?: string | null; provider_scope?: string; capabilities?: { model_effort_selection?: boolean }; working_dir?: string; allowed_packages?: string[]; budget?: { max_cost_usd: number }; yolo: boolean; protocol_version?: number; provider_status?: ProviderStatus }
   | { type: 'session_end'; sessionId: string; agent_id?: string; run_id?: string; status?: 'completed' | 'budget_exceeded' | 'cancelled' | 'failed'; reason?: string }
   | { type: 'session_resumed'; agent_id?: string; sessionId: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; usage?: UsageMetadataWire; agent_id?: string; run_id?: string }
@@ -328,9 +351,9 @@ export type ServerMessage =
   | { type: 'project_created'; project: Project }
   | { type: 'projects'; projects: Project[] }
   | { type: 'sessions'; sessions: SessionSummary[] }
-  | { type: 'models'; models: ModelInfo[]; current: string }
+  | { type: 'models'; models: ModelInfo[]; current: string; effort?: string | null; provider_scope?: string; request_id?: string }
   | { type: 'profiles'; profiles: ProfileInfo[]; current: string }
-  | { type: 'model_changed'; model: string }
+  | { type: 'model_changed'; model: string; effort?: string | null; provider_scope?: string; request_id?: string }
   | { type: 'approval_mode_changed'; mode: ApprovalMode }
   | { type: 'skills'; proposed: SkillSummary[]; installed: SkillSummary[] }
   | { type: 'commands'; commands: CommandSummary[] }

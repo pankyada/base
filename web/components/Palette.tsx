@@ -2,7 +2,7 @@ import { useState, useEffect, KeyboardEvent } from 'react'
 import type { ApprovalMode, CommandSummary, ModelInfo, Project, SessionSummary } from '../lib/types'
 import type { ProfileInfo } from '../lib/protocol'
 
-export type PaletteMode = 'root' | 'project_switch' | 'project_new' | 'history' | 'history_all' | 'assign' | 'models' | 'profiles'
+export type PaletteMode = 'root' | 'project_switch' | 'project_new' | 'history' | 'history_all' | 'assign' | 'models' | 'effort' | 'profiles'
 
 export interface ModelRow { key: string; label: string; disabled: boolean; act: () => void }
 export function modelRows(models: ModelInfo[], onSetModel: (id: string) => void): ModelRow[] {
@@ -30,7 +30,7 @@ interface Props {
   onAssign: (projectId: string) => void
   models?: ModelInfo[]
   commands?: CommandSummary[]
-  onSetModel?: (model: string) => void
+  onSetModel?: (model: string, effort?: string | null) => void
   profiles?: ProfileInfo[]
   onSetProfile?: (name: string) => void
   approvalMode?: ApprovalMode
@@ -59,7 +59,7 @@ const MODE_LABEL: Record<PaletteMode, string> = {
   history: 'History',
   history_all: 'All history',
   assign: 'Move to project',
-  models: 'Switch model',
+  models: 'Switch model', effort: 'Choose effort',
   profiles: 'Switch profile',
 }
 
@@ -68,6 +68,7 @@ export function Palette(props: Props) {
   const [mode, setMode] = useState<PaletteMode>('root')
   const [filter, setFilter] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [effortModel, setEffortModel] = useState<ModelInfo | null>(null)
 
   // Fetch data on entering a data-backed mode.
   useEffect(() => {
@@ -104,7 +105,14 @@ export function Palette(props: Props) {
       .filter(h => (h.title ?? h.id).toLowerCase().includes(lower))
       .map(h => ({ key: h.id, label: h.title ?? h.id.slice(0, 8), group: h.summary, act: () => { props.onResume(h.id, h.project); onClose() } }))
   } else if (mode === 'models') {
-    rows = modelRows(props.models ?? [], model => { props.onSetModel?.(model); onClose() })
+    rows = (props.models ?? []).map(model => ({ key: model.id, label: `${model.label} · $${model.input_price}/$${model.output_price}${model.available ? '' : ` · unavailable${model.reason ? ` (${model.reason})` : ''}`}`, disabled: !model.available, act: () => {
+      if (!model.available) return
+      if (model.effort?.status === 'supported') { setEffortModel(model); setMode('effort'); setFilter(''); return }
+      props.onSetModel?.(model.id); onClose()
+    }}))
+  } else if (mode === 'effort') {
+    const options = effortModel?.effort?.options ?? []
+    rows = [{ key: 'default', label: 'Default · provider decides', act: () => { props.onSetModel?.(effortModel?.id ?? '', null); onClose() } }, ...options.map(option => ({ key: option.value, label: `${option.label}${option.description ? ` · ${option.description}` : ''}${option.selectable ? '' : ` · ${option.unavailable_reason ?? 'unavailable'}`}`, act: () => { if (option.selectable) { props.onSetModel?.(effortModel?.id ?? '', option.value); onClose() } } }))]
   } else if (mode === 'profiles') {
     rows = profileRows(props.profiles ?? [], name => { props.onSetProfile?.(name); onClose() })
   }

@@ -149,14 +149,15 @@ it('requests the Codex catalog with a protocol version and displays selectable s
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
     const url = new URL(String(input))
     if (url.searchParams.get('client_version') !== '0.153.4') return new Response('missing client_version', { status: 400 })
-    return new Response(JSON.stringify({ models: [{ slug: 'gpt-6-astra', visibility: 'list' }, { slug: 'internal-review', visibility: 'hide' }, { slug: 'gpt-5.6-sol', visibility: 'list' }] }))
+    return new Response(JSON.stringify({ models: [{ slug: 'gpt-6-astra', visibility: 'list' }, { slug: 'internal-review', visibility: 'hide' }, { slug: 'gpt-5.6-sol', visibility: 'list', supported_reasoning_efforts: ['low', 'medium', 'high'], default_reasoning_effort: 'low' }] }))
   })
   try {
     const lines: string[] = []
-    expect(await runInit([], { homeDir: home, environment: {}, io: io(lines, ['1', '4', '2', 'y', '1']), doctor })).toBe(0)
+    expect(await runInit([], { homeDir: home, environment: {}, io: io(lines, ['1', '4', '2', '3', 'y', '1']), doctor })).toBe(0)
     expect(lines.join('\n')).toContain('gpt-6-astra')
     expect(lines.join('\n')).not.toContain('internal-review')
     expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('id: gpt-5.6-sol')
+    expect(readFileSync(join(home, '.harness/profiles/coding.yaml'), 'utf8')).toContain('reasoning_effort: medium')
     expect(fetchMock).toHaveBeenCalledTimes(1)
   } finally { fetchMock.mockRestore(); rmSync(home, { recursive: true, force: true }) }
 })

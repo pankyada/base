@@ -192,6 +192,11 @@ func modelBody(models []protocol.ModelInfo, cursor int, filter string, custom bo
 		label := truncate(model.Label, labelWidth)
 		id := truncate(model.ID, idWidth)
 		meta := fmt.Sprintf("%s ctx · $%.2f/$%.2f per Mtok", compactNumber(model.ContextWindow), model.InputPrice*1_000_000, model.OutputPrice*1_000_000)
+		if model.Effort != nil && model.Effort.Status == "unknown" {
+			meta += " · effort unknown"
+		} else if model.Effort != nil && model.Effort.Status == "unsupported" {
+			meta += " · effort unavailable"
+		}
 
 		labelStyle, idStyle := StText, StDim
 		if !model.Available {
@@ -227,6 +232,36 @@ func modelPicker(models []protocol.ModelInfo, cursor int, filter string, custom 
 	return modalFrame(StAccentB.Render("MODEL")+"\n"+
 		modelBody(models, cursor, filter, custom, customInput, modalInnerWidth(width))+"\n\n"+
 		StDim.Render("↑/↓ choose · / filter · enter apply · esc close"), width, height)
+}
+
+func effortBody(model string, options []protocol.EffortOption, cursor, innerWidth int) string {
+	lines := []string{StDim.Render("model: " + model), StDim.Render("provider effort · Default omits effort parameter"), ""}
+	for i, option := range options {
+		marker := "  "
+		if i == cursor {
+			marker = StAccent.Render("› ")
+		}
+		label := option.Label
+		if option.Value != "" {
+			label += "  " + StDim.Render(option.Value)
+		}
+		if !option.Selectable {
+			label = StFaint.Render(label + " · " + option.UnavailableReason)
+		} else if i == cursor {
+			label = StAccentB.Render(label)
+		}
+		lines = append(lines, marker+label)
+		if i == cursor && option.Description != "" {
+			lines = append(lines, "   "+StDim.Render(truncate(option.Description, maxInt(0, innerWidth-3))))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func effortPicker(model string, options []protocol.EffortOption, cursor, width, height int) string {
+	return modalFrame(StAccentB.Render("MODEL · EFFORT")+"\n"+
+		effortBody(model, options, cursor, modalInnerWidth(width))+"\n\n"+
+		StDim.Render("↑/↓ choose · enter apply · esc back"), width, height)
 }
 
 func sessionBody(sessions []protocol.SessionSummary, cursor, innerWidth int) string {

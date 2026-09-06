@@ -45,10 +45,11 @@ import { writeArtifact } from '../workflow/artifacts.js'
 import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { discoverProfileModels } from '../models/discovery.js'
 import { listModels } from '../models/registry.js'
+import { validateEffortSelection } from '../models/effort.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
-import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type InputRequestKind, type UsageMetadataWire } from '../types.js'
+import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type EffortCapability, type InputRequestKind, type UsageMetadataWire } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
@@ -393,6 +394,8 @@ async function main() {
     let approvalLimit: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let connectionModel = profile.model.id
     let connectionModels = listModels(profile)
+    let connectionModelCapabilities: Record<string, EffortCapability> = Object.fromEntries(connectionModels.flatMap(model => model.effort ? [[model.id, model.effort] as const] : []))
+    let connectionEffort: string | null = profile.model.auth === 'codex_oauth' ? (profile.model.reasoning_effort ?? profile.model.codex.reasoning_effort ?? null) : null
     let modelCatalogRequest = 0
     let miningSkills = false
     let safetyDisclosed = false
@@ -411,7 +414,10 @@ async function main() {
     try { controllerLease = sessionRuntime.claim(controllerId).lease } catch { /* another controller may own an attached session */ }
 
     const rebuildConnectionProfile = () => {
-      connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
+      const model = baseProfile.model.auth === 'codex_oauth'
+        ? { ...baseProfile.model, id: connectionModel, reasoning_effort: connectionEffort ?? undefined, codex: { ...baseProfile.model.codex, reasoning_effort: undefined } }
+        : { ...baseProfile.model, id: connectionModel }
+      connectionProfile = { ...baseProfile, model }
       connectionProvider = createProvider(connectionProfile)
       connectionRawProvider = connectionProvider
       connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
@@ -431,11 +437,15 @@ async function main() {
       flushConnectionUsage()
       baseProfile = selected
       connectionModels = listModels(selected)
+      connectionModelCapabilities = Object.fromEntries(connectionModels.flatMap(model => model.effort ? [[model.id, model.effort] as const] : []))
       modelCatalogRequest += 1
       connectionProfile = selected
       approvalLimit = resolveApprovalLimit(connectionProfile)
       approvalMode = approvalLimit
       connectionModel = connectionProfile.model.id
+      connectionEffort = connectionProfile.model.auth === 'codex_oauth'
+        ? (connectionProfile.model.reasoning_effort ?? connectionProfile.model.codex.reasoning_effort ?? null)
+        : null
       connectionProvider = createProvider(connectionProfile)
       connectionRawProvider = connectionProvider
       connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
@@ -531,7 +541,10 @@ async function main() {
         : { auth: 'api_key' as const, status: 'active' as const }
       send({
         type: 'session_ready', sessionId: session.id, profile: connectionProfile.name,
-        model: connectionProfile.model.id, working_dir: connectionProfile.working_dir,
+        model: connectionProfile.model.id, effort: connectionEffort,
+        provider_scope: connectionModels.find(model => model.id === connectionModel)?.provider_scope,
+        capabilities: { model_effort_selection: connectionProfile.model.auth === 'codex_oauth' },
+        working_dir: connectionProfile.working_dir,
         allowed_packages: connectionProfile.executor?.allowed_packages ?? [],
         ...(budget ? { budget: { max_cost_usd: budget.max_cost_usd } } : {}),
         yolo: isYoloEnabled(approvalMode), protocol_version: protocolVersion, provider_status: providerStatus,
@@ -573,6 +586,7 @@ async function main() {
       maintenanceControllers.add(operationController)
       const context: ToolContext = {
         profile: connectionProfile,
+        modelCapabilities: connectionModelCapabilities,
         session,
         workingDir: connectionProfile.working_dir,
         memory,
@@ -646,7 +660,7 @@ async function main() {
       try {
         const agentTools = await loadAgentTools(connectionProfile)
         const previewContext: ToolContext = {
-          profile: connectionProfile, session: previewSession, workingDir: connectionProfile.working_dir, memory: previewMemory, skills, mcpEntries,
+          profile: connectionProfile, modelCapabilities: connectionModelCapabilities, session: previewSession, workingDir: connectionProfile.working_dir, memory: previewMemory, skills, mcpEntries,
           events: planEvents, openai: connectionOpenai, provider: connectionProvider, signal: abortController.signal, delegateDepth: 0, agentTools,
           maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode, channels: connectionChannels, runId,
           pendingInputs: pendingStore,
@@ -742,7 +756,7 @@ async function main() {
       const context: ToolContext = parentContext
         ? { ...parentContext, signal: abortController.signal, agentOrigin: 'operator', taintSources: session.taint_sources, agentControllers }
         : {
-            profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
+            profile: connectionProfile, modelCapabilities: connectionModelCapabilities, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
             events: fleetEvents(runId), openai: connectionOpenai, provider: connectionRawProvider, signal: abortController.signal, delegateDepth: 0,
             agentTools: connectionAgentTools, maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode,
             channels: connectionChannels, runId, pendingInputs: pendingStore, budget: operatorBudget,
@@ -1064,8 +1078,9 @@ async function main() {
         }
         if (baseProfile !== selectedProfile || request !== modelCatalogRequest || ws.readyState !== WebSocket.OPEN) return
         connectionModels = models
+        connectionModelCapabilities = Object.fromEntries(models.flatMap(model => model.effort ? [[model.id, model.effort] as const] : []))
         for (const message of notices.filter(message => /unavailable|No API key/.test(message))) send({ type: 'notice', level: 'warn', message })
-        send({ type: 'models', models, current: connectionModel })
+        send({ type: 'models', models, current: connectionModel, effort: connectionEffort, provider_scope: models.find(model => model.id === connectionModel)?.provider_scope, request_id: String(request) })
         return
       }
 
@@ -1092,6 +1107,7 @@ async function main() {
               return
             }
             connectionModels = models
+            connectionModelCapabilities = Object.fromEntries(models.flatMap(model => model.effort ? [[model.id, model.effort] as const] : []))
             candidate = models.find(model => model.id === msg.model)
           } catch { /* retain the existing unavailable-model response */ }
         }
@@ -1106,9 +1122,20 @@ async function main() {
           }
           send({ type: 'notice', level: 'warn', message: `unknown model ${msg.model}`, detail: 'fallback pricing applies' })
         }
+        const selectedEffort = 'effort' in msg
+          ? (msg.effort ?? null)
+          : msg.model === connectionModel ? connectionEffort : null
+        const candidateCapability = candidate?.effort ?? connectionModelCapabilities[msg.model]
+        try {
+          validateEffortSelection(candidateCapability, selectedEffort)
+        } catch (error: any) {
+          send({ type: 'notice', level: 'error', message: `model/effort change refused for ${msg.model}`, detail: error.message })
+          return
+        }
         connectionModel = msg.model
+        connectionEffort = selectedEffort
         rebuildConnectionProfile()
-        send({ type: 'model_changed', model: connectionModel })
+        send({ type: 'model_changed', model: connectionModel, effort: connectionEffort, provider_scope: candidate?.provider_scope, request_id: msg.request_id })
         return
       }
 
@@ -1297,7 +1324,12 @@ async function main() {
           controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false
           baseProfile = profiles.get(loaded.profile) ?? baseProfile
           connectionProfile = baseProfile
+          connectionModels = listModels(baseProfile)
+          connectionModelCapabilities = Object.fromEntries(connectionModels.flatMap(model => model.effort ? [[model.id, model.effort] as const] : []))
           connectionModel = connectionProfile.model.id
+          connectionEffort = connectionProfile.model.auth === 'codex_oauth'
+            ? (connectionProfile.model.reasoning_effort ?? connectionProfile.model.codex.reasoning_effort ?? null)
+            : null
           connectionProvider = createProvider(connectionProfile)
           connectionRawProvider = connectionProvider
           connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
@@ -1429,7 +1461,7 @@ async function main() {
         await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
-          profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
+          profile: connectionProfile, modelCapabilities: connectionModelCapabilities, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
           events, openai: connectionOpenai, provider: connectionRawProvider, signal: runSignal, delegateDepth: 0,
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,

@@ -23,6 +23,7 @@ pointer to what replaced them.
 | ADR | Decision | Status | Area |
 |---|---|---|---|
 | [79](#adr-79) | Explicit Codex OAuth transport alongside API-key defaults | 🔄 | providers |
+| [80](#adr-80) | Model effort is catalog-scoped and atomically paired with model | 🔄 | providers/clients |
 | [1](#adr-1) | Profile-driven generic runtime | ✅ | foundations |
 | [2](#adr-2) | OpenAI-compatible client against any `base_url` | ✅ | foundations |
 | [3](#adr-3) | Four-level discovery, last-write-wins, for all extension points | ✅ | foundations |
@@ -1063,3 +1064,25 @@ children. Mock tests establish local contracts; live client registration,
 entitlement, continuation and billing acceptance remain separate gates.
 
 *Implementation checkpoint (2026-09-06):* Local experimental code and automated validation complete; live acceptance pending. See [acceptance evidence](superpowers/reports/codex-implementation-acceptance.md).
+
+### ADR-80
+
+**Model effort is catalog-scoped and atomically paired with model** — 🔄
+
+*Context:* Provider model names do not prove supported effort values. Setup,
+runtime clients, and the provider request must not drift or silently carry an
+incompatible setting across model changes.
+
+*Decision:* Preserve provider-advertised effort metadata on the shared model
+record, sanitize it, and keep unknown distinct from unsupported. `Default` is
+represented as `null` and omits the provider parameter. Runtime changes submit
+the complete model/effort pair; the server validates and acknowledges the pair
+atomically. Only acknowledged state may be persisted by clients, keyed by an
+opaque provider scope, profile, and model. Codex `ultra` remains visible but
+disabled until Base validates its tool ownership and budget behavior. No model
+family or transport wildcard may invent capabilities.
+
+*Consequences:* Old model-only clients remain valid, but cannot save an
+unacknowledged effort. Live catalogs can add models without a schema edit.
+Provider-specific inference probes and API/Anthropic native adapters remain
+separate acceptance gates.

@@ -365,6 +365,42 @@ func TestOverlayModelTabRejectsUnavailableModel(t *testing.T) {
 	}
 }
 
+func TestOverlayModelEffortSubpanelAppliesAtomicPair(t *testing.T) {
+	sender := &recordingSender{}
+	m := NewModel(sender, "coding", "tester", prefs.Preferences{})
+	m.openOverlay("model")
+	m.handleServerMessage(protocol.ServerMessage{Type: "models", Current: "gpt-6-astra", Models: []protocol.ModelInfo{
+		{ID: "gpt-6-astra", Label: "GPT-6 Astra", Available: true, Effort: &protocol.EffortCapability{Status: "supported", Options: []protocol.EffortOption{{Value: "low", Label: "Low", Selectable: true}, {Value: "ultra", Label: "Ultra", Selectable: false, UnavailableReason: "adapter"}}}},
+	}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.effortPicker || !m.overlayOpen {
+		t.Fatalf("effort subpanel did not open: picker=%v overlay=%v", m.effortPicker, m.overlayOpen)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	// Disabled Ultra remains visible and cannot apply.
+	messageCount := len(sender.messages)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.effortPicker || len(sender.messages) != messageCount {
+		t.Fatal("disabled effort applied")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.effortPicker || len(sender.messages) != messageCount+1 {
+		t.Fatalf("effort pair not sent: picker=%v messages=%d", m.effortPicker, len(sender.messages))
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "model_changed", Model: "gpt-6-astra", Effort: func() *string { value := "low"; return &value }(), ProviderScope: "scope-a"})
+	if m.model != "gpt-6-astra" || m.effort == nil || *m.effort != "low" {
+		t.Fatalf("ack not applied: model=%q effort=%v", m.model, m.effort)
+	}
+}
+
 func TestOverlayApprovalTabAppliesModeAndGuardsYolo(t *testing.T) {
 	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
 	m.openOverlay("approval")

@@ -13,6 +13,7 @@ func TestPreferencesRoundTrip(t *testing.T) {
 	want := Preferences{
 		ApprovalModeByProfile: map[string]string{"coding": "danger"},
 		ModelByProfile:        map[string]string{"coding": "gpt-5.4-mini"},
+		EffortByScopeProfileModel: map[string]*string{"scope\x00coding\x00gpt-5.4-mini": nil},
 		Theme:                 "amber",
 		RailHidden:            true,
 		OverlayTab:            "skills",

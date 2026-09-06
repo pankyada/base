@@ -64,16 +64,35 @@ type Artifact struct {
 }
 
 type ModelInfo struct {
-	ID            string   `json:"id"`
-	Label         string   `json:"label"`
-	Provider      string   `json:"provider"`
-	BaseURL       string   `json:"base_url"`
-	ContextWindow int      `json:"context_window"`
-	InputPrice    float64  `json:"input_price"`
-	OutputPrice   float64  `json:"output_price"`
-	Tags          []string `json:"tags"`
-	Available     bool     `json:"available"`
-	Reason        string   `json:"reason,omitempty"`
+	ID            string            `json:"id"`
+	Label         string            `json:"label"`
+	Provider      string            `json:"provider"`
+	BaseURL       string            `json:"base_url"`
+	ContextWindow int               `json:"context_window"`
+	InputPrice    float64           `json:"input_price"`
+	OutputPrice   float64           `json:"output_price"`
+	Tags          []string          `json:"tags"`
+	Available     bool              `json:"available"`
+	Reason        string            `json:"reason,omitempty"`
+	Effort        *EffortCapability `json:"effort,omitempty"`
+	ProviderScope string            `json:"provider_scope,omitempty"`
+}
+
+type EffortOption struct {
+	Value             string `json:"value"`
+	Label             string `json:"label"`
+	Description       string `json:"description,omitempty"`
+	Selectable        bool   `json:"selectable"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+}
+
+type EffortCapability struct {
+	Status          string         `json:"status"`
+	Options         []EffortOption `json:"options"`
+	ProviderDefault string         `json:"provider_default,omitempty"`
+	Source          string         `json:"source"`
+	CheckedAt       string         `json:"checked_at"`
+	Stale           bool           `json:"stale"`
 }
 
 type SkillSummary struct {
@@ -148,9 +167,12 @@ type ServerMessage struct {
 	Kind    string   `json:"kind,omitempty"`    // input_request: text|select|multi_select
 	Options []string `json:"options,omitempty"` // input_request
 
-	SessionID       string          `json:"sessionId,omitempty"`        // session_ready/end/resumed, artifacts
-	Profile         string          `json:"profile,omitempty"`          // session_ready
-	Model           string          `json:"model,omitempty"`            // session_ready
+	SessionID       string          `json:"sessionId,omitempty"` // session_ready/end/resumed, artifacts
+	Profile         string          `json:"profile,omitempty"`   // session_ready
+	Model           string          `json:"model,omitempty"`     // session_ready
+	Effort          *string         `json:"effort,omitempty"`    // session_ready/model_changed
+	ProviderScope   string          `json:"provider_scope,omitempty"`
+	Capabilities    map[string]bool `json:"capabilities,omitempty"`
 	WorkingDir      string          `json:"working_dir,omitempty"`      // session_ready
 	Yolo            bool            `json:"yolo,omitempty"`             // session_ready
 	ProtocolVersion int             `json:"protocol_version,omitempty"` // hello/session_ready
@@ -173,6 +195,7 @@ type ServerMessage struct {
 	Project   *Project         `json:"project,omitempty"`   // project_created
 	Models    []ModelInfo      `json:"models,omitempty"`    // models
 	Current   string           `json:"current,omitempty"`   // models
+	RequestID string           `json:"request_id,omitempty"`
 	Proposed  []SkillSummary   `json:"proposed,omitempty"`
 	Installed []SkillSummary   `json:"installed,omitempty"`
 	Commands  []CommandSummary `json:"commands,omitempty"`
@@ -279,11 +302,35 @@ type modelsListMsg struct {
 func ModelsList() ClientMessage { return modelsListMsg{Type: "models_list"} }
 
 type setModelMsg struct {
-	Type  string `json:"type"`
-	Model string `json:"model"`
+	Type      string  `json:"type"`
+	Model     string  `json:"model"`
+	Effort    *string `json:"effort,omitempty"`
+	RequestID string  `json:"request_id,omitempty"`
+}
+
+func (m setModelMsg) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Type      string  `json:"type"`
+		Model     string  `json:"model"`
+		Effort    *string `json:"effort,omitempty"`
+		RequestID string  `json:"request_id,omitempty"`
+	}
+	if m.RequestID != "" {
+		return json.Marshal(struct {
+			Type      string  `json:"type"`
+			Model     string  `json:"model"`
+			Effort    *string `json:"effort"`
+			RequestID string  `json:"request_id,omitempty"`
+		}{m.Type, m.Model, m.Effort, m.RequestID})
+	}
+	return json.Marshal(wire{m.Type, m.Model, m.Effort, m.RequestID})
 }
 
 func SetModel(model string) ClientMessage { return setModelMsg{Type: "set_model", Model: model} }
+
+func SetModelEffort(model string, effort *string, requestID string) ClientMessage {
+	return setModelMsg{Type: "set_model", Model: model, Effort: effort, RequestID: requestID}
+}
 
 type compactMsg struct {
 	Type string `json:"type"`

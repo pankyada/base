@@ -119,7 +119,8 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       })
       const defaultModel = models.some(item => item.id === profile.model.id) ? profile.model.id : models[0].id
       const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
-      selectedModel = { auth: 'codex_oauth', id: model, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } }
+      const effort = flags.yes ? null : await chooseEffort(models.find(item => item.id === model), ui)
+      selectedModel = { auth: 'codex_oauth', id: model, ...(effort ? { reasoning_effort: effort } : {}), codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 } }
       const status = codexAuthStatus(homeDir)
       ui.step(3, 'Model')
       ui.status('Model', model)
@@ -159,12 +160,14 @@ export async function runInit(args: string[] = [], options: InitOptions = {}): P
       })
       const defaultModel = models.some(model => model.id === profile.model.id) ? profile.model.id : models[0]?.id ?? profile.model.id
       const model = flags.yes ? defaultModel : await chooseModel(models, defaultModel, ui)
+      const effort = flags.yes ? null : await chooseEffort(models.find(item => item.id === model), ui)
       ui.step(4, 'Credentials')
       ui.status('Model', `${model} on ${baseUrl}`)
       ui.status('API key source', ambientKey ? `${apiKeyEnv} (environment)` : `${apiKeyEnv} (saved)`)
-      selectedModel = { auth: 'api_key', base_url: baseUrl, api_key_env: apiKeyEnv, id: model }
+      selectedModel = { auth: 'api_key', base_url: baseUrl, api_key_env: apiKeyEnv, id: model, ...(effort ? { reasoning_effort: effort } : {}) }
     }
-    if ((profile.model.auth ?? 'api_key') !== selectedModel.auth || profile.model.base_url !== selectedModel.base_url || profile.model.api_key_env !== selectedModel.api_key_env || profile.model.id !== selectedModel.id) {
+    const previousEffort = profile.model.reasoning_effort ?? (profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort : undefined)
+    if ((profile.model.auth ?? 'api_key') !== selectedModel.auth || profile.model.base_url !== selectedModel.base_url || profile.model.api_key_env !== selectedModel.api_key_env || profile.model.id !== selectedModel.id || previousEffort !== selectedModel.reasoning_effort) {
       const applied = await confirmModelChange(profile.profile_path, selectedModel, flags, io, now)
       if (applied && profile.profile_path) profile = loadProfile(profile.profile_path)
       else io.write('model change declined; keeping the existing profile model')
@@ -282,6 +285,24 @@ async function chooseModel(models: readonly ModelInfo[], defaultModel: string, u
   }
 }
 
+async function chooseEffort(model: ModelInfo | undefined, ui: InitWizardUI): Promise<string | null> {
+  const capability = model?.effort
+  if (!capability || capability.status !== 'supported') {
+    if (capability?.status === 'unknown') ui.plain('Effort support unknown; using provider default.')
+    return null
+  }
+  const options = [{ value: null as string | null, label: 'Default (provider default)' }, ...capability.options.filter(option => option.selectable).map(option => ({ value: option.value, label: option.label }))]
+  ui.plain('Effort options:')
+  options.forEach((option, index) => ui.plain(`  ${index + 1}. ${option.label}`))
+  while (true) {
+    const answer = (await ui.prompt('Choose effort [1]', '')).trim()
+    if (!answer) return null
+    const index = Number(answer)
+    if (Number.isInteger(index) && index >= 1 && index <= options.length) return options[index - 1].value
+    ui.plain(`Choose a number from 1 to ${options.length}.`)
+  }
+}
+
 async function chooseSurface(defaultSurface: string, ui: InitWizardUI): Promise<typeof SURFACES[number]> {
   ui.panel('Surface', ['1. TUI', '2. CLI', '3. Web'])
   const answer = await ui.prompt(`Choose surface [${defaultSurface}]`, '')
@@ -326,7 +347,7 @@ async function confirmModelChange(profilePath: string | undefined, model: Profil
     }))
   }
   ProfileSchema.parse(loadYaml(after))
-  io.write(`\nProfile model diff (${profilePath}):\n- ${profileModelSummary(before)}\n+ ${model.auth === 'codex_oauth' ? 'Codex subscription' : model.base_url} / ${model.id} / ${model.api_key_env ?? 'OAuth'}`)
+  io.write(`\nProfile model diff (${profilePath}):\n- ${profileModelSummary(before)}\n+ ${model.auth === 'codex_oauth' ? 'Codex subscription' : model.base_url} / ${model.id} / ${model.api_key_env ?? 'OAuth'}${model.reasoning_effort ? ` / effort ${model.reasoning_effort}` : ' / effort Default'}`)
   if (helperChanges.length) io.write(`Helper model changes:\n${helperChanges.join('\n')}`)
   if (flags.yes) return false
   const answer = await io.readLine('Apply this model change? [y/N]: ')
@@ -340,8 +361,8 @@ function replaceModelBlock(content: string, model: Profile['model']): string {
   const match = /^model:\r?\n(?:[ \t]+.*(?:\r?\n|$))*/m.exec(content)
   if (!match) throw new Error('profile has no model block')
   const fallback = `  fallback_id: ${model.id}\n`
-  if (model.auth === 'codex_oauth') return content.replace(match[0], `model:\n  auth: codex_oauth\n  id: ${model.id}\n${fallback}  codex:\n    max_model_calls_per_run: 64\n    request_timeout_ms: 120000\n`)
-  const replacement = `model:\n  base_url: ${model.base_url}\n  api_key_env: ${model.api_key_env}\n  id: ${model.id}\n${fallback}`
+  if (model.auth === 'codex_oauth') return content.replace(match[0], `model:\n  auth: codex_oauth\n  id: ${model.id}\n${model.reasoning_effort ? `  reasoning_effort: ${model.reasoning_effort}\n` : ''}${fallback}  codex:\n    max_model_calls_per_run: 64\n    request_timeout_ms: 120000\n`)
+  const replacement = `model:\n  base_url: ${model.base_url}\n  api_key_env: ${model.api_key_env}\n  id: ${model.id}\n${model.reasoning_effort ? `  reasoning_effort: ${model.reasoning_effort}\n` : ''}${fallback}`
   return content.replace(match[0], replacement)
 }
 

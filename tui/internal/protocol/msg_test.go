@@ -81,6 +81,7 @@ func TestEncodeRevampClientMessages(t *testing.T) {
 	}{
 		{"models_list", ModelsList(), `{"type":"models_list"}`},
 		{"set_model", SetModel("gpt-5.4-mini"), `{"type":"set_model","model":"gpt-5.4-mini"}`},
+		{"set_model_effort", SetModelEffort("gpt-5.6-sol", nil, "req-1"), `{"type":"set_model","model":"gpt-5.6-sol","effort":null,"request_id":"req-1"}`},
 		{"approval", SetApprovalMode("danger"), `{"type":"set_approval_mode","mode":"danger"}`},
 		{"skills_list", SkillsList(), `{"type":"skills_list"}`},
 		{"commands_list", CommandsList(), `{"type":"commands_list"}`},

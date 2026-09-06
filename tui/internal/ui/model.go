@@ -92,6 +92,12 @@ type Model struct {
 	modelFilter        string
 	modelCustom        bool
 	modelInput         textinput.Model
+	effortPicker       bool
+	effortCursor       int
+	effortModel        string
+	effortOptions      []protocol.EffortOption
+	effort             *string
+	providerScope      string
 	paletteOpen        bool
 	paletteCursor      int
 	paletteInput       textinput.Model
@@ -464,6 +470,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.approvalPicker {
 		return m.updateApprovalPicker(msg)
+	}
+	if m.effortPicker {
+		return m.updateEffortPicker(msg)
 	}
 	if m.modelPicker {
 		return m.updateModelPicker(msg)
@@ -952,8 +961,10 @@ func (m Model) updateModelTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modelInput.Reset()
 			m.modelInput.Focus()
 		} else if len(visible) > 0 && visible[m.modelCursor].Available {
-			m.selectModel(visible[m.modelCursor].ID)
-			m.overlayOpen = false
+			m.beginModelSelection(visible[m.modelCursor])
+			if !m.effortPicker {
+				m.overlayOpen = false
+			}
 		} else if len(visible) > 0 {
 			m.notices.Add(NoticeWarn, "model unavailable", visible[m.modelCursor].Reason, "switch profile to use it")
 		}
@@ -1025,8 +1036,10 @@ func (m Model) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modelInput.Reset()
 			m.modelInput.Focus()
 		} else if len(visible) > 0 && visible[m.modelCursor].Available {
-			m.selectModel(visible[m.modelCursor].ID)
-			m.modelPicker = false
+			m.beginModelSelection(visible[m.modelCursor])
+			if !m.effortPicker {
+				m.modelPicker = false
+			}
 		}
 	default:
 		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
@@ -1066,14 +1079,107 @@ func (m Model) updateSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) selectModel(id string) {
+	// Legacy model-only clients historically reflected the requested model
+	// immediately. Effort-aware pairs use the acknowledgement path below.
 	m.model = id
 	m.send(protocol.SetModel(id))
+	m.notices.Add(NoticeInfo, "model change requested", id, "waiting for server acknowledgement")
+}
+
+func (m *Model) effortPreferenceKey(model string) string {
+	return m.providerScope + "\x00" + m.profile + "\x00" + model
+}
+
+func (m *Model) persistAcknowledgedSelection() {
 	if m.prefs.ModelByProfile == nil {
 		m.prefs.ModelByProfile = map[string]string{}
 	}
-	m.prefs.ModelByProfile[m.profile] = id
+	m.prefs.ModelByProfile[m.profile] = m.model
+	if m.prefs.EffortByScopeProfileModel == nil {
+		m.prefs.EffortByScopeProfileModel = map[string]*string{}
+	}
+	var effort *string
+	if m.effort != nil {
+		value := *m.effort
+		effort = &value
+	}
+	m.prefs.EffortByScopeProfileModel[m.effortPreferenceKey(m.model)] = effort
 	_ = m.prefs.Save("")
-	m.notices.Add(NoticeInfo, "model selected", id, "applies next turn")
+}
+
+func (m *Model) rememberedEffort(model string) (*string, bool) {
+	value, ok := m.prefs.EffortByScopeProfileModel[m.effortPreferenceKey(model)]
+	if !ok || value == nil {
+		return nil, ok
+	}
+	copy := *value
+	return &copy, true
+}
+
+func (m *Model) beginModelSelection(model protocol.ModelInfo) {
+	if model.Effort != nil && model.Effort.Status == "supported" {
+		m.effortModel = model.ID
+		defaultOption := protocol.EffortOption{Value: "", Label: "Default", Selectable: true}
+		if model.Effort.ProviderDefault != "" {
+			defaultOption.Description = "provider default: " + model.Effort.ProviderDefault
+		}
+		m.effortOptions = append([]protocol.EffortOption{defaultOption}, model.Effort.Options...)
+		m.effortCursor = 0
+		for i, option := range m.effortOptions {
+			if (option.Value == "" && m.effort == nil) || (m.effort != nil && option.Value == *m.effort) {
+				m.effortCursor = i
+				break
+			}
+		}
+		m.effortPicker = true
+		return
+	}
+	m.selectModel(model.ID)
+}
+
+func (m *Model) applyEffortSelection() {
+	if m.effortCursor < 0 || m.effortCursor >= len(m.effortOptions) {
+		return
+	}
+	option := m.effortOptions[m.effortCursor]
+	if !option.Selectable {
+		m.notices.Add(NoticeWarn, "effort unavailable", option.UnavailableReason, "choose another setting")
+		return
+	}
+	var effort *string
+	if option.Value != "" {
+		value := option.Value
+		effort = &value
+	}
+	requestID := fmt.Sprintf("tui-%d", time.Now().UnixNano())
+	m.send(protocol.SetModelEffort(m.effortModel, effort, requestID))
+	m.effortPicker = false
+	m.modelPicker = false
+	m.notices.Add(NoticeInfo, "model/effort change requested", m.effortModel, "waiting for server acknowledgement")
+}
+
+func (m Model) updateEffortPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.effortPicker = false
+	case "tab":
+		m.effortPicker = false
+		if m.overlayOpen {
+			m.cycleOverlay(1)
+		}
+	case "up":
+		if m.effortCursor > 0 {
+			m.effortCursor--
+		}
+	case "down":
+		if m.effortCursor < len(m.effortOptions)-1 {
+			m.effortCursor++
+		}
+	case "enter":
+		m.applyEffortSelection()
+	}
+	m.reflow()
+	return m, nil
 }
 
 func (m Model) visibleModels() []protocol.ModelInfo {
@@ -1927,6 +2033,8 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if msg.Model != "" {
 			m.model = msg.Model
 		}
+		m.effort = msg.Effort
+		m.providerScope = msg.ProviderScope
 		if msg.Profile != "" {
 			m.profile = msg.Profile
 		}
@@ -1948,14 +2056,24 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		}
 	case "models":
 		m.modelOptions = msg.Models
+		m.effort = msg.Effort
+		m.providerScope = msg.ProviderScope
 		for i, option := range m.modelOptions {
 			if option.ID == msg.Current {
 				m.modelCursor = i
 				break
 			}
 		}
+		if remembered, ok := m.rememberedEffort(m.model); ok {
+			m.send(protocol.SetModelEffort(m.model, remembered, fmt.Sprintf("tui-restore-%d", time.Now().UnixNano())))
+		}
 	case "model_changed":
 		m.model = msg.Model
+		m.effort = msg.Effort
+		if msg.ProviderScope != "" {
+			m.providerScope = msg.ProviderScope
+		}
+		m.persistAcknowledgedSelection()
 		m.notices.Add(NoticeInfo, "model changed", msg.Model, "")
 	case "todos":
 		m.todos = msg.Todos
@@ -2319,6 +2437,9 @@ func (m Model) View() string {
 	if m.approvalPicker {
 		return Center(background, approvalPicker(m.approvalMode, m.approvalCursor, m.width, m.height), m.width, m.height)
 	}
+	if m.effortPicker {
+		return Center(background, effortPicker(m.effortModel, m.effortOptions, m.effortCursor, m.width, m.height), m.width, m.height)
+	}
 	if m.modelPicker {
 		return Center(background, modelPicker(m.modelOptions, m.modelCursor, m.modelFilter, m.modelCustom, m.modelInput.View(), m.width, m.height), m.width, m.height)
 	}
@@ -2333,7 +2454,11 @@ func (m Model) View() string {
 	if m.overlayOpen {
 		body := skillsPlaceholder()
 		if m.overlayTab == "model" {
-			body = modelBody(m.modelOptions, m.modelCursor, m.modelFilter, m.modelCustom, m.modelInput.View(), modalInnerWidth(m.width))
+			if m.effortPicker {
+				body = effortBody(m.effortModel, m.effortOptions, m.effortCursor, modalInnerWidth(m.width))
+			} else {
+				body = modelBody(m.modelOptions, m.modelCursor, m.modelFilter, m.modelCustom, m.modelInput.View(), modalInnerWidth(m.width))
+			}
 		} else if m.overlayTab == "approval" {
 			body = approvalBody(m.approvalMode, m.approvalCursor, modalInnerWidth(m.width))
 		} else if m.overlayTab == "theme" {

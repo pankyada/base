@@ -14,7 +14,10 @@ const fileName = "tui.json"
 type Preferences struct {
 	ApprovalModeByProfile map[string]string `json:"approval_mode_by_profile"`
 	ModelByProfile        map[string]string `json:"model_by_profile"`
-	Theme                 string            `json:"theme"`
+	// EffortByScopeProfileModel stores only server-acknowledged choices. A nil
+	// value means explicit provider Default (omit effort on the wire).
+	EffortByScopeProfileModel map[string]*string `json:"effort_by_scope_profile_model,omitempty"`
+	Theme                     string             `json:"theme"`
 	// RailHidden is stored inverted so the zero value means "rail on screen":
 	// a fresh or lost prefs file opens with the rail visible, and only an
 	// explicit ^b hide is persisted.

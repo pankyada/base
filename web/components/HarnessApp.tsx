@@ -255,7 +255,7 @@ export function HarnessApp() {
           onAssign={(projectId) => { if (state.sessionId && state.sessionId !== '…') send({ type: 'project_assign', sessionId: state.sessionId, projectId }) }}
           models={state.models}
           commands={state.commands}
-          onSetModel={model => send({ type: 'set_model', model })}
+          onSetModel={(model, effort) => send({ type: 'set_model', model, ...(effort === undefined ? {} : { effort, request_id: `web-${Date.now()}` }) })}
           profiles={state.profiles}
           onSetProfile={name => send({ type: 'set_profile', profile: name })}
           approvalMode={state.approvalMode}
