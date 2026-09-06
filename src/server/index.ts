@@ -43,6 +43,7 @@ import { runPlanPreview } from '../workflow/runner.js'
 import { runApprovedPlanFollowOn, runInteractiveTurn } from './turn-runner.js'
 import { writeArtifact } from '../workflow/artifacts.js'
 import { sweepDeferredLabels } from '../workflow/labeler.js'
+import { discoverProfileModels } from '../models/discovery.js'
 import { listModels } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
@@ -391,6 +392,8 @@ async function main() {
     let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let approvalLimit: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let connectionModel = profile.model.id
+    let connectionModels = listModels(profile)
+    let modelCatalogRequest = 0
     let miningSkills = false
     let safetyDisclosed = false
     let protocolVersion = PROTOCOL_VERSION
@@ -427,6 +430,8 @@ async function main() {
       if (!selected) return `unknown profile "${name}"; available: ${[...profiles.keys()].sort().join(', ')}`
       flushConnectionUsage()
       baseProfile = selected
+      connectionModels = listModels(selected)
+      modelCatalogRequest += 1
       connectionProfile = selected
       approvalLimit = resolveApprovalLimit(connectionProfile)
       approvalMode = approvalLimit
@@ -1047,7 +1052,20 @@ async function main() {
 
       if (msg.type === 'models_list') {
         const activeProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
-        send({ type: 'models', models: listModels(activeProfile), current: connectionModel })
+        const selectedProfile = baseProfile
+        const request = ++modelCatalogRequest
+        const notices: string[] = []
+        let models
+        try {
+          models = await discoverProfileModels(activeProfile, { report: message => notices.push(message) })
+        } catch {
+          models = listModels(activeProfile)
+          notices.push('Model discovery unavailable: showing bundled models.')
+        }
+        if (baseProfile !== selectedProfile || request !== modelCatalogRequest || ws.readyState !== WebSocket.OPEN) return
+        connectionModels = models
+        for (const message of notices.filter(message => /unavailable|No API key/.test(message))) send({ type: 'notice', level: 'warn', message })
+        send({ type: 'models', models, current: connectionModel })
         return
       }
 
@@ -1063,7 +1081,20 @@ async function main() {
           send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active', detail: 'cancel and wait for the current turn to finish first' })
           return
         }
-        const candidate = listModels(baseProfile).find(model => model.id === msg.model)
+        let candidate = connectionModels.find(model => model.id === msg.model) ?? listModels(baseProfile).find(model => model.id === msg.model)
+        if (!candidate && connectionProfile.model.auth === 'codex_oauth') {
+          const selectedProfile = baseProfile
+          try {
+            const models = await discoverProfileModels(baseProfile)
+            if (baseProfile !== selectedProfile || ws.readyState !== WebSocket.OPEN) return
+            if (activeContext || pendingApprovals.size > 0 || maintenanceControllers.size > 0) {
+              send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active' })
+              return
+            }
+            connectionModels = models
+            candidate = models.find(model => model.id === msg.model)
+          } catch { /* retain the existing unavailable-model response */ }
+        }
         if (candidate && !candidate.available) {
           send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason })
           return
