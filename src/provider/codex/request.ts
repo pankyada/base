@@ -1,6 +1,7 @@
 import type { ProviderMessage, ProviderRequest, ProviderTool } from '../types.js'
 import { assertCodexModel } from './models.js'
 import { validateContinuation, type CodexContinuation } from './continuation.js'
+import { validateEffortSelection } from '../../models/effort.js'
 
 export interface ResponsesRequest {
   model: string
@@ -14,10 +15,9 @@ export interface ResponsesRequest {
 }
 
 export function serializeCodexRequest(request: ProviderRequest): ResponsesRequest {
-  const capability = assertCodexModel(request.model)
-  if (request.reasoningEffort && !capability.efforts.includes(request.reasoningEffort)) {
-    throw new Error(`reasoning effort ${request.reasoningEffort} is unsupported for ${request.model}`)
-  }
+  const capability = request.effortCapability ?? assertCodexModel(request.model).effort
+  try { validateEffortSelection(capability, request.reasoningEffort) }
+  catch { throw new Error(`reasoning effort ${request.reasoningEffort} is unsupported for ${request.model}`) }
 
   const instructionMessages = request.messages.filter(message => message.role === 'system' || message.role === 'developer')
   const instructions = request.instructions ?? instructionMessages.map(message => String(message.content)).join('\n')
@@ -34,7 +34,7 @@ export function serializeCodexRequest(request: ProviderRequest): ResponsesReques
     include: ['reasoning.encrypted_content'],
     ...(request.tools?.length ? { tools: request.tools.map(flatTool) } : {}),
   }
-  if (request.reasoningEffort) {
+  if (request.reasoningEffort !== undefined && request.reasoningEffort !== null) {
     body.reasoning = {
       ...(request.reasoningEffort ? { effort: request.reasoningEffort } : {}),
     }

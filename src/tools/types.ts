@@ -2,7 +2,7 @@ import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
 import type { McpEntry } from '../mcp/client.js'
-import type { AgentFrame, TodoItem, InputRequestKind, RiskLevel, ApprovalMode, SurfaceSpec, SurfaceRenderResult } from '../types.js'
+import type { AgentFrame, TodoItem, InputRequestKind, RiskLevel, ApprovalMode, SurfaceSpec, SurfaceRenderResult, EffortCapability } from '../types.js'
 import type { Stage, Intensity, Tier } from '../workflow/types.js'
 import type { ExecutionResult } from '../executor/interface.js'
 import type OpenAI from 'openai'
@@ -64,6 +64,8 @@ export interface ToolContext {
   /** Legacy API client seam; Codex profiles leave this unset. */
   openai?: OpenAI
   provider?: ProviderClient
+  /** Capabilities from the active provider catalog, keyed by model id. */
+  modelCapabilities?: Record<string, EffortCapability>
   credentialGeneration?: string
   deadline?: number
   usageSink?: import('../provider/types.js').ModelUsageSink

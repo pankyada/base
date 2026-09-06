@@ -23,6 +23,7 @@ import { bindRunProvider } from '../provider/invocation.js'
 import { createApiKeyProvider } from '../provider/api-key.js'
 import type { ProviderClient, ProviderMessage, ProviderRequest } from '../provider/types.js'
 import { ProviderError } from '../provider/errors.js'
+import { resolveEffortSelection } from '../models/effort.js'
 
 export { estimateCost }
 
@@ -70,6 +71,15 @@ export async function runAgentLoop(
   }
 ): Promise<void> {
   const modelId = opts?.modelId ?? profile.model.id
+  const modelCapability = context.modelCapabilities?.[modelId]
+  const configuredEffort = profile.model.auth === 'codex_oauth'
+    ? (profile.model.reasoning_effort ?? profile.model.codex.reasoning_effort)
+    : undefined
+  // Snapshot once per root turn. Retries and tool continuation reuse this
+  // request pair; helpers resolve their own model capability independently.
+  const turnEffort = opts?.modelId
+    ? resolveEffortSelection({ capability: modelCapability })
+    : (configuredEffort ?? resolveEffortSelection({ capability: modelCapability }))
   const apiClient = openai ?? context.openai
   const rawProvider: ProviderClient = context.provider ?? (apiClient ? createApiKeyProvider(profile, apiClient) : (() => { throw new Error('No model provider configured for this run') })())
   context.signal ??= signal
@@ -196,7 +206,8 @@ export async function runAgentLoop(
         messages: projectedMessages as ProviderMessage[],
         tools: allTools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
         stream: true,
-        reasoningEffort: profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort : undefined,
+        reasoningEffort: profile.model.auth === 'codex_oauth' ? turnEffort : undefined,
+        effortCapability: modelCapability,
         signal,
       }
       for await (const event of provider.stream(request, {

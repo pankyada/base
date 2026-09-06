@@ -6,10 +6,7 @@ import { createCodexProvider } from './codex/adapter.js'
 import type { ProviderClient } from './types.js'
 export function createProvider(profile: Profile, options: { home?: string; fetch?: OAuthFetch } = {}): ProviderClient {
   if (profile.model.auth === 'codex_oauth') {
-    return createCodexProvider(profile.model.id, { ...options,
-      timeoutMs: profile.model.codex.request_timeout_ms,
-      reasoningEffort: profile.model.codex.reasoning_effort,
-    })
+    return createCodexProvider(profile.model.id, { ...options, timeoutMs: profile.model.codex.request_timeout_ms })
   }
   return createApiKeyProvider(profile, createApiClient(profile))
 }

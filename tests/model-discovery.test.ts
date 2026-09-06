@@ -10,12 +10,18 @@ describe('runtime provider catalog', () => {
   it('returns selectable Codex models from the same discovery used by setup', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'runtime-models-'))
     await writeCodexCredential({ kind: 'codex_oauth', access_token: 'fixture-token', refresh_token: 'fixture-refresh', account_id: 'fixture-account', expires_at: Date.now() + 3600000 }, homeDir)
-    const mock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ models: [{ slug: 'gpt-6-astra', visibility: 'list' }, { slug: 'gpt-5.6-sol', visibility: 'list' }] })))
+    const mock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ models: [
+      { slug: 'gpt-6-astra', visibility: 'list', supported_reasoning_efforts: ['low', 'medium', 'high', 'ultra'], default_reasoning_effort: 'medium' },
+      { slug: 'gpt-5.6-sol', visibility: 'list' },
+    ] })))
     try {
       const profile = { model: { auth: 'codex_oauth', id: 'gpt-5.4-mini' } } as Profile
       const models = await discoverProfileModels(profile, { homeDir })
       expect(models.map(model => model.id)).toEqual(['gpt-6-astra', 'gpt-5.6-sol'])
       expect(models.every(model => model.available)).toBe(true)
+      expect(models[0].effort).toMatchObject({ status: 'supported', provider_default: 'medium', source: 'live' })
+      expect(models[0].effort?.options.find(option => option.value === 'ultra')).toMatchObject({ selectable: false })
+      expect(models[1].effort).toMatchObject({ status: 'unknown', options: [] })
     } finally { mock.mockRestore(); rmSync(homeDir, { recursive: true, force: true }) }
   })
 })

@@ -16,7 +16,6 @@ export interface CodexAdapterOptions {
   fetch?: OAuthFetch
   userAgent?: string
   timeoutMs?: number
-  reasoningEffort?: string
 }
 
 export function createCodexProvider(model: string, options: CodexAdapterOptions = {}): ProviderClient {
@@ -68,7 +67,7 @@ async function* streamCodex(
     if (context?.credentialGeneration && context.credentialGeneration !== initial.generation) {
       throw new ProviderError('Codex credential changed before inference', { code: 'credential_changed' })
     }
-    const body = serializeCodexRequest(prepareCodexHistory({ ...request, reasoningEffort: request.reasoningEffort ?? options.reasoningEffort }, initial.generation))
+    const body = serializeCodexRequest(prepareCodexHistory(request, initial.generation))
     let credential = initial
     let replayed = false
 

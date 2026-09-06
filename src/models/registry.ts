@@ -140,7 +140,7 @@ export function listModels(profile: Profile): ModelInfo[] {
       id: model.id, label: `${model.id} · Codex subscription`, provider: 'OpenAI Codex', base_url: '',
       context_window: model.contextWindow, input_price: MODEL_PRICES[model.id]?.input ?? FALLBACK_PRICES.input,
       output_price: MODEL_PRICES[model.id]?.output ?? FALLBACK_PRICES.output,
-      tags: ['subscription', 'experimental'], available: true,
+      tags: ['subscription', 'experimental'], available: true, effort: model.effort,
     }))
   }
   const activeBaseUrl = normalizeBaseUrl(profile.model.base_url)

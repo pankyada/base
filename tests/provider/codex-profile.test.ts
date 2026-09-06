@@ -13,6 +13,16 @@ describe('explicit Codex profile configuration', () => {
       ...codex, codex: { max_model_calls_per_run: 64, request_timeout_ms: 120000 },
     })
   })
+  it('accepts canonical effort and matching deprecated alias without network lookup', () => {
+    expect(ProfileSchema.parse({ ...base, model: { ...codex, reasoning_effort: 'high', codex: { reasoning_effort: 'high' } } }).model).toMatchObject({ reasoning_effort: 'high', codex: { reasoning_effort: 'high' } })
+  })
+  it('rejects conflicting canonical and deprecated effort aliases', () => {
+    expect(ProfileSchema.safeParse({ ...base, model: { ...codex, reasoning_effort: 'high', codex: { reasoning_effort: 'low' } } }).success).toBe(false)
+  })
+  it('does not reject a live-catalog root model or invent its effort support', () => {
+    const parsed = ProfileSchema.parse({ ...base, model: { ...codex, id: 'future-codex-model', reasoning_effort: 'high' } })
+    expect(parsed.model.id).toBe('future-codex-model')
+  })
   it.each(['api_key_env', 'base_url'])('rejects contradictory OAuth %s', field => {
     expect(ProfileSchema.safeParse({ ...base, model: { ...codex, [field]: 'https://example.test' } }).success).toBe(false)
   })

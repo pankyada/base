@@ -1,3 +1,5 @@
+import type { EffortCapability } from '../types.js'
+
 export type ProviderKind = 'api_key' | 'codex_oauth'
 export type BillingMode = 'api' | 'subscription'
 export type CostBasis = 'api_estimate' | 'api_equivalent' | 'legacy_estimate'
@@ -25,7 +27,8 @@ export interface ProviderRequest {
   messages: ProviderMessage[]
   tools?: ProviderTool[]
   signal?: AbortSignal
-  reasoningEffort?: string
+  reasoningEffort?: string | null
+  effortCapability?: EffortCapability
   stream?: boolean
   maxTokens?: number
   maxCompletionTokens?: number

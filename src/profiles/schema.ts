@@ -273,15 +273,19 @@ export type ContextConfig = z.infer<typeof ContextSchema>
 
 export type SafetyConfig = z.infer<typeof SafetySchema>
 
+const EffortConfigSchema = z.string().min(1).max(64).refine(value => !/[\u0000-\u001f\u007f]/.test(value), 'reasoning effort contains control characters')
 const ApiModelSchema = z.object({
   auth: z.literal('api_key').default('api_key'),
   base_url: z.url(), api_key_env: z.string(), id: z.string(), fallback_id: z.string().optional(),
-})
+  reasoning_effort: EffortConfigSchema.optional(),
+}).strict()
 const CodexModelSchema = z.object({
   auth: z.literal('codex_oauth'), id: z.string().min(1), fallback_id: z.string().optional(),
   base_url: z.never().optional(), api_key_env: z.never().optional(),
+  reasoning_effort: EffortConfigSchema.optional(),
   codex: z.object({
-    reasoning_effort: z.string().optional(),
+    /** Deprecated alias. Keep for existing profiles; canonical field is model.reasoning_effort. */
+    reasoning_effort: EffortConfigSchema.optional(),
     max_model_calls_per_run: z.number().int().min(1).max(1024).default(64),
     request_timeout_ms: z.number().int().min(1000).max(600000).default(120000),
   }).strict().prefault({}),
@@ -373,6 +377,11 @@ export const ProfileSchema = z.object({
   voice: VoiceSchema,
   mcp: McpRuntimeSchema,
 }).superRefine((profile, ctx) => {
+  const canonicalEffort = profile.model.reasoning_effort
+  const legacyEffort = profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort : undefined
+  if (canonicalEffort && legacyEffort && canonicalEffort !== legacyEffort) {
+    ctx.addIssue({ code: 'custom', path: ['model', 'reasoning_effort'], message: 'model.reasoning_effort conflicts with deprecated model.codex.reasoning_effort' })
+  }
   if (profile.model.auth !== 'codex_oauth') return
   const overrides: Array<[Array<string>, string | undefined]> = [
     [['model', 'id'], profile.model.id], [['model', 'fallback_id'], profile.model.fallback_id],
@@ -383,11 +392,11 @@ export const ProfileSchema = z.object({
     ...Object.entries(profile.models?.roles ?? {}).map(([role, id]): [string[], string | undefined] => [['models', 'roles', role], id]),
   ]
   for (const [path, id] of overrides) {
-    if (id && !codexCapability(id)) ctx.addIssue({ code: 'custom', path, message: `Model ${id} is not in the Codex compatibility catalog` })
-  }
-  const effort = profile.model.codex.reasoning_effort
-  if (effort && !codexCapability(profile.model.id)?.efforts.includes(effort)) {
-    ctx.addIssue({ code: 'custom', path: ['model', 'codex', 'reasoning_effort'], message: 'Unsupported Codex reasoning effort' })
+    // Root model ids may come from the authenticated live catalog, so schema
+    // loading cannot reject them without network access. Helper/fallback ids
+    // retain the existing compatibility guard until runtime discovery proves
+    // them for the active account.
+    if (path[1] !== 'id' && id && id !== profile.model.id && !codexCapability(id)) ctx.addIssue({ code: 'custom', path, message: `Model ${id} is not in the Codex compatibility catalog` })
   }
 }).transform(profile => {
   const channelNames = new Set<string>()
