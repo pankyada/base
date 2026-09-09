@@ -14,8 +14,11 @@ import { ApprovalQueue, type ApprovalItem } from '../../components/ops/ApprovalQ
 import { MissionCard } from '../../components/ops/MissionCard'
 import type { MissionWire } from '../../lib/protocol'
 import { buildScopedUrl, isStaleScope, type RequestScope } from '../../lib/scopedRequest'
+import { fetchScopedRemote, fetchBatch, fetchRemote, type RemoteData } from '../../lib/remoteData'
+import { Unavailable } from '../../components/chrome/Unavailable'
 
 interface ChannelStatus { name: string; transport: string; binding: 'paired' | 'open' | 'unbound' | 'off'; capabilities?: Record<string, unknown>; degraded?: string }
+interface PendingItem { id: string; prompt: string; expires_at: string }
 
 /** Active profile, read off the WS event stream (ops/home don't run the reducer HarnessApp uses — `session_ready`/`profiles` events carry it directly). */
 function activeProfile(events: { type: string }[]): string | undefined {
@@ -29,10 +32,16 @@ export default function OpsPage() {
   const { events, send, userId } = useSharedHarnessWS()
   const profile = activeProfile(events)
   const scope: RequestScope = { userId, profile }
-  const [pending, setPending] = useState<{ id: string; prompt: string; expires_at: string }[]>([])
+  const [pending, setPending] = useState<PendingItem[]>([])
+  const [pendingRemote, setPendingRemote] = useState<RemoteData<{ pending?: PendingItem[] }>>({ status: 'loading' })
   const [report, setReport] = useState<Record<string, unknown>>({})
+  const [metricsRemote, setMetricsRemote] = useState<RemoteData<unknown>>({ status: 'loading' })
+  const [usageRemote, setUsageRemote] = useState<RemoteData<unknown>>({ status: 'loading' })
+  const [routingRemote, setRoutingRemote] = useState<RemoteData<unknown>>({ status: 'loading' })
   const [channels, setChannels] = useState<ChannelStatus[]>([])
+  const [channelsRemote, setChannelsRemote] = useState<RemoteData<{ channels?: ChannelStatus[] }>>({ status: 'loading' })
   const [resolvedApprovals, setResolvedApprovals] = useState<Set<string>>(new Set())
+  const [retryToken, setRetryToken] = useState(0)
   const missionMessage = [...events].reverse().find(event => event.type === 'mission')
   const mission = missionMessage?.type === 'mission' ? missionMessage.mission as MissionWire : undefined
   const receiptMessage = [...events].reverse().find(event => event.type === 'receipt')
@@ -47,20 +56,39 @@ export default function OpsPage() {
 
   useEffect(() => {
     const requestedScope = { userId: scopeRef.current.userId, profile: scopeRef.current.profile }
+    const currentScope = () => scopeRef.current
     // Clear dependent state before issuing the new scoped reads — no residue from the previous identity/profile.
-    setPending([])
-    setChannels([])
-    setReport({})
-    const stale = () => isStaleScope(requestedScope, scopeRef.current)
-    void fetch(buildScopedUrl(base, '/pending', { userId: requestedScope.userId })).then(response => response.ok ? response.json() : { pending: [] }).then(body => { if (!stale()) setPending(body.pending ?? []) }).catch(() => { if (!stale()) setPending([]) })
-    void fetch(buildScopedUrl(base, '/channels', { userId: requestedScope.userId })).then(response => response.ok ? response.json() : { channels: [] }).then(body => { if (!stale()) setChannels(body.channels ?? []) }).catch(() => { if (!stale()) setChannels([]) })
+    setPending([]); setPendingRemote({ status: 'loading' })
+    setChannels([]); setChannelsRemote({ status: 'loading' })
+    setReport({}); setMetricsRemote({ status: 'loading' }); setUsageRemote({ status: 'loading' }); setRoutingRemote({ status: 'loading' })
+
+    void fetchScopedRemote<{ pending?: PendingItem[] }>(base, '/pending', { userId: requestedScope.userId }, currentScope, {}, body => (body.pending ?? []).length === 0).then(result => {
+      if (result === 'stale') return
+      setPendingRemote(result)
+      setPending(result.status === 'ready' ? (result.data.pending ?? []) : [])
+    })
+    void fetchScopedRemote<{ channels?: ChannelStatus[] }>(base, '/channels', { userId: requestedScope.userId }, currentScope, {}, body => (body.channels ?? []).length === 0).then(result => {
+      if (result === 'stale') return
+      setChannelsRemote(result)
+      setChannels(result.status === 'ready' ? (result.data.channels ?? []) : [])
+    })
     // /metrics and /stats/routing are aggregate reads (see src/server/read-api.ts): /metrics accepts a `profile` filter but no `user`; /stats/routing accepts neither. /usage is genuinely user-scoped.
-    void Promise.all([
-      fetch(buildScopedUrl(base, '/metrics', { profile: requestedScope.profile })).then(response => response.ok ? response.json() : {}),
-      fetch(buildScopedUrl(base, '/usage', { userId: requestedScope.userId })).then(response => response.ok ? response.json() : {}),
-      fetch(buildScopedUrl(base, '/stats/routing', {})).then(response => response.ok ? response.json() : {}),
-    ]).then(([metrics, usage, routing]) => { if (!stale()) setReport({ metrics, usage, routing }) }).catch(() => { if (!stale()) setReport({}) })
-  }, [base, scope.userId, scope.profile])
+    // Each part is fetched and reported independently (fetchBatch → Promise.allSettled) so one dead endpoint does not blank the other two.
+    void fetchBatch({
+      metrics: () => fetchRemote(buildScopedUrl(base, '/metrics', { profile: requestedScope.profile })),
+      usage: () => fetchRemote(buildScopedUrl(base, '/usage', { userId: requestedScope.userId })),
+      routing: () => fetchRemote(buildScopedUrl(base, '/stats/routing', {})),
+    }).then(batch => {
+      // All three parts share one scope, so a switch mid-flight is discarded as a unit — same rule as every other scoped read on this page.
+      if (isStaleScope(requestedScope, currentScope())) return
+      setMetricsRemote(batch.metrics); setUsageRemote(batch.usage); setRoutingRemote(batch.routing)
+      setReport({
+        metrics: batch.metrics.status === 'ready' ? batch.metrics.data : (batch.metrics.status === 'empty' ? {} : undefined),
+        usage: batch.usage.status === 'ready' ? batch.usage.data : (batch.usage.status === 'empty' ? {} : undefined),
+        routing: batch.routing.status === 'ready' ? batch.routing.data : (batch.routing.status === 'empty' ? {} : undefined),
+      })
+    })
+  }, [base, scope.userId, scope.profile, retryToken])
 
   const undoMessage = [...events].reverse().find(event => event.type === 'undo_entries')
   const undoEntries = undoMessage?.type === 'undo_entries' ? undoMessage.entries : []
@@ -80,11 +108,16 @@ export default function OpsPage() {
     <RunBoard baseUrl={base} scope={scope} liveEvents={events} onCancel={id => { void fetch(buildScopedUrl(base, `/runs/${encodeURIComponent(id)}`, { userId }), { method: 'DELETE' }) }} />
     <MissionCard mission={mission} receipt={receiptMessage?.type === 'receipt' ? receiptMessage.receipt : undefined} />
     <ApprovalQueue items={approvals} onApprove={id => resolveApproval(id, true)} onDeny={id => resolveApproval(id, false)} onRemember={rememberApproval} />
-    <Inbox items={pending} onAnswer={(id, value) => send({ type: 'pending_answer', pending_id: id, value })} />
+    {pendingRemote.status === 'loading' ? <p role="status">Loading pending asks…</p> : null}
+    {pendingRemote.status === 'failed' ? <Unavailable reason={pendingRemote.reason} onRetry={() => setRetryToken(t => t + 1)} /> : null}
+    {pendingRemote.status === 'loading' || pendingRemote.status === 'failed' ? null : <Inbox items={pending} onAnswer={(id, value) => send({ type: 'pending_answer', pending_id: id, value })} />}
     <UndoDrawer entries={undoEntries} onUndo={(id, force, reason) => send({ type: 'undo_apply', id, force, ...(reason ? { reason } : {}) })} />
-    <Observability report={report} budget={liveBudget} />
+    {(metricsRemote.status === 'failed' || usageRemote.status === 'failed' || routingRemote.status === 'failed') ? <Unavailable reason={[metricsRemote.status === 'failed' ? `metrics: ${metricsRemote.reason}` : '', usageRemote.status === 'failed' ? `usage: ${usageRemote.reason}` : '', routingRemote.status === 'failed' ? `routing: ${routingRemote.reason}` : ''].filter(Boolean).join(' · ')} onRetry={() => setRetryToken(t => t + 1)} /> : null}
+    {metricsRemote.status === 'loading' && usageRemote.status === 'loading' && routingRemote.status === 'loading' ? <p role="status">Loading observability…</p> : <Observability report={report} budget={liveBudget} />}
     <AuditTable baseUrl={base} scope={scope} />
     <SkillsQueue proposed={skills?.proposed} installed={skills?.installed} content={content} onAction={(action, name) => send({ type: action === 'promote' ? 'skill_promote' : 'skill_discard', name })} onSave={(name, value) => send({ type: 'skill_save', name, content: value })} />
-    <Channels channels={channels} />
+    {channelsRemote.status === 'loading' ? <p role="status">Loading channels…</p> : null}
+    {channelsRemote.status === 'failed' ? <Unavailable reason={channelsRemote.reason} onRetry={() => setRetryToken(t => t + 1)} /> : null}
+    {channelsRemote.status === 'loading' || channelsRemote.status === 'failed' ? null : <Channels channels={channels} />}
   </main></Shell>
 }

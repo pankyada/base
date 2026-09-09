@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UIMessage } from '../lib/types'
 import { buildScopedUrl, isStaleScope, type RequestScope } from '../lib/scopedRequest'
+import { fetchRemote } from '../lib/remoteData'
 
 export function normalizeTranscript(rows: unknown[]): UIMessage[] {
   return rows.map((row, index) => {
@@ -27,19 +28,18 @@ export function useHarnessQuery(baseUrl: string, sessionId: string, onMessages: 
     if (!sessionId || sessionId === '…') return
     const requestedScope = scopeRef.current
     setLoading(true); setError(undefined)
-    try {
-      const response = await fetch(transcriptUrl(baseUrl, sessionId, requestedScope, cursor))
-      if (isStaleScope(requestedScope, scopeRef.current)) return
-      if (!response.ok) throw new Error(`transcript request failed (${response.status})`)
-      const body = await response.json() as TranscriptResponse
+    // fetchRemote turns both a network failure and a non-ok status into `failed` — no silent fallback
+    // to an empty transcript when the read never actually succeeded.
+    const result = await fetchRemote<TranscriptResponse>(transcriptUrl(baseUrl, sessionId, requestedScope, cursor), body => (body.messages ?? []).length === 0)
+    if (isStaleScope(requestedScope, scopeRef.current)) return
+    if (result.status === 'failed') {
+      setError(result.reason)
+    } else {
+      const body = result.status === 'ready' ? result.data : {}
       onMessages(normalizeTranscript(body.messages ?? []), Boolean(cursor))
       setBefore(body.before)
-    } catch (cause) {
-      if (isStaleScope(requestedScope, scopeRef.current)) return
-      setError(cause instanceof Error ? cause.message : 'transcript request failed')
-    } finally {
-      if (!isStaleScope(requestedScope, scopeRef.current)) setLoading(false)
     }
+    setLoading(false)
   }, [baseUrl, onMessages, sessionId])
   // Scope change (identity or profile) clears the transcript cursor and re-fetches from scratch — the caller's onMessages(prepend=false) replaces stale content.
   useEffect(() => { setBefore(undefined); void request() }, [request, scope.userId, scope.profile])
