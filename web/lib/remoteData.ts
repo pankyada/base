@@ -45,23 +45,54 @@ export async function fetchRemote<T>(url: string, isEmpty: (data: T) => boolean 
 }
 
 /**
- * Scope-aware `fetchRemote`: builds the URL from the active identity/profile and, once the response
- * lands, checks whether the scope that issued the request is still current. If the operator switched
- * identity/profile mid-flight the result is discarded (`'stale'`) rather than applied — this is the
- * same discard rule sprint C2 established in `useHarnessQuery`/`RunBoard`/`AuditTable`, just factored
- * out so C4's read-state wrapper composes with it instead of duplicating it.
+ * Scope-aware `fetchRemote`. Two scope concepts are deliberately kept apart here:
+ *
+ * - `ambientScope` — the full active identity/profile in effect when the request was issued.
+ * - `urlScope` — which scope params this particular route's URL should actually carry (e.g. `/pending`
+ *   takes `user` only, never `profile`). Defaults to `ambientScope` for routes that take every field.
+ *
+ * Staleness is judged only over the fields present as keys in `urlScope` — i.e. the fields this route's
+ * result actually depends on — comparing `ambientScope` (captured at request time) against
+ * `currentScope()` (read once the response lands) restricted to those keys. A route whose URL omits a
+ * field (e.g. `/pending` never sends `profile`) must not go stale just because that field changes or
+ * arrives on the ambient scope later: the route's result never depended on it. A route whose URL does
+ * carry a field (the common case, `urlScope` defaulting to the full `ambientScope`) still discards on a
+ * genuine change to that field, same as before.
+ *
+ * Before this split, a route with a narrower URL scope reused that SAME truncated object for the
+ * staleness comparison against the full ambient scope. That compares apples (a scope literal missing
+ * the `profile` key entirely) to oranges (the full ambient scope, `profile` included) — the comparison
+ * was permanently true the instant `profile` arrived from the WS stream, even though the field the
+ * route's URL actually used (`user`) never changed. That discarded every response forever and left the
+ * panel stuck on "loading".
+ *
+ * If the operator switches identity/profile mid-flight, and that field is one the route's URL carries,
+ * the result is discarded (`'stale'`) rather than applied — this is the same discard rule sprint C2
+ * established in `useHarnessQuery`/`RunBoard`/`AuditTable`, just factored out so C4's read-state wrapper
+ * composes with it instead of duplicating it.
  */
 export async function fetchScopedRemote<T>(
   baseUrl: string,
   path: string,
-  requestedScope: RequestScope,
+  ambientScope: RequestScope,
   currentScope: () => RequestScope,
-  extraParams: Record<string, string | undefined> = {},
-  isEmpty: (data: T) => boolean = defaultIsEmpty as (data: T) => boolean,
+  options: {
+    /** Scope fields this route's URL should actually carry, AND the fields staleness is judged over. Defaults to `ambientScope` for routes that take every field; pass a narrower object literal (e.g. `{ userId: ambientScope.userId }`, omitting the `profile` key entirely) for a route that omits one. */
+    urlScope?: RequestScope
+    extraParams?: Record<string, string | undefined>
+    isEmpty?: (data: T) => boolean
+  } = {},
 ): Promise<RemoteData<T> | 'stale'> {
-  const url = buildScopedUrl(baseUrl, path, requestedScope, extraParams)
+  const { urlScope = ambientScope, extraParams = {}, isEmpty = defaultIsEmpty as (data: T) => boolean } = options
+  const url = buildScopedUrl(baseUrl, path, urlScope, extraParams)
   const result = await fetchRemote<T>(url, isEmpty)
-  if (isStaleScope(requestedScope, currentScope())) return 'stale'
+  const relevantKeys = Object.keys(urlScope) as (keyof RequestScope)[]
+  const project = (scope: RequestScope): RequestScope => {
+    const projected: RequestScope = {}
+    for (const key of relevantKeys) projected[key] = scope[key]
+    return projected
+  }
+  if (isStaleScope(project(ambientScope), project(currentScope()))) return 'stale'
   return result
 }
 

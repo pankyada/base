@@ -23,7 +23,7 @@ export function AuditTable({ baseUrl, scope = {}, entries: initialEntries = [] }
     const requestedScope = scopeRef.current
     setRemote({ status: 'loading' })
     setEntries([]) // drop the previous scope's audit rows before the new scoped read lands
-    void fetchScopedRemote<AuditBody>(baseUrl, '/audit', requestedScope, () => scopeRef.current, { tainted: tainted ? 'true' : undefined, tool: tool || undefined }, body => (body.entries ?? []).length === 0).then(result => {
+    void fetchScopedRemote<AuditBody>(baseUrl, '/audit', requestedScope, () => scopeRef.current, { extraParams: { tainted: tainted ? 'true' : undefined, tool: tool || undefined }, isEmpty: body => (body.entries ?? []).length === 0 }).then(result => {
       if (result === 'stale') return
       setRemote(result)
       setEntries(result.status === 'ready' ? (result.data.entries ?? []) : [])

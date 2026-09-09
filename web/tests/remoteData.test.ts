@@ -57,6 +57,60 @@ describe('remoteData', () => {
     expect(result).toEqual({ status: 'ready', data: { a: 1 } })
   })
 
+  // Regression: a route whose URL legitimately omits `profile` (urlScope narrower than the ambient
+  // scope) must not be judged stale just because the ambient `profile` differs from what the URL
+  // carried -- staleness has to compare the full ambient scope, not the truncated URL scope. Before
+  // the fix, passing the truncated object as both the URL scope AND the staleness-comparison scope
+  // meant this exact case (profile arrives on the ambient scope after the request went out, while the
+  // request's own ambient scope never actually changed) was permanently discarded as 'stale'.
+  it('a route whose URL omits profile is not marked stale when the ambient profile is set', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ a: 1 }), { status: 200 }))
+    const ambientScope = { userId: 'user-a', profile: 'coding' }
+    const result = await fetchScopedRemote('http://x', '/thing', ambientScope, () => ambientScope, { urlScope: { userId: ambientScope.userId } })
+    expect(result).not.toBe('stale')
+    expect(result).toEqual({ status: 'ready', data: { a: 1 } })
+  })
+
+  it('a route whose URL omits profile is not marked stale when the profile arrives mid-flight (no real ambient scope change)', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ a: 1 }), { status: 200 }))
+    let ambient = { userId: 'user-a', profile: undefined as string | undefined }
+    const requestedScope = { ...ambient }
+    const promise = fetchScopedRemote('http://x', '/thing', requestedScope, () => ambient, { urlScope: { userId: requestedScope.userId } })
+    ambient = { userId: 'user-a', profile: 'coding' } // profile lands from session_ready while the request is in flight -- but the request's OWN ambient scope (captured at fetch time) never changed, so this must not be treated as a scope switch.
+    const result = await promise
+    expect(result).not.toBe('stale')
+  })
+
+  it('a genuine identity switch mid-flight is still discarded even when the URL omits profile', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ a: 1 }), { status: 200 }))
+    let ambient = { userId: 'user-a', profile: 'coding' }
+    const requestedScope = { ...ambient }
+    const promise = fetchScopedRemote('http://x', '/thing', requestedScope, () => ambient, { urlScope: { userId: requestedScope.userId } })
+    ambient = { userId: 'user-b', profile: 'coding' } // real identity switch
+    const result = await promise
+    expect(result).toBe('stale')
+  })
+
+  it('a profile switch mid-flight does NOT discard a route whose URL omits profile -- the route never depended on it', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ a: 1 }), { status: 200 }))
+    let ambient = { userId: 'user-a', profile: 'coding' }
+    const requestedScope = { ...ambient }
+    const promise = fetchScopedRemote('http://x', '/thing', requestedScope, () => ambient, { urlScope: { userId: requestedScope.userId } })
+    ambient = { userId: 'user-a', profile: 'data' } // profile switch, irrelevant to this route's URL scope
+    const result = await promise
+    expect(result).not.toBe('stale')
+  })
+
+  it('a genuine profile switch mid-flight IS discarded for a route whose URL carries profile', async () => {
+    mockFetchOnce(() => new Response(JSON.stringify({ a: 1 }), { status: 200 }))
+    let ambient = { userId: 'user-a', profile: 'coding' }
+    const requestedScope = { ...ambient }
+    const promise = fetchScopedRemote('http://x', '/thing', requestedScope, () => ambient) // urlScope defaults to the full ambient scope, so profile is relevant here
+    ambient = { userId: 'user-a', profile: 'data' } // real profile switch
+    const result = await promise
+    expect(result).toBe('stale')
+  })
+
   it('a partial batch reports per-part success and failure independently', async () => {
     const batch = await fetchBatch({
       metrics: () => Promise.resolve({ status: 'ready' as const, data: { m: 1 } }),

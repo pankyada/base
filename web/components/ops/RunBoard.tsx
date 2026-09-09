@@ -30,7 +30,7 @@ export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [] }: { b
     const requestedScope = scopeRef.current
     setRemote({ status: 'loading' })
     setRows([]) // drop the previous scope's runs before the new scoped read lands
-    void fetchScopedRemote<RunsBody>(baseUrl, '/runs', requestedScope, () => scopeRef.current, {}, body => (body.runs ?? []).length === 0).then(result => {
+    void fetchScopedRemote<RunsBody>(baseUrl, '/runs', requestedScope, () => scopeRef.current, { isEmpty: body => (body.runs ?? []).length === 0 }).then(result => {
       if (result === 'stale') return
       setRemote(result)
       if (result.status === 'ready') setRows(result.data.runs ?? [])

@@ -4,20 +4,37 @@
     {
       "name": "architecture-site",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "serve", "-l", "8765", "/Users/pankajkumaryadav/Desktop/development/base/docs/architecture-site"],
+      "runtimeArgs": [
+        "--yes",
+        "serve",
+        "-l",
+        "8765",
+        "/Users/pankajkumaryadav/Desktop/development/base/docs/architecture-site"
+      ],
       "port": 8765
     },
     {
       "name": "docs-site",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "harness-docs", "preview", "--port", "4174"],
+      "runtimeArgs": [
+        "--filter",
+        "harness-docs",
+        "preview",
+        "--port",
+        "4174"
+      ],
       "port": 4174
     },
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "harness-web", "dev"],
-      "port": 3000
+      "runtimeArgs": [
+        "--filter",
+        "harness-web",
+        "dev"
+      ],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }

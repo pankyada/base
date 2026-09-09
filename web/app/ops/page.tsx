@@ -62,12 +62,12 @@ export default function OpsPage() {
     setChannels([]); setChannelsRemote({ status: 'loading' })
     setReport({}); setMetricsRemote({ status: 'loading' }); setUsageRemote({ status: 'loading' }); setRoutingRemote({ status: 'loading' })
 
-    void fetchScopedRemote<{ pending?: PendingItem[] }>(base, '/pending', { userId: requestedScope.userId }, currentScope, {}, body => (body.pending ?? []).length === 0).then(result => {
+    void fetchScopedRemote<{ pending?: PendingItem[] }>(base, '/pending', requestedScope, currentScope, { urlScope: { userId: requestedScope.userId }, isEmpty: body => (body.pending ?? []).length === 0 }).then(result => {
       if (result === 'stale') return
       setPendingRemote(result)
       setPending(result.status === 'ready' ? (result.data.pending ?? []) : [])
     })
-    void fetchScopedRemote<{ channels?: ChannelStatus[] }>(base, '/channels', { userId: requestedScope.userId }, currentScope, {}, body => (body.channels ?? []).length === 0).then(result => {
+    void fetchScopedRemote<{ channels?: ChannelStatus[] }>(base, '/channels', requestedScope, currentScope, { urlScope: { userId: requestedScope.userId }, isEmpty: body => (body.channels ?? []).length === 0 }).then(result => {
       if (result === 'stale') return
       setChannelsRemote(result)
       setChannels(result.status === 'ready' ? (result.data.channels ?? []) : [])

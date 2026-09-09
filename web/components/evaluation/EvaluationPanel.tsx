@@ -12,10 +12,11 @@ export function EvaluationPanel({ baseUrl, scope = {} }: { baseUrl: string; scop
   const scopeRef = useRef(scope)
   scopeRef.current = scope
   useEffect(() => {
-    const requestedScope = { userId: scope.userId }
+    const requestedScope = scope
     setRemote({ status: 'loading' })
     setRuns([]); setDeltas(null) // drop the previous scope's evaluation runs before the new scoped read lands
-    void fetchScopedRemote<EvaluationsBody>(baseUrl, '/evaluations', requestedScope, () => ({ userId: scopeRef.current.userId }), {}, body => (body.runs ?? []).length === 0).then(result => {
+    // /evaluations is scoped by `user` only in its URL, but staleness must still compare the full ambient scope (userId + profile) — a narrower URL scope must not make the response permanently stale once profile arrives.
+    void fetchScopedRemote<EvaluationsBody>(baseUrl, '/evaluations', requestedScope, () => scopeRef.current, { urlScope: { userId: requestedScope.userId }, isEmpty: body => (body.runs ?? []).length === 0 }).then(result => {
       if (result === 'stale') return
       setRemote(result)
       setRuns(result.status === 'ready' ? (result.data.runs ?? []) : [])
