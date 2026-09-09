@@ -50,6 +50,11 @@ describe('scope staleness', () => {
   it('scopeKey distinguishes profile-only changes', () => {
     expect(scopeKey({ userId: 'user-a', profile: 'coding' })).not.toBe(scopeKey({ userId: 'user-a', profile: 'data' }))
   })
+
+  it('scopeKey does not collide when a field value contains the delimiter', () => {
+    // A space-joined key would make {userId:"a b"} indistinguishable from {userId:"a",profile:"b"}.
+    expect(scopeKey({ userId: 'a b' })).not.toBe(scopeKey({ userId: 'a', profile: 'b' }))
+  })
 })
 
 describe('aggregate routes stay unscoped', () => {

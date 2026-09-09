@@ -1,7 +1,7 @@
 'use client'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import type { ClientMessage, ServerMessage } from '../lib/types'
-import { PROTOCOL_VERSION } from '../lib/protocol'
+import { createConnect, makeConnectionRefs, teardownConnection, type SocketLike } from '../lib/wsLifecycle'
 
 interface Options {
   userId?: string
@@ -42,60 +42,41 @@ export function sendFailureReason(result: SendResult): string {
 }
 
 export function useHarnessWS(url: string, onMessage: (m: ServerMessage) => void, opts: Options = {}) {
-  const ws = useRef<WebSocket | null>(null)
-  const retry = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [status, setStatus] = useState<'connecting'|'open'|'closed'|'error'>('connecting')
-  const backoff = useRef(1000)
   const onMessageRef = useRef(onMessage)
   onMessageRef.current = onMessage
   const optsRef = useRef(opts)
   optsRef.current = opts
+  // The single-socket / reconnect-recovery state machine lives in lib/wsLifecycle.ts so it can
+  // be unit-tested against a fake socket (tests/wsConnectionLifecycle.test.ts) — this hook only
+  // wires it to real browser APIs (WebSocket, React state, refs).
+  const refs = useRef(makeConnectionRefs()).current
 
   const connect = useCallback(() => {
-    if (retry.current) { clearTimeout(retry.current); retry.current = null }
-    setStatus('connecting')
-    const sock = new WebSocket(url)
-    ws.current = sock
-    sock.onopen = () => {
-      if (ws.current !== sock) return
-      setStatus('open')
-      backoff.current = 1000
-      sendFrame(sock, {
-        type: 'hello',
-        protocol_version: PROTOCOL_VERSION,
-        wasm_supported: true,
-        user_id: optsRef.current.userId ?? 'web-user',
-      } as ClientMessage)
-    }
-    sock.onmessage = e => {
-      // Ignore frames from a socket this hook has already superseded.
-      if (ws.current !== sock) return
-      try { onMessageRef.current(JSON.parse(e.data)) } catch {}
-    }
-    sock.onclose = () => {
-      if (ws.current !== sock) return
-      setStatus('closed')
-      const delay = backoff.current
-      backoff.current = Math.min(backoff.current * 2, 30000)
-      retry.current = setTimeout(connect, delay)
-    }
-    sock.onerror = () => { if (ws.current === sock) setStatus('error') }
-  }, [url])
+    const runner = createConnect(
+      {
+        url,
+        userId: () => optsRef.current.userId ?? 'web-user',
+        socketFactory: (u: string) => new WebSocket(u) as unknown as SocketLike,
+        setStatus,
+        onMessage: m => onMessageRef.current(m),
+      },
+      refs,
+    )
+    runner()
+  }, [url, refs])
 
   useEffect(() => {
-    const sock = ws.current
-    ws.current = null
-    sock?.close()
+    // A new identity/URL is a fresh start, not a network reconnect — do not try to `resume` the
+    // previous identity's session onto this one.
+    teardownConnection(refs)
+    refs.recovery.current = {}
+    refs.hasConnectedBefore.current = false
     connect()
-    return () => {
-      if (retry.current) { clearTimeout(retry.current); retry.current = null }
-      const s = ws.current
-      ws.current = null
-      s?.close()
-    }
-  }, [connect, opts.userId])
+    return () => teardownConnection(refs)
+  }, [connect, opts.userId, refs])
 
-  const send = useCallback((msg: ClientMessage): SendResult => sendFrame(ws.current, msg), [])
+  const send = useCallback((msg: ClientMessage): SendResult => sendFrame(refs.ws.current as unknown as WritableSocket | null, msg), [refs])
 
   return { send, status, reconnect: connect }
 }

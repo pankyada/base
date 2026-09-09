@@ -106,6 +106,8 @@ type Model struct {
 	resumeID           string
 	resumeRequested    bool
 	continueLookup     bool
+	reconnectTarget    string // sessionID to restore after a reconnect; set on disconnect, cleared once resume settles
+	reconnectPending   bool   // true while a reconnect-driven resume is outstanding
 	workingDir         string
 	activeTool         string
 	activeToolID       string
@@ -334,7 +336,21 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		_ = m.send(protocol.ModelsList()) // background sync on connect; refreshed again on next reconnect
 		_ = m.send(protocol.SkillsList()) // background sync on connect; refreshed again on next reconnect
 		_ = m.send(protocol.CommandsList()) // background sync on connect; refreshed again on next reconnect
-		if !m.resumeRequested {
+		if m.reconnectTarget != "" {
+			// A reconnect after we already had a session attached: hello just
+			// attached us to a brand-new server-side session (sendSessionReady
+			// runs unconditionally on every hello), so explicitly re-resume the
+			// one the operator was actually in through the existing
+			// resume/session_resumed contract (the PT-024 recovery path)
+			// rather than leaving them silently parked in the new one.
+			m.reconnectPending = true
+			if err := m.send(protocol.Resume(m.reconnectTarget)); err != nil {
+				m.reportSendFailure("session restore", err)
+				m.notices.Add(NoticeError, "session not restored", err.Error(), "continuing in a new session")
+				m.reconnectPending = false
+				m.reconnectTarget = ""
+			}
+		} else if !m.resumeRequested {
 			if m.resumeID != "" {
 				if err := m.send(protocol.Resume(m.resumeID)); err != nil {
 					m.reportSendFailure("resume", err)
@@ -354,6 +370,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ws.DisconnectedMsg:
 		m.connected = false
+		if m.sessionID != "" {
+			// Remember the session we were actually in so the next successful
+			// connect can restore it explicitly rather than silently drifting
+			// to whatever fresh session the server's hello handshake attaches.
+			m.reconnectTarget = m.sessionID
+		}
 		m.notices.SetDisconnected(true)
 		m.reflow()
 		return m, nil
@@ -1623,8 +1645,10 @@ func (m *Model) submit() tea.Cmd {
 		m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "memory", Text: memory, Time: time.Now().Format("15:04")})
 		if !m.startAgentMessage("Remember this user preference using MemoryWrite: " + memory) {
 			// Send failed — drop the memory turn we speculatively appended so
-			// the transcript doesn't claim a write that never went out.
+			// the transcript doesn't claim a write that never went out, and
+			// put the operator's typed text back like startMessage does.
 			m.transcript.Turns = append(m.transcript.Turns[:memoryTurnIdx], m.transcript.Turns[memoryTurnIdx+1:]...)
+			m.composer.input.SetValue(content)
 			m.reflow()
 		}
 		return nil
@@ -1692,9 +1716,14 @@ func (m *Model) startAgentMessage(content string) bool {
 	return true
 }
 
-func (m *Model) startPlanMessage(content string) {
+// startPlanMessage sends a "/plan <request>" turn. original is the full
+// composer text as typed (e.g. "/plan fix the bug") so a send failure can
+// restore it verbatim, matching startMessage's retained-input behavior —
+// handleSlash already consumed the composer by the time this runs.
+func (m *Model) startPlanMessage(content, original string) {
 	if err := m.send(protocol.PlanRequest(content)); err != nil {
 		m.reportSendFailure("plan", err)
+		m.composer.input.SetValue(original)
 		m.reflow()
 		return
 	}
@@ -1758,7 +1787,7 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 			m.notices.Add(NoticeError, "what should be planned?", "/plan <request>", "")
 			break
 		}
-		m.startPlanMessage(args)
+		m.startPlanMessage(args, content)
 	case "theme":
 		if args == "" {
 			m.openOverlay("theme")
@@ -2106,7 +2135,13 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.transcript.Turns = nil
 		m.workflowStages = map[string]StageItem{}
 		m.stageCosts = map[string]float64{}
-		m.notices.Add(NoticeInfo, "session resumed", msg.SessionID, "context restored on the server")
+		if m.reconnectPending {
+			m.reconnectPending = false
+			m.reconnectTarget = ""
+			m.notices.Add(NoticeInfo, "reconnected", "session "+msg.SessionID+" restored", "")
+		} else {
+			m.notices.Add(NoticeInfo, "session resumed", msg.SessionID, "context restored on the server")
+		}
 	case "skill_content":
 		m.skillPreview = msg.Content
 		m.skillPreviewOffset = 0
@@ -2223,6 +2258,16 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			m.startMessage(next)
 		}
 	case "error":
+		if m.reconnectPending {
+			// The session we tried to restore after a reconnect is gone
+			// server-side (e.g. deleted while we were offline). Say so
+			// plainly instead of leaving the operator to discover, mid-turn,
+			// that they are in a different session than before.
+			failedTarget := m.reconnectTarget
+			m.reconnectPending = false
+			m.reconnectTarget = ""
+			m.notices.Add(NoticeError, "session not restored", msg.Message, "continuing in a new session (was "+failedTarget+")")
+		}
 		m.running = false
 		m.activeTool = ""
 		m.activeToolID = ""

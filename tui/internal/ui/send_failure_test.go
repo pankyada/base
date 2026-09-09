@@ -100,13 +100,16 @@ func TestStartPlanMessageLeavesIdleOnSendFailure(t *testing.T) {
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})
 	turnsBefore := len(m.transcript.Turns)
 
-	m.startPlanMessage("plan this")
+	m.startPlanMessage("plan this", "/plan plan this")
 
 	if m.running {
 		t.Fatal("model entered a running state after a failed send")
 	}
 	if len(m.transcript.Turns) != turnsBefore {
 		t.Fatalf("failed send still added a transcript turn: %+v", m.transcript.Turns)
+	}
+	if got := m.composer.Value(); got != "/plan plan this" {
+		t.Fatalf("failed /plan send did not restore the composed input: got %q", got)
 	}
 }
 
@@ -126,6 +129,9 @@ func TestSubmitMemoryShortcutRollsBackOnSendFailure(t *testing.T) {
 		if turn.Role == "memory" {
 			t.Fatal("failed send left an orphaned memory turn")
 		}
+	}
+	if got := m.composer.Value(); got != "# prefers dark mode" {
+		t.Fatalf("failed '#' send did not restore the composed input: got %q", got)
 	}
 }
 
