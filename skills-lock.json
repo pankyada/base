@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/drawio/SKILL.md",
       "computedHash": "103e36aa3285707834ed8e5cb82bafaa748fb41ec1678698a333be60173b5cf1"
+    },
+    "graphify": {
+      "source": "Graphify-Labs/graphify",
+      "sourceType": "github",
+      "skillPath": "graphify/SKILL.md",
+      "computedHash": "da79286710aacbd5d905b777a598bd7d4ba57e0e1dfe504049c252bba4008beb"
     }
   }
 }

@@ -44,7 +44,7 @@ import { runApprovedPlanFollowOn, runInteractiveTurn } from './turn-runner.js'
 import { writeArtifact } from '../workflow/artifacts.js'
 import { sweepDeferredLabels } from '../workflow/labeler.js'
 import { discoverProfileModels } from '../models/discovery.js'
-import { listModels } from '../models/registry.js'
+import { listModels, validateModelEffort } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
@@ -392,6 +392,7 @@ async function main() {
     let approvalMode: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let approvalLimit: 'strict' | 'bash' | 'danger' | 'yolo' = 'danger'
     let connectionModel = profile.model.id
+    let connectionEffort: string | null = profile.model.reasoning_effort ?? (profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort ?? null : null)
     let connectionModels = listModels(profile)
     let modelCatalogRequest = 0
     let miningSkills = false
@@ -408,10 +409,25 @@ async function main() {
     let controllerId = randomUUID()
     let controllerLease: string | undefined
     let observerOnly = false
+    // Correlation is opt-in. Keep the request-to-action binding per socket so
+    // a replayed request can return its cached result, while reuse for a
+    // different action fails closed.
+    const correlatedDecisionActions = new Map<string, string>()
+    const runCorrelatedDecision = <T>(actionId: string, requestId: unknown, handler: () => T): T => {
+      if (requestId === undefined) return handler()
+      if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 256) throw new Error('invalid request id')
+      const previous = correlatedDecisionActions.get(requestId)
+      if (previous && previous !== actionId) throw new Error('request id already used for another action')
+      correlatedDecisionActions.set(requestId, actionId)
+      if (!controllerLease) throw new Error('controller lease required')
+      return sessionRuntime.respond(requestId, controllerId, controllerLease, handler)
+    }
     try { controllerLease = sessionRuntime.claim(controllerId).lease } catch { /* another controller may own an attached session */ }
 
     const rebuildConnectionProfile = () => {
-      connectionProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
+      const model = { ...baseProfile.model, id: connectionModel, reasoning_effort: connectionEffort ?? undefined,
+        ...(baseProfile.model.auth === 'codex_oauth' ? { codex: { ...baseProfile.model.codex, reasoning_effort: connectionEffort ?? undefined } } : {}) }
+      connectionProfile = { ...baseProfile, model }
       connectionProvider = createProvider(connectionProfile)
       connectionRawProvider = connectionProvider
       connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
@@ -436,6 +452,7 @@ async function main() {
       approvalLimit = resolveApprovalLimit(connectionProfile)
       approvalMode = approvalLimit
       connectionModel = connectionProfile.model.id
+      connectionEffort = connectionProfile.model.reasoning_effort ?? (connectionProfile.model.auth === 'codex_oauth' ? connectionProfile.model.codex.reasoning_effort ?? null : null)
       connectionProvider = createProvider(connectionProfile)
       connectionRawProvider = connectionProvider
       connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
@@ -486,9 +503,11 @@ async function main() {
     }
 
     const send = (msg: ServerMessage) => {
-      // Journal every wire event before delivery. Observer reconnect can catch
-      // up from this server-owned sequence without replaying execution.
-      sessionRuntime.emit(msg.type, msg)
+      // Journal wire events before delivery, except recovery snapshots.
+      // A runtime snapshot already contains the event tail; journaling it
+      // would recursively embed prior snapshots and grow persisted state on
+      // every attach/reconnect.
+      if (msg.type !== 'runtime') sessionRuntime.emit(msg.type, msg)
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
       if (msg.type !== 'runtime') {
         const runtime = sessionRuntime.state
@@ -532,9 +551,11 @@ async function main() {
       send({
         type: 'session_ready', sessionId: session.id, profile: connectionProfile.name,
         model: connectionProfile.model.id, working_dir: connectionProfile.working_dir,
+        effort: connectionEffort,
         allowed_packages: connectionProfile.executor?.allowed_packages ?? [],
         ...(budget ? { budget: { max_cost_usd: budget.max_cost_usd } } : {}),
         yolo: isYoloEnabled(approvalMode), protocol_version: protocolVersion, provider_status: providerStatus,
+        capabilities: { runtime_recovery: true, correlated_decisions: true, model_effort_selection: true },
       })
     }
 
@@ -804,9 +825,24 @@ async function main() {
         send({ type: 'error', message: 'Invalid JSON' })
         return
       }
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof (msg as any).type !== 'string') {
+        send({ type: 'error', message: 'Invalid message' })
+        return
+      }
+      const correlatedType = msg.type === 'attach' || msg.type === 'runtime_subscribe'
+      const rawRequestId = (msg as any).request_id
+      const correlation = correlatedType && rawRequestId !== undefined
+        ? (typeof rawRequestId === 'string' && rawRequestId.length > 0 && rawRequestId.length <= 256 ? { request_id: rawRequestId } : null)
+        : {}
+      if (correlation === null) { send({ type: 'error', message: 'invalid request id' }); return }
+      const decisionCorrelation = typeof rawRequestId === 'string' && rawRequestId.length > 0 && rawRequestId.length <= 256 ? { request_id: rawRequestId } : {}
 
       const mutatingMessages = new Set(['message', 'plan_request', 'cancel', 'tool_approve', 'tool_deny', 'input_response', 'code_result', 'ui_result', 'set_profile', 'set_model', 'set_approval_mode', 'skill_save', 'skill_promote', 'skill_discard', 'skills_mine', 'compact', 'pending_answer', 'undo_apply', 'spawn', 'agent_cancel', 'project_create', 'project_assign', 'mission_create', 'mission_human', 'challenge_open', 'challenge_answer'])
-      if (observerOnly && mutatingMessages.has(msg.type)) { send({ type: 'error', message: 'observer connection cannot mutate session; claim control first' }); return }
+      if (observerOnly && mutatingMessages.has(msg.type)) { send({ type: 'error', message: 'observer connection cannot mutate session; claim control first', ...decisionCorrelation }); return }
+      if (mutatingMessages.has(msg.type) && controllerLease) {
+        try { sessionRuntime.assertController(controllerId, controllerLease) }
+        catch { send({ type: 'error', message: 'stale or invalid controller lease', ...decisionCorrelation }); return }
+      }
 
       if (msg.type === 'hello') {
 		const requestedProtocolVersion = msg.protocol_version ?? 1
@@ -817,7 +853,10 @@ async function main() {
 		protocolVersion = requestedProtocolVersion
         // Only honour hello before the session has any messages
         if (session.messages.length === 0) {
-          userId = sanitizeUserId(msg.user_id)
+          if (msg.user_id !== undefined && (typeof msg.user_id !== 'string' || msg.user_id.length === 0 || msg.user_id.length > 256)) {
+            send({ type: 'error', message: 'invalid user scope' }); return
+          }
+          if (msg.user_id !== undefined) userId = sanitizeUserId(msg.user_id)
           challengeDesk = new ChallengeDesk(3, 1, join(userPaths(userId, '').missionsDir, 'challenges.json'))
           wasmSupported = msg.wasm_supported ?? false
           audioSupported = msg.audio_supported ?? false
@@ -832,8 +871,16 @@ async function main() {
 
       if (msg.type === 'attach') {
         try {
+          if (typeof msg.session_id !== 'string' || msg.session_id.length === 0 || (msg.mode !== 'observe' && msg.mode !== 'control')) { send({ type: 'error', message: 'invalid attach scope', ...correlation }); return }
           const target = sessionRuntimes.get(msg.session_id, userId)
-          if (!target) { send({ type: 'error', message: 'session not found or belongs to another user' }); return }
+          if (!target) { send({ type: 'error', message: 'session not found or belongs to another user', ...correlation }); return }
+          // Execution callbacks and profile/session state are connection
+          // owned. Until a full session handoff exists, fail closed instead
+          // of letting control messages target an attached runtime while
+          // continuing to mutate the original session.
+          if (msg.mode === 'control' && target.session_id !== session.id) {
+            send({ type: 'error', message: 'control attach requires a new session connection', ...correlation }); return
+          }
           removeRuntimePeer(sessionRuntime.session_id, ws)
           if (controllerLease) {
             try { sessionRuntime.release(controllerId, controllerLease) } catch { /* expired or already transferred */ }
@@ -845,16 +892,17 @@ async function main() {
           sessionRuntime = target
           addRuntimePeer(sessionRuntime.session_id, ws)
           const sub = target.subscribe(0)
-          send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap } })
-        } catch (error: any) { send({ type: 'error', message: error.message }) }
+          send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap }, ...correlation })
+        } catch (error: any) { send({ type: 'error', message: error.message, ...correlation }) }
         return
       }
 
       if (msg.type === 'runtime_subscribe') {
+        if (typeof msg.session_id !== 'string' || msg.session_id.length === 0 || (msg.after_seq !== undefined && (!Number.isInteger(msg.after_seq) || msg.after_seq < 0))) { send({ type: 'error', message: 'invalid runtime cursor', ...correlation }); return }
         const target = sessionRuntimes.get(msg.session_id, userId)
-        if (!target) { send({ type: 'error', message: 'session not found or belongs to another user' }); return }
+        if (!target) { send({ type: 'error', message: 'session not found or belongs to another user', ...correlation }); return }
         const sub = target.subscribe(msg.after_seq ?? 0)
-        send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap } })
+        send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap }, ...correlation })
         return
       }
 
@@ -1000,38 +1048,46 @@ async function main() {
       }
 
       if (msg.type === 'pending_answer') {
-        const pending = pendingStore.get(msg.pending_id)
-        if (!pending) {
-          send({ type: 'error', message: 'This request has expired or was already answered.' })
-          return
+        const executePendingAnswer = async () => {
+          const pending = pendingStore.get(msg.pending_id)
+          if (!pending) throw new Error('This request has expired or was already answered.')
+          const resumedRunId = pending.run_id
+          const sendForRun = makeRunEmitter(resumedRunId, send)
+          const result = await resumePendingInput(msg.pending_id, msg.value, 'ws', {
+            pendingStore, runStore, abortRegistry,
+            resolveProfile: name => profiles.get(name) ?? null,
+            channels: connectionChannels,
+            protocolVersion,
+            onAccepted: () => sendForRun({ type: 'turn_start' }),
+            events: {
+              onToken: (t, agentId) => sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }),
+              onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
+              onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
+              onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
+              onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
+              onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
+              onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId, usage) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, usage: usageMetadata(agentId ? usage : usage ?? session.usage), context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
+              onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
+              onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
+              onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools, usage) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools, usage: usageMetadata(usage) }),
+              onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
+              onInputRequest: (id, prompt, kind, options, agentId) => requestInput(resumedRunId, prompt, kind, options, id, agentId),
+            },
+          })
+          if (result.status === 'failed' || result.status === 'ignored') {
+            sendForRun({ type: 'error', message: result.status === 'failed' ? result.error : result.reason, ...(msg.request_id ? { request_id: msg.request_id } : {}) })
+          }
+          send({ type: 'pending_result', pending_id: msg.pending_id, status: result.status === 'completed' || result.status === 'waiting_input' ? 'answered' : result.status, ...(result.status === 'failed' || result.status === 'ignored' ? { error: result.status === 'failed' ? result.error : result.reason } : {}), ...(msg.request_id ? { request_id: msg.request_id } : {}) })
+          if (result.status !== 'ignored') sessionRuntime.emit('pending_answer', { id: msg.pending_id, run_id: resumedRunId })
+          sendPending()
+          return result
         }
-        const resumedRunId = pending.run_id
-		const sendForRun = makeRunEmitter(resumedRunId, send)
-		sendForRun({ type: 'turn_start' })
-        const result = await resumePendingInput(msg.pending_id, msg.value, 'ws', {
-          pendingStore, runStore, abortRegistry,
-          resolveProfile: name => profiles.get(name) ?? null,
-          channels: connectionChannels,
-          protocolVersion,
-          events: {
-            onToken: (t, agentId) => sendForRun({ type: 'token', content: t, ...(agentId ? { agent_id: agentId } : {}) }),
-            onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
-            onToolEnd: (id, n, r, ok, agentId) => sendForRun({ type: 'tool_end', id, name: n, result: r, ok, ...(agentId ? { agent_id: agentId } : {}) }),
-            onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
-            onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
-            onSessionEnd: id => sendForRun({ type: 'session_end', sessionId: id }),
-            onStats: (tokens_in, tokens_out, cost_usd, context_tokens, agentId, usage) => sendForRun({ type: 'stats', tokens_in, tokens_out, cost_usd, usage: usageMetadata(agentId ? usage : usage ?? session.usage), context_window: contextWindowFor(connectionProfile), context_tokens, ...(agentId ? { agent_id: agentId } : {}) }),
-            onAgentSpawn: (frame, input, budget) => sendForRun({ type: 'agent_spawn', frame, input, ...(budget ? { budget } : {}) }),
-            onAgentState: (agentId, state, tool) => sendForRun({ type: 'agent_state', agent_id: agentId, state, ...(tool ? { tool } : {}) }),
-            onAgentStats: (agentId, tokens_in, tokens_out, cost_usd, tools, usage) => sendForRun({ type: 'agent_stats', agent_id: agentId, tokens_in, tokens_out, cost_usd, tools, usage: usageMetadata(usage) }),
-            onAgentEnd: (agentId, status, error, output, durationMs = 0) => sendForRun({ type: 'agent_end', agent_id: agentId, status, ...(error ? { error } : {}), ...(output !== undefined ? { output } : {}), duration_ms: durationMs }),
-            onInputRequest: (id, prompt, kind, options, agentId) => requestInput(resumedRunId, prompt, kind, options, id, agentId),
-          },
-        })
-        if (result.status === 'failed' || result.status === 'ignored') {
-          sendForRun({ type: 'error', message: result.status === 'failed' ? result.error : result.reason })
+        try {
+          const result = await runCorrelatedDecision(msg.pending_id, msg.request_id, executePendingAnswer)
+          if (msg.request_id && result.status !== 'ignored') send({ type: 'notice', level: 'info', message: 'pending answer accepted', request_id: msg.request_id })
+        } catch (error: any) {
+          send({ type: 'error', message: error.message, ...(msg.request_id ? { request_id: msg.request_id } : {}) })
         }
-        sendPending()
         return
       }
 
@@ -1065,7 +1121,7 @@ async function main() {
         if (baseProfile !== selectedProfile || request !== modelCatalogRequest || ws.readyState !== WebSocket.OPEN) return
         connectionModels = models
         for (const message of notices.filter(message => /unavailable|No API key/.test(message))) send({ type: 'notice', level: 'warn', message })
-        send({ type: 'models', models, current: connectionModel })
+        send({ type: 'models', models, current: connectionModel, effort: connectionEffort })
         return
       }
 
@@ -1099,16 +1155,17 @@ async function main() {
           send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason })
           return
         }
-        if (!candidate) {
-          if (connectionProfile.model.auth === 'codex_oauth') {
-            send({ type: 'notice', level: 'error', message: `unknown Codex model ${msg.model}`, detail: 'choose a model from models_list' })
-            return
-          }
-          send({ type: 'notice', level: 'warn', message: `unknown model ${msg.model}`, detail: 'fallback pricing applies' })
+        if (!candidate) candidate = { id: msg.model, label: msg.model, provider: connectionProfile.model.auth === 'codex_oauth' ? 'OpenAI Codex' : 'custom provider', base_url: connectionProfile.model.auth === 'codex_oauth' ? '' : connectionProfile.model.base_url, context_window: 0, input_price: 0, output_price: 0, tags: ['unknown'], available: true, effort: { status: 'unknown', options: [], source: 'live', checked_at: new Date().toISOString(), stale: false } }
+        const requestedEffort = msg.effort === undefined ? (msg.model === connectionModel ? connectionEffort : null) : msg.effort
+        const effortResult = validateModelEffort(candidate, requestedEffort)
+        if (!effortResult.ok) {
+          send({ type: 'notice', level: 'error', message: 'model effort change refused', detail: effortResult.reason, ...(msg.request_id ? { request_id: msg.request_id } : {}) })
+          return
         }
         connectionModel = msg.model
+        connectionEffort = effortResult.effort
         rebuildConnectionProfile()
-        send({ type: 'model_changed', model: connectionModel })
+        send({ type: 'model_changed', model: connectionModel, effort: connectionEffort, ...(msg.request_id ? { request_id: msg.request_id } : {}) })
         return
       }
 
@@ -1242,43 +1299,73 @@ async function main() {
       }
 
       if (msg.type === 'tool_approve' || msg.type === 'tool_deny') {
-        const pending = pendingApprovals.get(msg.id)
-        if (pending) {
-          pendingApprovals.delete(msg.id)
-          if (msg.type === 'tool_approve' && msg.remember) sessionApprovalGrants.remember(pending.name, 'prompt')
-          pending.resolve(msg.type === 'tool_approve')
-        }
+        if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 256) { send({ type: 'error', message: 'invalid decision id' }); return }
+        try {
+          runCorrelatedDecision(msg.id, msg.request_id, () => {
+            const pending = pendingApprovals.get(msg.id)
+            if (!pending) throw new Error('stale or unknown decision id')
+            if (msg.type === 'tool_approve' && msg.remember) sessionApprovalGrants.remember(pending.name, 'prompt')
+            pending.resolve(msg.type === 'tool_approve')
+            pendingApprovals.delete(msg.id)
+            sessionRuntime.emit(msg.type, { id: msg.id })
+            return true
+          })
+          if (msg.request_id) send({ type: 'notice', level: 'info', message: 'decision accepted', request_id: msg.request_id })
+        } catch (error: any) { send({ type: 'error', message: error.message, ...(msg.request_id ? { request_id: msg.request_id } : {}) }) }
         return
       }
 
       if (msg.type === 'input_response') {
-        const cb = pendingInputRequests.get(msg.id)
-        if (cb) { pendingInputRequests.delete(msg.id); cb(msg.value) }
+        if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 256) { send({ type: 'error', message: 'invalid response id' }); return }
+        if (typeof msg.value !== 'string') { send({ type: 'error', message: 'invalid response value' }); return }
+        try {
+          runCorrelatedDecision(msg.id, msg.request_id, () => {
+            const cb = pendingInputRequests.get(msg.id)
+            if (!cb) throw new Error('stale or unknown response id')
+            cb(msg.value); pendingInputRequests.delete(msg.id); sessionRuntime.emit(msg.type, { id: msg.id })
+            return true
+          })
+          if (msg.request_id) send({ type: 'notice', level: 'info', message: 'response accepted', request_id: msg.request_id })
+        } catch (error: any) { send({ type: 'error', message: error.message, ...(msg.request_id ? { request_id: msg.request_id } : {}) }) }
         return
       }
 
       if (msg.type === 'code_result') {
-        const cb = pendingCodeExecutions.get(msg.id)
-        if (cb) {
-          pendingCodeExecutions.delete(msg.id)
-          cb({ id: msg.id, stdout: msg.stdout, stderr: msg.stderr, exit_code: msg.exit_code, files: msg.files, duration_ms: 0 })
-        }
+        if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 256) { send({ type: 'error', message: 'invalid result id' }); return }
+        try {
+          runCorrelatedDecision(msg.id, msg.request_id, () => {
+            const cb = pendingCodeExecutions.get(msg.id)
+            if (!cb) throw new Error('stale or unknown result id')
+            cb({ id: msg.id, stdout: msg.stdout, stderr: msg.stderr, exit_code: msg.exit_code, files: msg.files, duration_ms: 0 })
+            pendingCodeExecutions.delete(msg.id)
+            sessionRuntime.emit(msg.type, { id: msg.id })
+            return true
+          })
+          if (msg.request_id) send({ type: 'notice', level: 'info', message: 'result accepted', request_id: msg.request_id })
+        } catch (error: any) { send({ type: 'error', message: error.message, ...(msg.request_id ? { request_id: msg.request_id } : {}) }) }
         return
       }
 
       if (msg.type === 'ui_result') {
-        const cb = pendingRenders.get(msg.id)
-        if (cb) {
-          pendingRenders.delete(msg.id)
-          cb({
-            id: msg.id,
-            ok: msg.ok !== false,
-            errors: Array.isArray(msg.errors) ? msg.errors.slice(0, 20).map(String) : [],
-            stdout: typeof msg.stdout === 'string' ? msg.stdout.slice(0, 8000) : undefined,
-            duration_ms: Number(msg.duration_ms) || 0,
-            bytes: Number(msg.bytes) || 0,
+        if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 256) { send({ type: 'error', message: 'invalid result id' }); return }
+        try {
+          runCorrelatedDecision(msg.id, msg.request_id, () => {
+            const cb = pendingRenders.get(msg.id)
+            if (!cb) throw new Error('stale or unknown result id')
+            cb({
+              id: msg.id,
+              ok: msg.ok !== false,
+              errors: Array.isArray(msg.errors) ? msg.errors.slice(0, 20).map(String) : [],
+              stdout: typeof msg.stdout === 'string' ? msg.stdout.slice(0, 8000) : undefined,
+              duration_ms: Number(msg.duration_ms) || 0,
+              bytes: Number(msg.bytes) || 0,
+            })
+            pendingRenders.delete(msg.id)
+            sessionRuntime.emit(msg.type, { id: msg.id })
+            return true
           })
-        }
+          if (msg.request_id) send({ type: 'notice', level: 'info', message: 'result accepted', request_id: msg.request_id })
+        } catch (error: any) { send({ type: 'error', message: error.message, ...(msg.request_id ? { request_id: msg.request_id } : {}) }) }
         return
       }
 
@@ -1298,6 +1385,7 @@ async function main() {
           baseProfile = profiles.get(loaded.profile) ?? baseProfile
           connectionProfile = baseProfile
           connectionModel = connectionProfile.model.id
+          connectionEffort = connectionProfile.model.reasoning_effort ?? (connectionProfile.model.auth === 'codex_oauth' ? connectionProfile.model.codex.reasoning_effort ?? null : null)
           connectionProvider = createProvider(connectionProfile)
           connectionRawProvider = connectionProvider
           connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)

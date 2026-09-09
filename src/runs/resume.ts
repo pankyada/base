@@ -15,6 +15,8 @@ export interface ResumePendingOptions {
   channels?: ChannelRuntime
   events?: AgentLoopEvents
   protocolVersion?: number
+  /** Called only after the durable pending record accepts the answer. */
+  onAccepted?: (pending: PendingInput) => void
 }
 
 export type ResumePendingResult =
@@ -32,8 +34,20 @@ export async function resumePendingInput(
   const existing = opts.pendingStore.get(pendingId)
   if (!existing || existing.state !== 'open') return { status: 'ignored', reason: 'pending input is not open' }
 
+  // Verify ownership and resumability before changing the durable question.
+  // Otherwise a stale or cross-scope request could consume a question that
+  // can no longer be resumed.
+  const target = opts.runStore.get(existing.run_id)
+  if (!target || target.status !== 'waiting_input' || target.user !== existing.user || target.session_id !== existing.session_id || target.profile !== existing.profile) {
+    return { status: 'ignored', reason: 'run is not waiting for input' }
+  }
+  if (!opts.resolveProfile(target.profile) || !loadSession(target.user, existing.session_id)) {
+    return { status: 'ignored', reason: 'pending input target is unavailable' }
+  }
+
   const pending = opts.pendingStore.answer(pendingId, answer, answeredVia)
   if (!pending || pending.state !== 'answered') return { status: 'ignored', reason: 'pending input could not be answered' }
+  opts.onAccepted?.(pending)
 
   return continuePendingRun(pending, answer, opts)
 }
@@ -57,6 +71,9 @@ async function continuePendingRun(
 ): Promise<ResumePendingResult> {
   const run = opts.runStore.get(pending.run_id)
   if (!run || run.status !== 'waiting_input') return { status: 'ignored', reason: 'run is not waiting for input' }
+  if (run.user !== pending.user || run.session_id !== pending.session_id || run.profile !== pending.profile) {
+    return { status: 'ignored', reason: 'pending input scope does not match run' }
+  }
   if (!pending.tool_call_id) return { status: 'failed', run_id: pending.run_id, error: 'pending input has no tool call id' }
 
   const profile = opts.resolveProfile(run.profile)
@@ -94,13 +111,21 @@ async function continuePendingRun(
       protocolVersion: opts.protocolVersion,
     })
     saveSession(result.session)
+    const current = opts.runStore.get(run.id)
+    if (!current || current.status !== 'running') {
+      return { status: 'ignored', reason: `run was ${current?.status ?? 'removed'} during resume` }
+    }
     opts.runStore.update(run.id, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
     return { status: 'completed', run_id: run.id, session_id: result.session.id, finalText: result.finalText }
   } catch (error: any) {
     if (isParkSignal(error)) {
+      const current = opts.runStore.get(run.id)
+      if (current?.status === 'cancelled') return { status: 'ignored', reason: 'run was cancelled during resume' }
       opts.runStore.update(run.id, { status: 'waiting_input', session_id: error.sessionId })
       return { status: 'waiting_input', pending_id: error.pendingId, run_id: run.id, session_id: error.sessionId }
     }
+    const current = opts.runStore.get(run.id)
+    if (current?.status === 'cancelled') return { status: 'ignored', reason: 'run was cancelled during resume' }
     return failRun(run.id, opts, error.message)
   } finally {
     opts.abortRegistry.delete(run.id)

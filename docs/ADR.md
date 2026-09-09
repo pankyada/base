@@ -23,6 +23,9 @@ pointer to what replaced them.
 | ADR | Decision | Status | Area |
 |---|---|---|---|
 | [79](#adr-79) | Explicit Codex OAuth transport alongside API-key defaults | 🔄 | providers |
+| [80](#adr-80) | Caller scope normalized before Core ownership checks | ✅ | server |
+| [81](#adr-81) | Runtime recovery retains state, never executable authority | 🔄 | runtime |
+| [82](#adr-82) | Provider effort metadata is evidence-scoped and unknown by default | 🔄 | providers |
 | [1](#adr-1) | Profile-driven generic runtime | ✅ | foundations |
 | [2](#adr-2) | OpenAI-compatible client against any `base_url` | ✅ | foundations |
 | [3](#adr-3) | Four-level discovery, last-write-wins, for all extension points | ✅ | foundations |
@@ -1063,3 +1066,65 @@ children. Mock tests establish local contracts; live client registration,
 entitlement, continuation and billing acceptance remain separate gates.
 
 *Implementation checkpoint (2026-09-06):* Local experimental code and automated validation complete; live acceptance pending. See [acceptance evidence](superpowers/reports/codex-implementation-acceptance.md).
+
+### ADR-80
+
+**Caller scope is normalized before Core ownership checks** — ✅
+
+*Context:* Core REST and WebSocket routes accept caller-asserted user and
+session identifiers. Sanitizing malformed values first can turn invalid input
+into another valid scope, while ID routes that look up globally can disclose or
+mutate another user's run or pending question.
+
+*Decision:* Normalize explicit user scope through one bounded helper before any
+store lookup. Reject non-string or oversized values with a bounded diagnostic;
+when query and body scope are both supplied they must agree. ID reads and
+mutations enforce ownership and return not-found on mismatch. Omitted scope
+keeps documented local defaults and aggregate list behavior. Until connection
+state can be fully rebound, cross-session control attach fails closed.
+
+*Consequences:* Scope remains caller-asserted local identity, not authentication
+or multi-tenant authorization. Existing clients must adopt explicit scope for
+isolated ID operations; no persisted key format changes.
+
+### ADR-81
+
+**Runtime recovery retains state, never executable authority** — 🔄
+
+*Context:* Event tails can overflow and process restarts cannot safely restore
+in-memory callbacks or controller leases. Child agent telemetry also shares the
+root wire stream.
+
+*Decision:* Persist bounded detached runtime projections alongside event tails;
+future/stale cursors return snapshot resync, restart clears ephemeral actions
+and controller authority, and child stats/terminal frames cannot replace root
+run recovery state. Opt-in attach/subscription requests may carry bounded
+`request_id` correlation. Durable pending answers acknowledge only after
+validation and atomic state transition; invalid or stale callbacks return a
+negative error.
+
+*Consequences:* Recovery reports honest interruption and bounded incompleteness;
+it makes no exactly-once external-effect promise and does not implement
+cross-session execution handoff.
+
+### ADR-82
+
+**Provider effort metadata is evidence-scoped and unknown by default** — 🔄
+
+*Context:* Provider model discovery exposes model identity separately from
+reasoning metadata. Prefix-based effort inference can present unsupported
+options as live capability, while API-key and subscription transports have
+different payload contracts.
+
+*Decision:* Parse provider-native supported/default effort fields only when
+returned by discovery, bound and deduplicate values, and attach transport,
+endpoint and opaque account scope. Unknown model IDs remain usable with the
+provider default; explicit effort requires supported metadata. Codex serializes
+validated effort and omits Default. The current OpenAI-compatible API-key
+adapter keeps effort unknown until its exact payload contract is verified.
+Profile aliases validate bounded syntax offline; capability validation remains
+an execution/selection concern. Ultra stays disabled pending adapter evidence.
+
+*Consequences:* Catalog metadata cannot claim entitlement, inference quality or
+billing support. Client protocol fields remain additive and generated only;
+picker/client adoption and live provider acceptance remain PT-016/PT-014.

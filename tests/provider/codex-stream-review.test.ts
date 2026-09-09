@@ -52,6 +52,13 @@ describe('independent Codex stream acceptance review', () => {
     expect(events.find(event => event.type === 'done')?.result.text).toBe('final snapshot')
   })
 
+  it('uses a top-level terminal output_text item when no text deltas arrived', async () => {
+    const events = await collect([frame(completed([
+      { type: 'output_text', text: 'terminal text item' },
+    ]))])
+    expect(events.find(event => event.type === 'done')?.result.text).toBe('terminal text item')
+  })
+
   it('keeps item IDs distinct from executable call IDs', async () => {
     const call = { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'Read', arguments: '{"path":"a"}' }
     const events = await collect([
@@ -65,6 +72,30 @@ describe('independent Codex stream acceptance review', () => {
       { id: 'call_1', name: 'Read', arguments: '{"path":"a"}' },
     ])
     expect(events.filter(event => event.type === 'tool_delta').every(event => event.id === 'call_1')).toBe(true)
+  })
+
+  it('treats the terminal output as authoritative when a streamed call is retracted', async () => {
+    const speculative = { type: 'function_call', id: 'item_speculative', call_id: 'call_speculative', name: 'Read', arguments: '' }
+    const events = await collect([
+      frame({ type: 'response.output_item.added', output_index: 0, item: speculative }),
+      frame(completed([{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'final answer' }] }])),
+    ])
+    const result = events.find(event => event.type === 'done')?.result
+    expect(result?.text).toBe('final answer')
+    expect(result?.toolCalls).toEqual([])
+  })
+
+  it('uses a completed streamed call when Codex sends an empty terminal output', async () => {
+    const call = { type: 'function_call', id: 'item_streamed', call_id: 'call_streamed', name: 'Read', arguments: '{"path":"a"}' }
+    const events = await collect([
+      frame({ type: 'response.output_item.added', output_index: 0, item: { ...call, arguments: '' } }),
+      frame({ type: 'response.function_call_arguments.delta', item_id: 'item_streamed', output_index: 0, delta: call.arguments }),
+      frame({ type: 'response.output_item.done', output_index: 0, item: call }),
+      frame(completed()),
+    ])
+    expect(events.find(event => event.type === 'done')?.result.toolCalls).toEqual([
+      { id: 'call_streamed', name: 'Read', arguments: '{"path":"a"}' },
+    ])
   })
 
   it.each(['{bad', 'null', '[]', '"string"'])('rejects invalid executable argument object %s', async argumentsText => {

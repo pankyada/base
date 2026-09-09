@@ -35,8 +35,9 @@ export function calibrate(session: Session, actualPromptTokens: number, sentRaw:
 export function contextWindowFor(profile: Profile): number {
   if (profile.model.auth === 'codex_oauth') {
     const cap = codexCapability(profile.model.id)
-    if (!cap) throw new Error('Codex model context limit unknown')
-    return Math.min(profile.context?.max_tokens ?? profile.context_window?.max_tokens ?? cap.contextWindow, cap.contextWindow)
+    const configured = profile.context?.max_tokens ?? profile.context_window?.max_tokens
+    if (!cap) return configured ?? Infinity
+    return Math.min(configured ?? cap.contextWindow, cap.contextWindow)
   }
   if (profile.context?.max_tokens) return profile.context.max_tokens
   if (profile.context_window?.max_tokens) return profile.context_window.max_tokens

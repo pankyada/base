@@ -23,8 +23,8 @@ describe('explicit Codex profile configuration', () => {
     { context: { digest_model_id: 'claude-unsupported' } },
     { context_window: { model_id: 'claude-unsupported' } },
     { improvement: { model_id: 'claude-unsupported' } },
-  ])('rejects incompatible helper or fallback configuration %j', override => {
-    expect(ProfileSchema.safeParse({ ...base, model: codex, ...override }).success).toBe(false)
+  ])('keeps unknown helper or fallback IDs valid for runtime capability resolution %j', override => {
+    expect(ProfileSchema.safeParse({ ...base, model: codex, ...override }).success).toBe(true)
   })
   it.each([0, 1025, Infinity])('rejects unbounded model attempt cap %s', max => {
     expect(ProfileSchema.safeParse({ ...base, model: { ...codex, codex: { max_model_calls_per_run: max } } }).success).toBe(false)

@@ -8,7 +8,7 @@ export function createProvider(profile: Profile, options: { home?: string; fetch
   if (profile.model.auth === 'codex_oauth') {
     return createCodexProvider(profile.model.id, { ...options,
       timeoutMs: profile.model.codex.request_timeout_ms,
-      reasoningEffort: profile.model.codex.reasoning_effort,
+      reasoningEffort: profile.model.reasoning_effort ?? profile.model.codex.reasoning_effort,
     })
   }
   return createApiKeyProvider(profile, createApiClient(profile))

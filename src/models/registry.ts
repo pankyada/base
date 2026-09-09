@@ -1,5 +1,5 @@
 import type { Profile } from '../profiles/schema.js'
-import type { ModelInfo } from '../types.js'
+import type { EffortCapability, ModelInfo } from '../types.js'
 import { CODEX_MODELS } from '../provider/codex/models.js'
 
 interface ModelPricing {
@@ -136,12 +136,19 @@ function unknownModel(profile: Profile): ModelInfo {
 
 export function listModels(profile: Profile): ModelInfo[] {
   if (profile.model.auth === 'codex_oauth') {
-    return CODEX_MODELS.map(model => ({
+    const models = CODEX_MODELS.map(model => ({
       id: model.id, label: `${model.id} · Codex subscription`, provider: 'OpenAI Codex', base_url: '',
       context_window: model.contextWindow, input_price: MODEL_PRICES[model.id]?.input ?? FALLBACK_PRICES.input,
       output_price: MODEL_PRICES[model.id]?.output ?? FALLBACK_PRICES.output,
       tags: ['subscription', 'experimental'], available: true,
+      effort: codexEffort(model),
     }))
+    if (!models.some(model => model.id === profile.model.id)) models.push({
+      id: profile.model.id, label: profile.model.id, provider: 'OpenAI Codex', base_url: '', context_window: 0,
+      input_price: FALLBACK_PRICES.input, output_price: FALLBACK_PRICES.output, tags: ['subscription', 'unknown'], available: true,
+      effort: { status: 'unknown', options: [], source: 'cache', checked_at: new Date(0).toISOString(), stale: true, scope: { transport: 'codex_subscription', endpoint: 'https://chatgpt.com/backend-api/codex/models', provider_scope: '0000000000000000' } },
+    })
+    return models
   }
   const activeBaseUrl = normalizeBaseUrl(profile.model.base_url)
   const models = MODEL_REGISTRY.map((model) => {
@@ -158,6 +165,32 @@ export function listModels(profile: Profile): ModelInfo[] {
     models.push(unknownModel(profile))
   }
   return models
+}
+
+export function validateModelEffort(model: ModelInfo, requested: string | null): { ok: true; effort: string | null } | { ok: false; reason: string } {
+  if (requested !== null && (requested.length === 0 || requested.length > 64 || requested.trim() !== requested || /[\u0000-\u001f\u007f]/.test(requested))) {
+    return { ok: false, reason: 'reasoning effort must be a bounded provider-native token' }
+  }
+  if (requested === null) return { ok: true, effort: null }
+  const capability = model.effort
+  if (!capability || capability.status === 'unknown') return { ok: false, reason: 'effort capability is unknown; refresh model metadata first' }
+  if (capability.status === 'unsupported') return { ok: false, reason: 'effort selection is unavailable for this model' }
+  const option = capability.options.find(item => item.value === requested)
+  if (!option) return { ok: false, reason: `effort ${requested} is unsupported for ${model.id}` }
+  if (!option.selectable) return { ok: false, reason: option.unavailable_reason ?? `effort ${requested} is unavailable` }
+  return { ok: true, effort: requested }
+}
+
+function codexEffort(model: (typeof CODEX_MODELS)[number]): EffortCapability {
+  return {
+    status: 'supported',
+    options: model.efforts.map(value => ({ value, label: value === 'none' ? 'None' : value, selectable: value !== 'ultra', ...(value === 'ultra' ? { unavailable_reason: 'provider-managed delegation is not enabled by Base' } : {}) })),
+    source: model.evidence === 'live' ? 'live' : 'documented',
+    checked_at: model.sourceDerivedAt,
+    stale: false,
+    ...(model.providerDefault ? { provider_default: model.providerDefault } : {}),
+    scope: { transport: 'codex_subscription', endpoint: 'https://chatgpt.com/backend-api/codex/models', provider_scope: '0000000000000000' },
+  }
 }
 
 // Reasoning-family models (o-series, GPT-5.x) reject `tools` on

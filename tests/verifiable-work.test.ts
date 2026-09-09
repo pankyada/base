@@ -51,6 +51,28 @@ describe('verifiable agent work foundations', () => {
     runtime.emit('one', {}); runtime.emit('two', {}); runtime.emit('three', {}); expect(runtime.subscribe(0).gap).toBe(false); expect(runtime.subscribe(1).gap).toBe(true); expect(() => runtime.respond('x', 'old', claim.lease, () => 'x')).toThrow('stale')
   })
 
+  it('returns detached recovery state and explicitly resyncs future cursors', async () => {
+    const runtime = new SessionRuntime('s', 'alice', 4)
+    const claim = runtime.claim('browser')
+    const payload = { nested: { value: 'private' } }
+    runtime.emit('tool_prompt', { id: 'ask', ...payload })
+    const snapshot = runtime.state
+    const prompt = snapshot.events.find(event => event.type === 'tool_prompt')!
+    ;(prompt.payload as any).nested.value = 'changed'
+    snapshot.actionable_ids.push('forged')
+    expect((runtime.state.events.find(event => event.type === 'tool_prompt')!.payload as any).nested.value).toBe('private')
+    expect(runtime.state.actionable_ids).toEqual(['ask'])
+    expect(runtime.subscribe(99).gap).toBe(true)
+    let calls = 0
+    let release!: () => void
+    const first = runtime.respond('async', 'browser', claim.lease, () => new Promise(resolve => { calls++; release = () => resolve('ok') }))
+    const second = runtime.respond('async', 'browser', claim.lease, () => { calls++; return Promise.resolve('bad') })
+    expect(first).toBe(second)
+    expect(calls).toBe(1)
+    release()
+    await expect(first).resolves.toBe('ok')
+  })
+
   it('two attached clients share journal and transfer control without duplicate response', () => {
     const first = new SessionRuntime('shared', 'alice', 8); const second = first; const claim = first.claim('tui'); const observer = second.subscribe(0); expect(observer.snapshot.session_id).toBe('shared'); first.emit('tool_end', { id: '1' }); expect(second.subscribe(observer.snapshot.last_seq).events).toHaveLength(1); const moved = first.transfer('tui', claim.lease, 'browser'); expect(moved.lease).not.toBe(claim.lease); expect(() => first.respond('approval', 'tui', claim.lease, () => true)).toThrow('stale'); expect(first.respond('approval', 'browser', moved.lease, () => true)).toBe(true)
   })

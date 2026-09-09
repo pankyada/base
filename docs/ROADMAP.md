@@ -1,6 +1,9 @@
 # Harness Roadmap
 
 > Master feature list. Update this file as work is picked up or completed.
+> Current implementation, acceptance, component state, and task tracking: **[`PRODUCT_STATE.md`](PRODUCT_STATE.md)**.
+> Seven primary product areas and stable feature IDs: **[`FEATURES.md`](FEATURES.md)**. The new Multi Agent Orchestrator is a separate discovery track, not the already-implemented delegation feature #3.
+> This roadmap retains feature scope and sequencing. Historical gap descriptions below may predate implementation; check the tracker before selecting work. Update both documents when a feature's status or scope changes.
 > Referenced by `CLAUDE.md` and `AGENTS.md` so all agents (Claude, Jules, etc.) stay aligned.
 > **Why** things are built the way they are lives in [`docs/ADR.md`](ADR.md) — read it
 > before changing an existing subsystem's shape.
@@ -742,3 +745,38 @@ whether anyone opens the web client. Everything after it is additive product wor
 ## Explicitly requested integration track — Codex subscription
 
 🔄 Codex OAuth alongside API-key defaults. Local implementation and automated regression validation passed; live account/client compatibility, subscription attribution, and Windows acceptance pending. No Claude subscription scope. See [design](superpowers/specs/2026-09-05-codex-subscription-design.md), [plan](superpowers/plans/2026-09-05-codex-subscription-plan.md), and [operator guide](CODEX_AUTH.md).
+
+## Explicitly requested plan — Model-aware effort selection
+
+🔄 Core backend slice implemented; full UI/setup picker, live provider and
+transport acceptance remain open. Draft spec and phased plan cover
+capability-aware model/effort selection, shared setup/runtime discovery,
+acknowledged preferences, and transport-specific validation. See
+[spec](superpowers/specs/2026-09-06-model-effort-selection-spec.md) and
+[plan](superpowers/plans/2026-09-06-model-effort-selection-plan.md).
+
+## Explicitly requested product area — Multi Agent Orchestrator
+
+❌ Requested experience not implemented; initial feature taxonomy only. Scope:
+multiple Base agents on the same or different projects, task assignment and
+agent-to-agent collaboration, direct user interaction, optional orchestrator
+agent, and a game-like live world reflecting actual runtime activity.
+
+Existing #3 delegation and Studio/live-session foundations are candidates for
+reuse, not completion evidence for this experience. Brainstorm separately under
+PT-020; visual metaphor, major layout, workspace/conflict policy and product
+placement remain open. See [ORCH features](FEATURES.md#7-multi-agent-orchestrator--collaborative-agent-workspace)
+and [task tracker](PRODUCT_STATE.md).
+
+## Active implementation track — Core uplift
+
+✅ Core-only implementation complete locally through PT-030; implementation,
+Order: scope → recovery → human decisions → provider/effort → lifecycle/history/platform
+→ prompt/execution/telemetry cleanup → existing orchestration contract groundwork.
+
+[Spec](superpowers/specs/2026-09-07-core-uplift-spec.md) ·
+[Plan](superpowers/plans/2026-09-07-core-uplift-plan.md) ·
+[State/tasks PT-023–PT-030](PRODUCT_STATE.md).
+Handwritten client/UI changes excluded; generated contracts and compatibility
+checks allowed. This does not complete client recovery, effort pickers, live
+provider/platform acceptance, or the proposed Orchestrator product.

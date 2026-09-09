@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Roadmap
 
-Feature backlog and status live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Read it before starting any feature work. The next item to pick up is marked there.
+Read **[`docs/PRODUCT_STATE.md`](docs/PRODUCT_STATE.md)** before every task. It is the canonical current-state and task tracker: component maturity, feature implementation, acceptance evidence, open gaps, and completed work. **[`docs/ROADMAP.md`](docs/ROADMAP.md)** retains numbered feature scope and sequencing; read it before feature work. Specs retain acceptance requirements. Do not assume an incomplete roadmap item has no implementation.
+
+## Required task closeout
+
+Follow the task-tracking rules in **[`AGENTS.md`](AGENTS.md)** for every feature, fix, review, documentation, test, release, or deployment task:
+
+- Add/reuse a stable tracker task ID before implementation; record scope and completion criteria and mark `in_progress`. Short read-only tasks may be logged at closeout.
+- Use [`docs/FEATURES.md`](docs/FEATURES.md) for primary feature IDs and affected clients. Core changes must record shared-contract compatibility, client updates and validation impact, or `none` with a reason.
+- Keep affected component/feature state and open gaps updated during work.
+- **Before reporting completion, update `docs/PRODUCT_STATE.md`: task status, affected state rows, and a dated completion-log entry with outcome, checks/evidence, and remaining gaps.** Reviews must leave discovered defects open.
+- Only mark `done` when the task's stated criteria are met. Keep implementation, automated tests, live/user acceptance, and release/deployment separate; record unknowns honestly.
+- Synchronize `docs/ROADMAP.md` when numbered feature scope/status changes and `docs/ADR.md` for load-bearing decisions. Include tracking updates in the task commit/PR when committing; preserve unrelated edits.
+
+Tracker templates and status definitions live in `docs/PRODUCT_STATE.md`. This workflow is instruction-enforced; no automatic tracker synchronization is assumed.
 
 ## Architecture decisions
 

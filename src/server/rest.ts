@@ -34,6 +34,7 @@ import { ReplayStore } from '../replay/store.js'
 import { hashArguments, markCheckpoint, newJournal, recordEffect, recordEvent, type EffectReceipt, type RunJournal } from '../replay/index.js'
 import { detectConflicts, MemoryConflictStore, resolveConflict } from '../memory/conflicts.js'
 import { resolveAclDecision } from '../tools/acl.js'
+import { assertMatchingScopes, normalizeUserScope, ScopeError } from './scope.js'
 
 const VERSION = '0.1.0'
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
@@ -181,13 +182,13 @@ function pendingStore(deps: RestDeps): PendingStore {
   return deps.pendingStore ?? new PendingStore()
 }
 
-interface RunRequest { profile?: string; user?: string; input?: unknown }
+interface RunRequest { profile?: string; user?: unknown; input?: unknown }
 
 /**
  * Parse + validate the request shared by /run and /stream.
  * Returns either a ready-to-run payload, or an error with a status code.
  */
-function prepareRun(bodyText: string, deps: RestDeps):
+function prepareRun(bodyText: string, deps: RestDeps, queryUser?: unknown):
   | { ok: true; profile: Profile; userId: string; userMessage: string; compiled: ReturnType<typeof compileContract> }
   | { ok: false; status: number; body: unknown } {
   let body: RunRequest
@@ -196,6 +197,7 @@ function prepareRun(bodyText: string, deps: RestDeps):
   } catch {
     return { ok: false, status: 400, body: { error: 'malformed JSON body' } }
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, status: 400, body: { error: 'request must be an object' } }
   if (body.input === undefined) {
     return { ok: false, status: 400, body: { error: 'missing input' } }
   }
@@ -209,12 +211,18 @@ function prepareRun(bodyText: string, deps: RestDeps):
     const status = inputCheck.details ? 422 : 400
     return { ok: false, status, body: { error: inputCheck.error, details: inputCheck.details } }
   }
-  const userId = sanitizeUserId(body.user ?? process.env.HARNESS_USER ?? 'anonymous')
+  let userId: string
+  try {
+    const asserted = assertMatchingScopes(queryUser, body.user)
+    userId = normalizeUserScope(asserted, process.env.HARNESS_USER ?? 'anonymous')
+  } catch (error) {
+    return { ok: false, status: (error as ScopeError).status, body: { error: (error as Error).message } }
+  }
   return { ok: true, profile, userId, userMessage: inputCheck.userMessage, compiled }
 }
 
 async function handleRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps): Promise<void> {
-  const prepared = prepareRun(await readBody(req), deps)
+  const prepared = prepareRun(await readBody(req), deps, requestQueryUser(req))
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body)
 
   const runId = makeRunId()
@@ -260,7 +268,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
 }
 
 async function handleStream(req: IncomingMessage, res: ServerResponse, deps: RestDeps): Promise<void> {
-  const prepared = prepareRun(await readBody(req), deps)
+  const prepared = prepareRun(await readBody(req), deps, requestQueryUser(req))
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body)
 
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
@@ -334,19 +342,32 @@ function handleListRuns(req: IncomingMessage, res: ServerResponse, deps: RestDep
   const rawUrl = req.url ?? '/runs'
   const [, query = ''] = rawUrl.split('?')
   const params = new URLSearchParams(query)
-  const runs = deps.runStore.list({
+  if (params.has('user') && !params.get('user')) return sendJson(res, 400, { error: 'user scope must not be empty' })
+  const options = {
     user: params.get('user') ?? undefined,
     status: (params.get('status') ?? undefined) as Run['status'] | undefined,
     profile: params.get('profile') ?? undefined,
     limit: params.has('limit') ? parseInt(params.get('limit')!) : 50,
-  })
-  sendJson(res, 200, { runs })
+  }
+  if (params.has('cursor') && typeof (deps.runStore as any).listPage === 'function') {
+    try {
+      const page = (deps.runStore as any).listPage({ ...options, cursor: params.get('cursor') ?? undefined })
+      if (typeof (deps.runStore as any).getDiagnostics !== 'function') return sendJson(res, 200, page)
+      const diagnostics = (deps.runStore as any).getDiagnostics()
+      return sendJson(res, 200, { ...page, diagnostics: { count: Array.isArray(diagnostics) ? diagnostics.length : 0 } })
+    } catch (error) { return sendJson(res, 400, { error: error instanceof Error ? error.message : 'invalid run history cursor' }) }
+  }
+  const runs = deps.runStore.list(options)
+  if (typeof (deps.runStore as any).getDiagnostics !== 'function') return sendJson(res, 200, { runs })
+  const diagnostics = (deps.runStore as any).getDiagnostics()
+  sendJson(res, 200, { runs, diagnostics: { count: Array.isArray(diagnostics) ? diagnostics.length : 0 } })
 }
 
 function handleListPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps): void {
   const rawUrl = req.url ?? '/pending'
   const [, query = ''] = rawUrl.split('?')
   const params = new URLSearchParams(query)
+  if (params.has('user') && !params.get('user')) return sendJson(res, 400, { error: 'user scope must not be empty' })
   const store = pendingStore(deps)
   const pending = store.list({ user: params.get('user') ?? undefined, state: (params.get('state') ?? undefined) as any })
     .map(({ path: _path, ...record }) => record)
@@ -362,13 +383,21 @@ function handleListChannels(req: IncomingMessage, res: ServerResponse, deps: Res
   sendJson(res, 200, { channels: runtime?.statusForUser(user) ?? [] })
 }
 
+function requestQueryUser(req: IncomingMessage): string | undefined {
+  const raw = new URL(req.url ?? '/', 'http://localhost').searchParams.get('user')
+  return raw === null ? undefined : raw
+}
+
 async function handleAnswerPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps, runId: string): Promise<void> {
-  let body: { pending_id?: string; value?: string }
+  let body: { pending_id?: string; value?: string; user?: unknown }
   try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(res, 400, { error: 'request must be an object' })
   if (!body.pending_id || typeof body.value !== 'string') return sendJson(res, 400, { error: 'pending_id and value required' })
+  let requestedUser: string | undefined
+  try { requestedUser = assertMatchingScopes(requestQueryUser(req), body.user) } catch (error) { return sendJson(res, (error as ScopeError).status, { error: (error as Error).message }) }
   const store = pendingStore(deps)
   const pending = store.get(body.pending_id)
-  if (!pending || pending.run_id !== runId) return sendJson(res, 404, { error: 'pending input not found' })
+  if (!pending || pending.run_id !== runId || (requestedUser && pending.user !== requestedUser)) return sendJson(res, 404, { error: 'pending input not found' })
   const result = await resumePendingInput(body.pending_id, body.value, 'rest', {
     pendingStore: store,
     runStore: deps.runStore,
@@ -382,9 +411,11 @@ async function handleAnswerPending(req: IncomingMessage, res: ServerResponse, de
 }
 
 async function handleCancelPending(req: IncomingMessage, res: ServerResponse, deps: RestDeps, pendingId: string): Promise<void> {
+  let requestedUser: string | undefined
+  try { requestedUser = requestQueryUser(req) === undefined ? undefined : normalizeUserScope(requestQueryUser(req)) } catch (error) { return sendJson(res, (error as ScopeError).status, { error: (error as Error).message }) }
   const store = pendingStore(deps)
   const pending = store.get(pendingId)
-  if (!pending) return sendJson(res, 404, { error: 'pending input not found' })
+  if (!pending || (requestedUser && pending.user !== requestedUser)) return sendJson(res, 404, { error: 'pending input not found' })
   if (pending.state !== 'open') return sendJson(res, 409, { error: `pending input is already ${pending.state}` })
   const run = deps.runStore.get(pending.run_id)
   if (!run || run.status !== 'waiting_input') return sendJson(res, 409, { error: 'run is not waiting for input' })
@@ -403,13 +434,17 @@ async function handleCancelPending(req: IncomingMessage, res: ServerResponse, de
 
 function handleGetRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps, id: string): void {
   const run = deps.runStore.get(id)
-  if (!run) return sendJson(res, 404, { error: 'run not found' })
+  let requestedUser: string | undefined
+  try { requestedUser = requestQueryUser(req) === undefined ? undefined : normalizeUserScope(requestQueryUser(req)) } catch (error) { return sendJson(res, (error as ScopeError).status, { error: (error as Error).message }) }
+  if (!run || (requestedUser && run.user !== requestedUser)) return sendJson(res, 404, { error: 'run not found' })
   sendJson(res, 200, run)
 }
 
 function handleDeleteRun(req: IncomingMessage, res: ServerResponse, deps: RestDeps, id: string): void {
   const run = deps.runStore.get(id)
-  if (!run) return sendJson(res, 404, { error: 'run not found' })
+  let requestedUser: string | undefined
+  try { requestedUser = requestQueryUser(req) === undefined ? undefined : normalizeUserScope(requestQueryUser(req)) } catch (error) { return sendJson(res, (error as ScopeError).status, { error: (error as Error).message }) }
+  if (!run || (requestedUser && run.user !== requestedUser)) return sendJson(res, 404, { error: 'run not found' })
   if (run.status !== 'running' && run.status !== 'pending' && run.status !== 'waiting_input') return sendJson(res, 409, { error: `run is already ${run.status}` })
   deps.abortRegistry.get(id)?.abort()
   if (run.status === 'waiting_input') {
@@ -422,8 +457,10 @@ function handleDeleteRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
 }
 
 function missionUser(req: IncomingMessage, bodyUser?: string): string {
-  const query = queryUser(req)
-  return sanitizeUserId(bodyUser ?? query ?? process.env.HARNESS_USER ?? 'anonymous')
+  try {
+    const asserted = assertMatchingScopes(requestQueryUser(req), bodyUser)
+    return normalizeUserScope(asserted, process.env.HARNESS_USER ?? 'anonymous')
+  } catch { return '' }
 }
 function handleListMissions(req: IncomingMessage, res: ServerResponse): void {
   const user = missionUser(req); if (!user) return sendJson(res, 400, { error: 'missing user' }); sendJson(res, 200, { missions: new MissionStore(user).list() })
@@ -434,6 +471,7 @@ function handleGetMission(req: IncomingMessage, res: ServerResponse, id: string)
 async function handleCreateMission(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let body: Partial<MissionInput> & { user?: string }
   try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(res, 400, { error: 'request must be an object' })
   const user = missionUser(req, body.user); if (!user) return sendJson(res, 400, { error: 'missing user' })
   if (typeof body.outcome !== 'string' || !Array.isArray(body.criteria) || typeof body.profile !== 'string' || typeof body.project !== 'string') return sendJson(res, 400, { error: 'profile, project, outcome, and criteria required' })
   const mission = createMission({ ...body, user, constraints: Array.isArray(body.constraints) ? body.constraints : [] } as MissionInput); new MissionStore(user).save(mission); sendJson(res, 201, { mission })
@@ -441,6 +479,7 @@ async function handleCreateMission(req: IncomingMessage, res: ServerResponse): P
 async function handleCompleteHuman(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   let body: { user?: string; criterion_id?: string; revision?: number; completed_by?: string }
   try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(res, 400, { error: 'request must be an object' })
   const user = missionUser(req, body.user); if (!body.criterion_id || body.revision === undefined) return sendJson(res, 400, { error: 'criterion_id and revision required' }); const store = new MissionStore(user); const mission = store.get(id); if (!mission) return sendJson(res, 404, { error: 'mission not found' }); try { const next = completeHumanCriterion(mission, body.criterion_id, body.completed_by ?? user, body.revision); store.save(next); return sendJson(res, 200, { mission: next }) } catch (error) { return sendJson(res, 409, { error: error instanceof Error ? error.message : String(error) }) }
 }
 
@@ -452,6 +491,7 @@ async function handleListMemoryConflicts(req: IncomingMessage, res: ServerRespon
 async function handleDetectMemoryConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let body: { user?: string; scope?: string; entries?: any[]; dependent_missions?: string[] }
   try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(res, 400, { error: 'request must be an object' })
   const user = missionUser(req, body.user)
   if (!body.scope || !Array.isArray(body.entries)) return sendJson(res, 400, { error: 'scope and entries required' })
   const store = new MemoryConflictStore(user)
@@ -463,6 +503,7 @@ async function handleDetectMemoryConflicts(req: IncomingMessage, res: ServerResp
 async function handleResolveMemoryConflict(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   let body: { user?: string; revision?: number; chosen_key?: string; preserve_ambiguity?: boolean; reason?: string }
   try { body = JSON.parse(await readBody(req)) } catch { return sendJson(res, 400, { error: 'malformed JSON body' }) }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return sendJson(res, 400, { error: 'request must be an object' })
   const user = missionUser(req, body.user)
   if (body.revision === undefined) return sendJson(res, 400, { error: 'revision required' })
   const store = new MemoryConflictStore(user)

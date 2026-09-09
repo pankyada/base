@@ -5,7 +5,7 @@ import { listAudit } from '../audit/query.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
 import type { MemoryProvider, MemoryScope } from '../memory/interface.js'
 import { createSession, loadSession } from '../session/store.js'
-import { sanitizeUserId } from '../session/user-paths.js'
+import { normalizeUserScope, ScopeError } from './scope.js'
 import { queryEvents } from '../telemetry/query.js'
 import { aggregateMetrics } from '../telemetry/aggregate.js'
 import { readUsage } from '../usage/ledger.js'
@@ -162,7 +162,9 @@ export function createReadApiHandler(deps: ReadApiDeps): (req: IncomingMessage, 
     if (!readable && !upload && !datasetDelete) return false
     try {
       const params = request.searchParams
-      const user = sanitizeUserId(params.get('user') ?? process.env.HARNESS_USER ?? 'anonymous')
+      let user: string
+      try { user = normalizeUserScope(params.get('user') ?? undefined, process.env.HARNESS_USER ?? 'anonymous') }
+      catch (error) { throw new HttpError((error as ScopeError).status, (error as Error).message) }
       const since = date(params.get('since'), 'since')
       const until = date(params.get('until'), 'until')
       if (since && until && since > until) throw new HttpError(400, 'since must be before until')
@@ -221,7 +223,15 @@ export function createReadApiHandler(deps: ReadApiDeps): (req: IncomingMessage, 
       if (path === '/memory') {
         const scope = params.get('scope') ?? 'user'
         if (!['session', 'user', 'profile', 'project'].includes(scope)) throw new HttpError(400, 'invalid scope')
-        const profile = deps.profiles?.get(params.get('profile') ?? '') ?? deps.defaultProfile
+        const requestedProfile = params.get('profile')
+        const profile = requestedProfile !== null ? (deps.profiles?.get(requestedProfile) ?? (requestedProfile === deps.defaultProfile.name ? deps.defaultProfile : undefined)) : deps.defaultProfile
+        if (!profile) throw new HttpError(404, 'unknown profile')
+        const requestedSession = params.get('session')
+        if (scope === 'session' && requestedSession && !sessionLoader(user, requestedSession)) throw new HttpError(404, 'unknown session')
+        if (scope === 'session' && requestedSession) {
+          const scopedSession = sessionLoader(user, requestedSession)
+          if (scopedSession && requestedProfile !== null && scopedSession.profile !== requestedProfile) throw new HttpError(404, 'unknown session')
+        }
         const provider = memoryFor(profile, user, params.get('session') ?? undefined)
         const query = { text: params.get('q') ?? undefined, entity: params.get('entity') ?? undefined, relation: params.get('relation') ?? undefined, at: params.get('at') ?? undefined, limit: limit(params.get('limit')) }
         const includeSuperseded = bool(params.get('include_superseded'), 'include_superseded') ?? false
@@ -266,6 +276,8 @@ export function createReadApiHandler(deps: ReadApiDeps): (req: IncomingMessage, 
       const sessionId = path.split('/')[2]
       const session = sessionLoader(user, sessionId)
       if (!session) throw new HttpError(404, 'unknown session')
+      const requestedProfile = params.get('profile')
+      if (requestedProfile !== null && ((deps.profiles && !deps.profiles.has(requestedProfile)) || session.profile !== requestedProfile)) throw new HttpError(404, 'unknown session')
       const size = limit(params.get('limit'))
       const before = params.get('before') ? decodeCursor(params.get('before')!)?.offset : session.messages.length
       if (before === undefined || before === null || before > session.messages.length) throw new HttpError(400, 'invalid before cursor')

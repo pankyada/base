@@ -36,7 +36,6 @@ export function bindRunProvider(provider: ProviderClient, context: ToolContext):
 async function* invoke(raw: ProviderClient, context: ToolContext, request: ProviderRequest, call: ModelCallContext = {}): AsyncIterable<ProviderEvent> {
   const codex = raw.kind === 'codex_oauth'
   const capability = codex ? codexCapability(request.model) : undefined
-  if (codex && !capability) throw new ProviderError('Codex model has no validated capability', { code: 'unsupported_model' })
   const configured = context.profile.model.auth === 'codex_oauth' ? context.profile.model.codex.request_timeout_ms : 600_000
   const deadline = Math.min(call.deadline ?? Infinity, context.deadline ?? Infinity, context.budget?.deadlineAt() ?? Infinity, Date.now() + configured)
   const signals = [context.signal, request.signal, call.signal].filter((item): item is AbortSignal => Boolean(item))

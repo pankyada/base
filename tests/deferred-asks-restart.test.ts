@@ -6,6 +6,7 @@ import { createSession, loadSession, saveSession } from '../src/session/store.js
 import { PendingStore } from '../src/runs/pending.js'
 import { RunStore } from '../src/runs/store.js'
 import { resumeExpiredInput, resumePendingInput } from '../src/runs/resume.js'
+import { ParkSignal } from '../src/runs/park.js'
 import { runAgentLoop } from '../src/loop/agent-loop.js'
 import { destroyMcpClients } from '../src/mcp/client.js'
 import { recordUsage } from '../src/usage/ledger.js'
@@ -96,17 +97,35 @@ describe('deferred asks across a fresh store restart', () => {
     // Restart boundary: no store object from the first process is reused.
     const pendingStore = new PendingStore()
     const runStore = new RunStore()
+    let accepted = 0
     const result = await resumePendingInput('pending-run-answer', 'evening', 'rest', {
-      pendingStore, runStore, abortRegistry: new Map(), resolveProfile: () => PROFILE, events: events(),
+      pendingStore, runStore, abortRegistry: new Map(), resolveProfile: () => PROFILE, events: events(), onAccepted: () => { accepted += 1 },
     })
 
     expect(result).toMatchObject({ status: 'completed', run_id: 'run-answer' })
+    expect(accepted).toBe(1)
     expect(pendingStore.get(initial.pending.id)).toMatchObject({ state: 'answered', answer: 'evening' })
     expect(runStore.get('run-answer')).toMatchObject({ status: 'completed' })
     const resumed = loadSession('alice', initial.session.id)
     expect(resumed?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: 'tool', tool_call_id: 'tool-run-answer', content: 'evening' }),
     ]))
+  })
+
+  it('does not start or consume a durable question for an invalid answer', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-deferred-invalid-answer-'))
+    vi.stubEnv('HOME', home)
+    const initial = waitingCase('run-invalid-answer')
+    const pendingStore = new PendingStore()
+    const runStore = new RunStore()
+    let accepted = 0
+    const result = await resumePendingInput(initial.pending.id, 'not-an-option', 'rest', {
+      pendingStore, runStore, abortRegistry: new Map(), resolveProfile: () => PROFILE, events: events(), onAccepted: () => { accepted += 1 },
+    })
+    expect(result).toMatchObject({ status: 'ignored' })
+    expect(accepted).toBe(0)
+    expect(pendingStore.get(initial.pending.id)?.state).toBe('open')
+    expect(runStore.get('run-invalid-answer')?.status).toBe('waiting_input')
   })
 
   it('expires and resumes a question after restart with the timeout sentinel', async () => {
@@ -127,5 +146,73 @@ describe('deferred asks across a fresh store restart', () => {
     expect(resumed?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: 'tool', tool_call_id: 'tool-run-expired', content: '[no answer within 1d — proceed without it or stop]' }),
     ]))
+  })
+
+  it('preserves cancellation when a resume completes after cancellation wins the race', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-deferred-cancel-race-'))
+    vi.stubEnv('HOME', home)
+    const initial = waitingCase('run-cancel-race')
+    const pendingStore = new PendingStore()
+    const runStore = new RunStore()
+    const originalUpdate = runStore.update.bind(runStore)
+    let cancelled = false
+    runStore.update = ((id: string, patch: any, expectedRevision?: number) => {
+      originalUpdate(id, patch, expectedRevision)
+      if (!cancelled && patch.status === 'running') {
+        cancelled = true
+        originalUpdate(id, { status: 'cancelled' })
+      }
+    }) as typeof runStore.update
+    const result = await resumePendingInput(initial.pending.id, 'evening', 'rest', {
+      pendingStore, runStore, abortRegistry: new Map(), resolveProfile: () => PROFILE, events: events(),
+    })
+    expect(result).toMatchObject({ status: 'ignored', reason: 'run was cancelled during resume' })
+    expect(runStore.get('run-cancel-race')).toMatchObject({ status: 'cancelled' })
+  })
+
+  it('preserves cancellation when resumed execution fails after cancellation wins the race', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-deferred-fail-race-'))
+    vi.stubEnv('HOME', home)
+    const initial = waitingCase('run-fail-race')
+    vi.mocked(runAgentLoop).mockRejectedValueOnce(new Error('late provider failure'))
+    const pendingStore = new PendingStore()
+    const runStore = new RunStore()
+    const originalUpdate = runStore.update.bind(runStore)
+    let cancelled = false
+    runStore.update = ((id: string, patch: any, expectedRevision?: number) => {
+      originalUpdate(id, patch, expectedRevision)
+      if (!cancelled && patch.status === 'running') {
+        cancelled = true
+        originalUpdate(id, { status: 'cancelled' })
+      }
+    }) as typeof runStore.update
+    const result = await resumePendingInput(initial.pending.id, 'evening', 'rest', {
+      pendingStore, runStore, abortRegistry: new Map(), resolveProfile: () => PROFILE, events: events(),
+    })
+    expect(result).toMatchObject({ status: 'ignored', reason: 'run was cancelled during resume' })
+    expect(runStore.get('run-fail-race')).toMatchObject({ status: 'cancelled' })
+  })
+
+  it('does not restore cancelled runs to waiting input when a late park arrives', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-deferred-park-race-'))
+    vi.stubEnv('HOME', home)
+    const initial = waitingCase('run-park-race')
+    vi.mocked(runAgentLoop).mockRejectedValueOnce(new ParkSignal('late-pending'))
+    const pendingStore = new PendingStore()
+    const runStore = new RunStore()
+    const originalUpdate = runStore.update.bind(runStore)
+    let cancelled = false
+    runStore.update = ((id: string, patch: any, expectedRevision?: number) => {
+      originalUpdate(id, patch, expectedRevision)
+      if (!cancelled && patch.status === 'running') {
+        cancelled = true
+        originalUpdate(id, { status: 'cancelled' })
+      }
+    }) as typeof runStore.update
+    const result = await resumePendingInput(initial.pending.id, 'evening', 'rest', {
+      pendingStore, runStore, abortRegistry: new Map(), resolveProfile: () => PROFILE, events: events(),
+    })
+    expect(result).toMatchObject({ status: 'ignored', reason: 'run was cancelled during resume' })
+    expect(runStore.get('run-park-race')).toMatchObject({ status: 'cancelled' })
   })
 })

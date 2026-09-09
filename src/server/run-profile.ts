@@ -99,7 +99,9 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
     if (session.messages.length === 0) {
       session.messages.push({
         role: 'system',
-        content: await buildSystemPrompt({ profile, systemPromptBase, skillIndex, memory }),
+        content: await buildSystemPrompt({ profile, systemPromptBase, skillIndex, memory, onDiagnostics: diagnostics => {
+          if (process.env.HARNESS_DIAGNOSTICS === '1') console.info(`[diagnostics] prompt assembly ${JSON.stringify(diagnostics)}`)
+        } }),
       })
     }
 

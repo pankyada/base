@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync } from 'fs'
+import { mkdtempSync, readFileSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { PendingStore } from '../src/runs/pending.js'
@@ -22,6 +22,16 @@ describe('PendingStore', () => {
     expect(store.answer('pending-1', 'a', 'rest')).toMatchObject({ state: 'answered', answer: 'a', answered_via: 'rest' })
     expect(store.answer('pending-1', 'b', 'rest')).toBeNull()
     expect(JSON.parse(readFileSync(pending.path, 'utf8')).answer).toBe('a')
+    expect(readdirSync(join(pending.path, '..')).some(file => file.endsWith('.tmp'))).toBe(false)
+  })
+
+  it('validates select and multi-select answers before durable transition', () => {
+    const store = tempStore()
+    store.create({ id: 'pending-select', run_id: 'r', session_id: 's', user: 'alice', profile: 'p', prompt: 'Pick', kind: 'select', options: ['a', 'b'], created_at: '2026-08-06T00:00:00.000Z', expires_at: '2099-08-06T00:00:00.000Z' })
+    expect(store.answer('pending-select', 'z', 'rest')).toBeNull()
+    expect(store.get('pending-select')?.state).toBe('open')
+    store.create({ id: 'pending-multi', run_id: 'r', session_id: 's', user: 'alice', profile: 'p', prompt: 'Pick', kind: 'multi_select', options: ['a', 'b'], created_at: '2026-08-06T00:00:00.000Z', expires_at: '2099-08-06T00:00:00.000Z' })
+    expect(store.answer('pending-multi', 'a,b', 'rest')).toMatchObject({ state: 'answered' })
   })
 
   it('expires open records with an explicit state', () => {

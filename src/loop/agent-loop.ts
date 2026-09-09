@@ -196,7 +196,7 @@ export async function runAgentLoop(
         messages: projectedMessages as ProviderMessage[],
         tools: allTools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
         stream: true,
-        reasoningEffort: profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort : undefined,
+        reasoningEffort: profile.model.auth === 'codex_oauth' ? (profile.model.reasoning_effort ?? profile.model.codex.reasoning_effort) : undefined,
         signal,
       }
       for await (const event of provider.stream(request, {

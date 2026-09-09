@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
+import { createHash } from 'node:crypto'
 import type { Profile } from '../profiles/schema.js'
-import type { ModelInfo } from '../types.js'
+import type { EffortCapability, ModelInfo } from '../types.js'
 import { FALLBACK_PRICES, MODEL_REGISTRY, listModels } from './registry.js'
 import { readCodexAuth } from '../provider/auth/store.js'
 import { createProviderClient } from '../provider/client.js'
@@ -73,10 +74,16 @@ export async function resolveLiveModels({
       },
     }, environment)
     const response = await client.models.list({ timeout: 10000, maxRetries: 0 })
-    const ids = (response.data ?? []).map((model: any) => (typeof model?.id === 'string' ? model.id : '')).filter((id: string): id is string => !!id)
-    if (!ids.length) throw new Error('Provider returned no models')
+    const entries = extractModelEntries(response.data, {
+      source: 'live', checkedAt: new Date().toISOString(),
+      scope: providerScope(provider, baseUrl, key),
+    })
+    // Current API-key adapter has no verified effort payload contract. Keep
+    // catalog metadata for diagnostics only; selection stays provider-default.
+    for (const entry of entries) entry.effort = undefined
+    if (!entries.length) throw new Error('Provider returned no models')
     return materializeModels({
-      ids,
+      entries,
       staticModels,
       providerLabel: provider,
       baseUrl,
@@ -124,9 +131,13 @@ export async function resolveCodexModels({
     const selectable = Array.isArray(body.models)
       ? { models: body.models.filter((model: any) => model?.visibility !== 'hide') }
       : body
-    const ids = extractModelIds(selectable)
-    if (!ids.length) throw new Error('Provider returned no selectable models')
-    return materializeModels({ ids, staticModels, providerLabel: 'OpenAI Codex subscription', baseUrl: '' })
+    const entries = extractModelEntries(selectable, {
+      source: 'live', checkedAt: new Date().toISOString(),
+      scope: providerScope('codex_subscription', endpoint.origin + endpoint.pathname, record.credential.account_id),
+      codex: true,
+    })
+    if (!entries.length) throw new Error('Provider returned no selectable models')
+    return materializeModels({ entries, staticModels, providerLabel: 'OpenAI Codex subscription', baseUrl: '' })
   } catch (error) {
     // Do not print raw provider bodies or credentials.
     const detail = error instanceof Error && /^(HTTP \d{3}|Provider returned)/.test(error.message)
@@ -174,7 +185,7 @@ async function resolveAnthropicModels({
     }
     if (!ids.length) throw new Error('Provider returned no models')
     return materializeModels({
-      ids,
+      entries: ids.map(id => ({ id })),
       staticModels,
       providerLabel,
       baseUrl,
@@ -196,13 +207,58 @@ function extractModelIds(payload: unknown): string[] {
   })
 }
 
+interface CatalogEntry { id: string; effort?: EffortCapability }
+
+export function parseEffortCapability(entry: unknown, options: {
+  source: EffortCapability['source']
+  checkedAt: string
+  scope: EffortCapability['scope']
+  codex?: boolean
+}): EffortCapability | undefined {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined
+  const item = entry as Record<string, unknown>
+  if (!Object.prototype.hasOwnProperty.call(item, 'supported_reasoning_levels')) return undefined
+  const raw = item.supported_reasoning_levels
+  if (!Array.isArray(raw)) return { status: 'unknown', options: [], source: options.source, checked_at: options.checkedAt, stale: true, scope: options.scope }
+  const optionsOut: EffortCapability['options'] = []
+  const seen = new Set<string>()
+  for (const value of raw) {
+    const record = typeof value === 'string' ? { effort: value } : value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+    const effort = typeof record?.effort === 'string' ? record.effort : undefined
+    if (!effort || effort.length > 64 || effort.trim() !== effort || /[\u0000-\u001f\u007f]/.test(effort) || seen.has(effort)) continue
+    seen.add(effort)
+    const description = typeof record?.description === 'string' && record.description.length <= 256 && !/[\u0000-\u001f\u007f]/.test(record.description) ? record.description : undefined
+    const unavailable = options.codex && effort === 'ultra' ? 'provider-managed delegation is not enabled by Base' : undefined
+    optionsOut.push({ value: effort, label: effort === 'none' ? 'None' : effort, ...(description ? { description } : {}), selectable: !unavailable, ...(unavailable ? { unavailable_reason: unavailable } : {}) })
+  }
+  const providerDefault = typeof item.default_reasoning_level === 'string' && seen.has(item.default_reasoning_level) ? item.default_reasoning_level : undefined
+  return {
+    status: optionsOut.length ? 'supported' : 'unsupported', options: optionsOut,
+    ...(providerDefault ? { provider_default: providerDefault } : {}), source: options.source,
+    checked_at: options.checkedAt, stale: false, scope: options.scope,
+  }
+}
+
+function extractModelEntries(payload: unknown, options: { source: EffortCapability['source']; checkedAt: string; scope: EffortCapability['scope']; codex?: boolean }): CatalogEntry[] {
+  if (!payload || typeof payload !== 'object') return []
+  const body = payload as { data?: unknown; models?: unknown }
+  const entries = Array.isArray(payload) ? payload : Array.isArray(body.data) ? body.data : Array.isArray(body.models) ? body.models : []
+  return entries.flatMap(entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+    const item = entry as Record<string, unknown>
+    const id = item.id ?? item.slug
+    if (typeof id !== 'string' || !id.trim() || id.length > 256) return []
+    return [{ id, effort: parseEffortCapability(item, options) }]
+  })
+}
+
 function materializeModels({
-  ids,
+  entries,
   staticModels,
   providerLabel,
   baseUrl,
 }: {
-  ids: string[]
+  entries: CatalogEntry[]
   staticModels: readonly ModelInfo[]
   providerLabel: string
   baseUrl: string
@@ -210,12 +266,13 @@ function materializeModels({
   const staticById = new Map(staticModels.map(model => [model.id, model]))
   const models: ModelInfo[] = []
   const seen = new Set<string>()
-  const addModel = (id: string): void => {
+  const addModel = (entry: CatalogEntry): void => {
+    const id = entry.id
     if (seen.has(id)) return
     seen.add(id)
     const known = staticById.get(id)
     if (known) {
-      models.push({ ...known, available: true, reason: undefined })
+      models.push({ ...known, available: true, reason: undefined, ...(entry.effort ? { effort: entry.effort } : { effort: unknownEffort('live', providerLabel, baseUrl) }) })
     } else {
       models.push({
         id,
@@ -226,11 +283,19 @@ function materializeModels({
         input_price: FALLBACK_PRICES.input,
         output_price: FALLBACK_PRICES.output,
         tags: ['available'],
-        available: true,
+        available: true, ...(entry.effort ? { effort: entry.effort } : { effort: unknownEffort('live', providerLabel, baseUrl) }),
       })
     }
   }
-  for (const id of ids) addModel(id)
+  for (const entry of entries) addModel(entry)
   return models
 }
 
+function unknownEffort(source: EffortCapability['source'], transport: string, endpoint: string): EffortCapability {
+  return { status: 'unknown', options: [], source: source === 'live' ? 'cache' : source, checked_at: new Date(0).toISOString(), stale: true, scope: providerScope(transport, endpoint, '') }
+}
+
+function providerScope(transport: string, endpoint: string, account: string): { transport: string; endpoint: string; provider_scope: string } {
+  const provider_scope = createHash('sha256').update(`${transport}\u0000${endpoint}\u0000${account}`).digest('hex').slice(0, 16)
+  return { transport, endpoint, provider_scope }
+}

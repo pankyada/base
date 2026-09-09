@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { sanitizeUserId } from '../session/user-paths.js'
+import { atomicWriteJson } from '../shared/atomic-json.js'
 
 export type PendingState = 'open' | 'answered' | 'expired' | 'cancelled'
 export type PendingAnsweredVia = 'channel' | 'rest' | 'ws' | 'cli'
@@ -62,7 +63,7 @@ export class PendingStore {
     const dir = join(this.root, user)
     mkdirSync(dir, { recursive: true })
     const path = join(dir, `${record.created_at.slice(0, 10)}_${record.id}.json`)
-    writeFileSync(path, JSON.stringify(record, null, 2), 'utf-8')
+    atomicWriteJson(path, record)
     return { ...record, path }
   }
 
@@ -88,9 +89,23 @@ export class PendingStore {
     if (new Date(record.expires_at).getTime() <= this.now().getTime()) {
       return this.update(record, { state: 'expired' })
     }
+    if (!this.validAnswer(record, answer)) return null
     return this.update(record, {
       state: 'answered', answer, answered_at: this.now().toISOString(), answered_via: answeredVia,
     })
+  }
+
+  /** Validate the durable question contract before recording an answer. */
+  private validAnswer(record: PendingInput, answer: string): boolean {
+    if (record.kind === 'text') return true
+    const options = record.options ?? []
+    if (record.kind === 'select') return options.includes(answer)
+    try {
+      const parsed = JSON.parse(answer)
+      if (Array.isArray(parsed)) return parsed.every(value => typeof value === 'string' && options.includes(value)) && new Set(parsed).size === parsed.length
+    } catch { /* accept the legacy comma-separated representation below */ }
+    const values = answer.split(',').map(value => value.trim()).filter(Boolean)
+    return values.length > 0 && new Set(values).size === values.length && values.every(value => options.includes(value))
   }
 
   cancel(id: string): PendingRecord | null {
@@ -107,7 +122,7 @@ export class PendingStore {
 
   private update(record: PendingRecord, patch: Partial<PendingInput>): PendingRecord {
     const updated = { ...copyWithoutPath(record), ...patch }
-    writeFileSync(record.path, JSON.stringify(updated, null, 2), 'utf-8')
+    atomicWriteJson(record.path, updated)
     return { ...updated, path: record.path }
   }
 

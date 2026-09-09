@@ -14,7 +14,7 @@ export interface CodexStreamOptions {
   model?: string
 }
 
-interface CallState extends ProviderToolCall { itemId?: string; index?: number }
+interface CallState extends ProviderToolCall { itemId?: string; index?: number; completed?: boolean }
 
 export async function* parseCodexSse(
   body: AsyncIterable<Uint8Array | string>,
@@ -113,6 +113,7 @@ function normalizeEvent(event: Record<string, unknown>, context: NormalizeContex
     const item = objectField(event, 'item')
     if (!item) throw new ProviderError('Codex output item missing item object', { code: 'invalid_output_item' })
     registerItem(item, event, context)
+    if (item.type === 'function_call') findCall(context, typeof item.id === 'string' ? item.id : undefined, typeof event.output_index === 'number' ? event.output_index : undefined, typeof item.call_id === 'string' ? item.call_id : undefined)!.completed = true
     return []
   }
   if (type === 'response.completed') return [{ type: 'done', result: completedResult(event, context) }]
@@ -190,11 +191,23 @@ function completedResult(event: Record<string, unknown>, context: NormalizeConte
       }
     } else if (item.type === 'reasoning') {
       reasoningItems.push(reasoningItem(item))
-    } else if (item.type !== 'output_text') {
+    } else if (item.type === 'output_text') {
+      outputText += String(item.text ?? '')
+    } else {
       throw new ProviderError(`unsupported Codex output item: ${String(item.type)}`, { code: 'unsupported_output_item' })
     }
   }
-  if ([...context.callsById.keys()].some(id => !completedIds.has(id))) throw new ProviderError('Codex terminal output omitted a streamed call', { code: 'invalid_terminal', ambiguous: true })
+  if (output.length === 0) {
+    for (const call of new Set(context.callsById.values())) {
+      if (!call.completed || !call.id || completedIds.has(call.id)) continue
+      if (context.knownTools && !context.knownTools.has(call.name)) throw new ProviderError(`unknown Codex tool: ${call.name}`, { code: 'unknown_tool' })
+      validateArguments(call.arguments, call.name, context.toolSchemas)
+      completedIds.add(call.id)
+      toolCalls.push({ id: call.id, name: call.name, arguments: call.arguments })
+    }
+  }
+  // The Responses stream can expose a speculative function call before the
+  // terminal snapshot retracts it. Only calls present in that snapshot execute.
   if (refusal && toolCalls.length) throw new ProviderError('Codex response mixed refusal with executable tools', { code: 'invalid_terminal', ambiguous: true })
   const usageValue = objectField(response, 'usage')
   const inputTokens = numberField(usageValue, 'input_tokens') ?? numberField(usageValue, 'prompt_tokens')

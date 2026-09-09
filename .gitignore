@@ -12,3 +12,11 @@ docs-site/.vitepress/cache/
 docs-site/public/architecture-site/
 tui/harness-tui
 *.tsbuildinfo
+
+# local scratch
+graphify-out/
+.playwright-mcp/
+web/test-results/
+.harness/
+.agents/skills/graphify/
+.claude/skills/graphify

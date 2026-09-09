@@ -13,6 +13,8 @@ interface RunHistoryIndex {
 }
 
 export interface RunStoreDiagnostic { path: string; error: string }
+export interface RunHistoryPage { runs: Run[]; next_cursor?: string }
+interface RunHistoryCursor { version: 1; user: string | null; profile: string | null; status: Run['status'] | null; updated_at: string; id: string }
 
 function runsDir(user: string): string {
   return join(homedir(), '.harness', 'runs', sanitizeUserId(user))
@@ -136,6 +138,31 @@ export class RunStore {
       }
     }
     return runs.sort((a, b) => Date.parse(b.updated_at ?? b.started_at) - Date.parse(a.updated_at ?? a.started_at) || b.id.localeCompare(a.id)).slice(0, limit)
+  }
+
+  /** Additive, scope-bound cursor page for reconnecting operator clients. */
+  listPage(opts: { user?: string; status?: Run['status']; profile?: string; limit?: number; cursor?: string } = {}): RunHistoryPage {
+    if (opts.limit !== undefined && (!Number.isInteger(opts.limit) || opts.limit < 1)) throw new Error('invalid run history limit')
+    const limit = Math.min(opts.limit ?? 50, 1000)
+    const all = this.list({ user: opts.user, status: opts.status, profile: opts.profile, limit: 100_000 })
+    let start = 0
+    if (opts.cursor) {
+      let value: Partial<RunHistoryCursor>
+      try { value = JSON.parse(Buffer.from(opts.cursor, 'base64url').toString('utf8')) } catch { throw new Error('invalid run history cursor') }
+      const requestedUser = opts.user ? sanitizeUserId(opts.user) : null
+      if (value.version !== 1 || value.user !== requestedUser || value.profile !== (opts.profile ?? null) || value.status !== (opts.status ?? null) || typeof value.updated_at !== 'string' || !Number.isFinite(Date.parse(value.updated_at)) || typeof value.id !== 'string' || !value.id) throw new Error('invalid run history cursor')
+      start = all.findIndex(run => {
+        const updatedAt = run.updated_at ?? run.started_at
+        return Date.parse(updatedAt) < Date.parse(value.updated_at!) || (updatedAt === value.updated_at && run.id.localeCompare(value.id!) < 0)
+      })
+      if (start < 0) start = all.length
+    }
+    const runs = all.slice(start, start + limit)
+    if (start + runs.length >= all.length) return { runs }
+    const last = runs.at(-1)!
+    const cursor: RunHistoryCursor = { version: 1, user: opts.user ? sanitizeUserId(opts.user) : null, profile: opts.profile ?? null, status: opts.status ?? null, updated_at: last.updated_at ?? last.started_at, id: last.id }
+    const encoded = Buffer.from(JSON.stringify(cursor)).toString('base64url')
+    return { runs, next_cursor: encoded }
   }
 
   scanRunning(): Run[] {

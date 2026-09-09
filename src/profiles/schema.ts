@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import type { Tier, Intensity } from '../workflow/types.js'
-import { codexCapability } from '../provider/codex/models.js'
 
 export const AclValue = z.enum(['allow', 'prompt', 'deny'])
 const PredicateSchema = z.object({
@@ -273,15 +272,17 @@ export type ContextConfig = z.infer<typeof ContextSchema>
 
 export type SafetyConfig = z.infer<typeof SafetySchema>
 
+const EffortSyntaxSchema = z.string().min(1).max(64).refine(value => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value), 'reasoning effort must be a bounded provider-native token')
 const ApiModelSchema = z.object({
   auth: z.literal('api_key').default('api_key'),
-  base_url: z.url(), api_key_env: z.string(), id: z.string(), fallback_id: z.string().optional(),
+  base_url: z.url(), api_key_env: z.string(), id: z.string(), fallback_id: z.string().optional(), reasoning_effort: EffortSyntaxSchema.optional(),
 })
 const CodexModelSchema = z.object({
   auth: z.literal('codex_oauth'), id: z.string().min(1), fallback_id: z.string().optional(),
+  reasoning_effort: EffortSyntaxSchema.optional(),
   base_url: z.never().optional(), api_key_env: z.never().optional(),
   codex: z.object({
-    reasoning_effort: z.string().optional(),
+    reasoning_effort: EffortSyntaxSchema.optional(),
     max_model_calls_per_run: z.number().int().min(1).max(1024).default(64),
     request_timeout_ms: z.number().int().min(1000).max(600000).default(120000),
   }).strict().prefault({}),
@@ -374,20 +375,12 @@ export const ProfileSchema = z.object({
   mcp: McpRuntimeSchema,
 }).superRefine((profile, ctx) => {
   if (profile.model.auth !== 'codex_oauth') return
-  const overrides: Array<[Array<string>, string | undefined]> = [
-    [['model', 'id'], profile.model.id], [['model', 'fallback_id'], profile.model.fallback_id],
-    [['safety', 'classifier_model_id'], profile.safety.classifier_model_id],
-    [['context', 'digest_model_id'], profile.context?.digest_model_id],
-    [['context_window', 'model_id'], profile.context_window?.model_id],
-    [['improvement', 'model_id'], profile.improvement.model_id],
-    ...Object.entries(profile.models?.roles ?? {}).map(([role, id]): [string[], string | undefined] => [['models', 'roles', role], id]),
-  ]
-  for (const [path, id] of overrides) {
-    if (id && !codexCapability(id)) ctx.addIssue({ code: 'custom', path, message: `Model ${id} is not in the Codex compatibility catalog` })
-  }
+  // Model identity availability and effort capability are separate. Unknown
+  // provider IDs remain valid; runtime discovery decides explicit support.
+  const directEffort = profile.model.reasoning_effort
   const effort = profile.model.codex.reasoning_effort
-  if (effort && !codexCapability(profile.model.id)?.efforts.includes(effort)) {
-    ctx.addIssue({ code: 'custom', path: ['model', 'codex', 'reasoning_effort'], message: 'Unsupported Codex reasoning effort' })
+  if (directEffort && effort && directEffort !== effort) {
+    ctx.addIssue({ code: 'custom', path: ['model', 'reasoning_effort'], message: 'Conflicting model reasoning effort aliases' })
   }
 }).transform(profile => {
   const channelNames = new Set<string>()

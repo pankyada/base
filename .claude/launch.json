@@ -4,7 +4,7 @@
     {
       "name": "architecture-site",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "serve", "-l", "8765", "/Users/pankajkumaryadav/Desktop/development/base/.claude/worktrees/architecture-site/docs/architecture-site"],
+      "runtimeArgs": ["--yes", "serve", "-l", "8765", "/Users/pankajkumaryadav/Desktop/development/base/docs/architecture-site"],
       "port": 8765
     },
     {
