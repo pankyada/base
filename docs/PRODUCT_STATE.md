@@ -1,6 +1,6 @@
 # Harness product state and task tracker
 
-Last updated: 2026-09-07 (Australia/Sydney).
+Last updated: 2026-09-09 (Australia/Sydney).
 
 Canonical current-state and task record for this repository. Update before reporting any task complete. All tasks count: implementation, fixes, reviews, documentation, validation, releases, and deployments.
 
@@ -35,7 +35,7 @@ Dimensions are independent. Acceptance labels identify evidence, not a percentag
 
 **Assessment:** substantial runtime and developer TUI; broad Web implementation with unresolved transport, identity, operational-state, and UX gaps. Single-operator localhost posture; user scopes are not authenticated multi-tenant accounts. No defensible single completion percentage.
 
-Delivery: current tracker/instruction changes are `working_tree`; overall installed/released/deployed parity `unknown`. No harness service was listening on expected local ports during the review. Temporary Web dev server was started for disconnected-state inspection and stopped afterward.
+Delivery: PT-023–PT-030 Core uplift plus trackers are `committed` (`499c36d`, pushed to `origin/main` 2026-09-09); overall installed/released/deployed parity `unknown`. No harness service was listening on expected local ports during the review. Temporary Web dev server was started for disconnected-state inspection and stopped afterward.
 
 ## Component state
 
@@ -125,6 +125,7 @@ Priority: P1 = correctness/operator trust; P2 = completeness/acceptance; P3 = fo
 | PT-027 | P2 | CORE-02/07/10/12 / lifecycle history platform | done | Core spec S5 local criteria pass: versioned scope-bound keyset run cursor, corruption diagnostics count, awaited MCP shutdown and voice barge-in fixture; external platform acceptance explicit |
 | PT-028 | P2 | CORE-05/06/11 / diagnostics and execution audits | done | Core spec S6 local criteria pass: opt-in safe prompt source/size diagnostics plus existing cancellation, provider failure and telemetry status audits; no prompt content export |
 | PT-029 | P2 | CORE-09 / orchestration contract groundwork | done | Core spec S7 local criteria pass: existing spawn/agent/fanout/cancellation/taint/workflow compatibility inventory and tests; no game UI or new scheduling/workspace policy |
+| PT-031 | P2 | CORE / uplift delivery to origin/main | done | Commit and push PT-023–PT-030 working tree after full checks; record SHA; local scratch outputs excluded via .gitignore |
 | PT-030 | P2 | CORE / integrated uplift acceptance | done | Final Core fixture matrix and full checks pass; generated protocol/Web typecheck and Go verification pass; implementation, client/live acceptance and deployment state separated |
 
 Suggested first sequence: PT-002/PT-003 → PT-004/PT-005 → PT-006/PT-007/PT-008 → PT-009–PT-012. This does not authorize unrelated implementation automatically.
@@ -144,6 +145,7 @@ Suggested first sequence: PT-002/PT-003 → PT-004/PT-005 → PT-006/PT-007/PT-0
 | E-009 | 2026-09-07 | PT-024/PT-025 local evidence: targeted Core suite 6 files / 34 tests passed (runtime projection, mounted correlated approval/input, real WS overflow/gap, scope/list routes, atomic pending answers, deferred restart races); broader 8-file focused suite 97 tests passed; root full suite 161 files / 926 tests passed; typecheck, generated protocol check, boundary guard and diff check passed | Local Core criteria complete; caller identity remains unauthenticated local scope, client adoption/live provider/platform/deployment gates remain open; no commit |
 | E-010 | 2026-09-08 | PT-026 local evidence: S4 suite 7 files / 46 tests passed (provider-native discovery metadata, opaque scope, bounded aliases, unknown model default, atomic validation, Codex serialization, API-key adapter-unavailable behavior, mounted WS selection); root full suite 162 files / 932 tests passed with one worker; typecheck, generated protocol check and diff check passed | Local Core criteria complete; no live catalog/entitlement/quality/billing claim; API-key effort, client picker/adoption, PT-014/PT-016 and deployment remain open |
 | E-011 | 2026-09-08 | PT-027–PT-029 local evidence: S5/S6 suite 12 files / 81 tests and S7 suite 9 files / 35 tests passed; history cursor, lifecycle cleanup, safe diagnostics and existing orchestration contracts exercised; typecheck/generator/boundary checks pass | Local Core criteria complete; physical audio, Windows, live provider, client adoption, auth and deployment remain open |
+| E-013 | 2026-09-09 | Pre-commit gate: `pnpm typecheck` clean; `pnpm test` 165 files / 937 tests passed (29.4s). Commit `499c36d` pushed to `origin/main` | Root suite only; no Web/Go rerun, no production build, no live model or deployed-version check |
 | E-012 | 2026-09-08 | PT-030 integrated evidence: root Vitest 165 files / 937 tests passed with one worker; `pnpm typecheck`, generator freshness, boundary guard, `git diff --check`, Web typecheck and `GOCACHE=/tmp/base-go-cache go test ./...` pass | Core-only working-tree implementation complete; generated protocol artifacts only on client paths; live provider/account, physical/device, Windows, client adoption, auth and deployment remain open; no commit |
 
 ## Completion log
@@ -166,6 +168,7 @@ Append one dated row per completed task; corrections retain original date and ex
 | 2026-09-08 | PT-028 | Added opt-in prompt assembly source/size diagnostics and verified cancellation, provider failure, telemetry and status distinctions through existing seams | E-011; targeted S6 suite pass | Working-tree local Core complete; no prompt content export or live model-quality claim |
 | 2026-09-08 | PT-029 | Recorded executable compatibility coverage for existing spawn, agent, fanout, cancellation, taint and workflow contracts | E-011; targeted S7 suite pass | Working-tree inventory only; persistent teammate/worktree/scheduler/game policy remains PT-020 |
 | 2026-09-08 | PT-030 | Completed ordered Core uplift integration and reconciled implementation versus external acceptance gates across scope, runtime recovery, human decisions, provider effort, lifecycle/history, diagnostics/telemetry and orchestration contracts | E-012; full suite, TypeScript/Web/Go checks, generator, boundary and diff checks pass | Working-tree only; no commit/push/deploy; PT-004/PT-014/PT-016 and live/platform/client tasks remain open |
+| 2026-09-09 | PT-031 | Committed and pushed the Core uplift working tree as `499c36d` to `origin/main`; ignored local scratch outputs (`graphify-out/`, `.playwright-mcp/`, `web/test-results/`, `.harness/`) and the vendored graphify skill | E-013 | Delivery `committed`; not released or deployed. PT-002–PT-017 client/live tasks remain open |
 
 ## Entry templates
 
