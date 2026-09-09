@@ -6,6 +6,7 @@ import { GenWidget } from '../widgets/GenWidget'
 import { SurfaceHost } from '../surface/SurfaceHost'
 import { DatasetDrawer } from './data/DatasetDrawer'
 import { Canvas } from './data/Canvas'
+import { buildScopedUrl } from '../lib/scopedRequest'
 
 interface Props {
   tabs: WorkspaceTab[]
@@ -52,7 +53,7 @@ export function Workspace({ tabs, activeTab, surfaces = [], onTabChange, onSurfa
   const tab = tabs[activeTab]
   const [view, setView] = useState<'artifacts' | 'surfaces' | 'canvas'>('artifacts')
   const [datasetOpen, setDatasetOpen] = useState(true)
-  const scopedUrl = (path: string) => `${datasetBaseUrl}${path}${datasetUser ? `?user=${encodeURIComponent(datasetUser)}` : ''}`
+  const scopedUrl = (path: string) => buildScopedUrl(datasetBaseUrl ?? '', path, { userId: datasetUser })
   const refreshArtifact = onRefreshArtifact ?? (datasetBaseUrl ? async (artifact: CanvasArtifact): Promise<CanvasArtifact> => {
     if (!artifact.recipeId) throw new Error('artifact has no persisted recipe')
     const response = await fetch(scopedUrl(`/artifacts/${encodeURIComponent(artifact.recipeId)}/refresh`), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true }) })

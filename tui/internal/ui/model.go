@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -21,7 +22,9 @@ import (
 // MessageSender is the small client surface the UI needs. It keeps the root
 // model testable without a live socket.
 type MessageSender interface {
-	Send(protocol.ClientMessage)
+	// Send reports whether the frame actually left the client. Callers must not
+	// treat a message as sent until it returns nil.
+	Send(protocol.ClientMessage) error
 }
 
 type invocableKind uint8
@@ -328,15 +331,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case ws.ConnectedMsg:
 		wasDisconnected := !m.notices.DisconnectedAt.IsZero()
 		m.connected = true
-		m.send(protocol.ModelsList())
-		m.send(protocol.SkillsList())
-		m.send(protocol.CommandsList())
+		_ = m.send(protocol.ModelsList()) // background sync on connect; refreshed again on next reconnect
+		_ = m.send(protocol.SkillsList()) // background sync on connect; refreshed again on next reconnect
+		_ = m.send(protocol.CommandsList()) // background sync on connect; refreshed again on next reconnect
 		if !m.resumeRequested {
 			if m.resumeID != "" {
-				m.send(protocol.Resume(m.resumeID))
+				if err := m.send(protocol.Resume(m.resumeID)); err != nil {
+					m.reportSendFailure("resume", err)
+				}
 				m.resumeRequested = true
 			} else if m.continueSession {
-				m.send(protocol.SessionList(""))
+				_ = m.send(protocol.SessionList("")) // continue-session lookup; failure leaves a fresh session, nothing to roll back
 				m.resumeRequested = true
 				m.continueLookup = true
 			}
@@ -509,7 +514,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "u":
 			if m.lastAction.UndoID != "" {
-				m.send(protocol.UndoApply(m.lastAction.UndoID))
+				if err := m.send(protocol.UndoApply(m.lastAction.UndoID)); err != nil {
+					m.reportSendFailure("undo", err)
+				}
 			}
 			return m, nil
 		case "r":
@@ -541,7 +548,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.running {
-			m.send(protocol.Cancel())
+			if err := m.send(protocol.Cancel()); err != nil {
+				m.reportSendFailure("cancel", err)
+			}
 			m.running = false
 		}
 		if m.localCancel != nil {
@@ -684,22 +693,40 @@ func (m Model) updateApproval(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if decision == "n" || decision == "esc" {
+		if err := m.send(protocol.ToolDeny(m.pendingApproval.ID)); err != nil {
+			// The decision never reached the server — keep the prompt
+			// answerable instead of claiming it was recorded.
+			m.reportSendFailure("tool deny", err)
+			m.reflow()
+			return m, nil
+		}
 		clearAwaitingApproval()
-		m.send(protocol.ToolDeny(m.pendingApproval.ID))
 		m.pendingApproval = nil
 		m.notices.Add(NoticeWarn, "tool denied", "request declined", "")
 		m.reflow()
 		return m, nil
 	}
 	if decision == "y" || decision == "enter" || decision == "a" {
-		clearAwaitingApproval()
 		id := m.pendingApproval.ID
 		if decision == "a" {
+			previousMode := m.approvalMode
 			m.approvalMode = "yolo"
-			m.send(protocol.SetApprovalMode("yolo"))
+			if err := m.send(protocol.SetApprovalMode("yolo")); err != nil {
+				// Server never agreed to yolo — don't let local state claim
+				// tools now run unapproved when they still require it.
+				m.approvalMode = previousMode
+				m.reportSendFailure("approval mode", err)
+				m.reflow()
+				return m, nil
+			}
 			m.notices.Add(NoticeWarn, "yolo enabled", "future tools run without approval", "set /approval danger to restore prompts")
 		}
-		m.send(protocol.ToolApprove(id))
+		if err := m.send(protocol.ToolApprove(id)); err != nil {
+			m.reportSendFailure("tool approve", err)
+			m.reflow()
+			return m, nil
+		}
+		clearAwaitingApproval()
 		m.pendingApproval = nil
 		m.reflow()
 	}
@@ -709,14 +736,22 @@ func (m Model) updateApproval(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	req := m.pendingInput
 	if msg.String() == "esc" {
-		m.send(protocol.InputResponse(req.ID, ""))
+		if err := m.send(protocol.InputResponse(req.ID, "")); err != nil {
+			m.reportSendFailure("input response", err)
+			m.reflow()
+			return m, nil
+		}
 		m.pendingInput = nil
 		m.reflow()
 		return m, nil
 	}
 	if req.Kind == "text" {
 		if msg.String() == "enter" {
-			m.send(protocol.InputResponse(req.ID, req.Text.Value()))
+			if err := m.send(protocol.InputResponse(req.ID, req.Text.Value())); err != nil {
+				m.reportSendFailure("input response", err)
+				m.reflow()
+				return m, nil
+			}
 			m.pendingInput = nil
 			m.reflow()
 			return m, nil
@@ -745,7 +780,11 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			value = strings.Join(chosen, ", ")
 		}
-		m.send(protocol.InputResponse(req.ID, value))
+		if err := m.send(protocol.InputResponse(req.ID, value)); err != nil {
+			m.reportSendFailure("input response", err)
+			m.reflow()
+			return m, nil
+		}
 		m.pendingInput = nil
 		m.reflow()
 	}
@@ -764,7 +803,9 @@ func (m *Model) applyApprovalCursor() bool {
 	}
 	m.approvalMode = approvalModes[m.approvalCursor]
 	m.yoloConfirm = false
-	m.send(protocol.SetApprovalMode(m.approvalMode))
+	if err := m.send(protocol.SetApprovalMode(m.approvalMode)); err != nil {
+		m.reportSendFailure("approval mode", err)
+	}
 	m.persistApprovalMode()
 	m.notices.Add(NoticeInfo, "approval mode", m.approvalMode, "")
 	return true
@@ -1057,7 +1098,9 @@ func (m Model) updateSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.notices.Add(NoticeWarn, "session resume blocked", "a turn is still running", "wait for it to finish")
 		} else {
 			selected := m.sessionOptions[m.sessionCursor]
-			m.send(protocol.Resume(selected.ID))
+			if err := m.send(protocol.Resume(selected.ID)); err != nil {
+				m.reportSendFailure("resume", err)
+			}
 			m.sessionPicker = false
 		}
 	}
@@ -1067,7 +1110,9 @@ func (m Model) updateSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) selectModel(id string) {
 	m.model = id
-	m.send(protocol.SetModel(id))
+	if err := m.send(protocol.SetModel(id)); err != nil {
+		m.reportSendFailure("model", err)
+	}
 	if m.prefs.ModelByProfile == nil {
 		m.prefs.ModelByProfile = map[string]string{}
 	}
@@ -1143,9 +1188,9 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	} else if msg.String() == "left" {
 		m.cycleOverlay(-1)
 	} else if m.overlayTab == "skills" && msg.String() == "m" {
-		m.send(protocol.SkillsMine())
+		_ = m.send(protocol.SkillsMine()) // list refresh keypress; stale list stays, retry by pressing again
 	} else if m.overlayTab == "skills" && msg.String() == "r" {
-		m.send(protocol.SkillsList())
+		_ = m.send(protocol.SkillsList()) // list refresh keypress; stale list stays, retry by pressing again
 	} else if m.overlayTab == "skills" && msg.String() == "ctrl+u" {
 		m.skillPreviewOffset = maxInt(0, m.skillPreviewOffset-5)
 	} else if m.overlayTab == "skills" && msg.String() == "ctrl+d" {
@@ -1160,7 +1205,7 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	} else if m.overlayTab == "skills" && msg.String() == "enter" {
 		if skill, ok := m.selectedSkill(); ok {
-			m.send(protocol.SkillGet(skill.Name, skill.Source))
+			_ = m.send(protocol.SkillGet(skill.Name, skill.Source)) // preview fetch; stale/empty preview stays, retry by reselecting
 		}
 	} else if m.overlayTab == "skills" && (msg.String() == "p" || msg.String() == "d") {
 		if skill, ok := m.selectedSkill(); ok {
@@ -1174,9 +1219,13 @@ func (m Model) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notices.Add(NoticeWarn, "confirm "+verb, skill.Name+" · "+skill.Path, "press "+action+" again")
 			} else {
 				if action == "p" {
-					m.send(protocol.SkillPromote(skill.Name))
+					if err := m.send(protocol.SkillPromote(skill.Name)); err != nil {
+						m.reportSendFailure("skill promote", err)
+					}
 				} else {
-					m.send(protocol.SkillDiscard(skill.Name))
+					if err := m.send(protocol.SkillDiscard(skill.Name)); err != nil {
+						m.reportSendFailure("skill discard", err)
+					}
 				}
 				m.skillConfirm = ""
 			}
@@ -1371,7 +1420,9 @@ func (m *Model) submitPendingAnswer() {
 		m.notices.Add(NoticeError, "answer not valid", "choose one of the listed options", "")
 		return
 	}
-	m.send(protocol.PendingAnswer(item.ID, value))
+	if err := m.send(protocol.PendingAnswer(item.ID, value)); err != nil {
+		m.reportSendFailure("answer", err)
+	}
 	m.pendingQueue = append(m.pendingQueue[:m.pendingCursor], m.pendingQueue[m.pendingCursor+1:]...)
 	if m.pendingCursor >= len(m.pendingQueue) {
 		m.pendingCursor = maxInt(0, len(m.pendingQueue)-1)
@@ -1403,7 +1454,9 @@ func (m Model) updateSkillEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.reflow()
 				return m, nil
 			}
-			m.send(protocol.SkillSave(skill.Name, m.skillEditor.Value()))
+			if err := m.send(protocol.SkillSave(skill.Name, m.skillEditor.Value())); err != nil {
+				m.reportSendFailure("skill save", err)
+			}
 			m.skillEditing = false
 			m.skillEditor.Blur()
 			m.skillEditorError = ""
@@ -1452,7 +1505,7 @@ func (m *Model) primeOverlayTab() {
 				m.modelCursor = i
 			}
 		}
-		m.send(protocol.ModelsList())
+		_ = m.send(protocol.ModelsList()) // overlay-open refresh; stale list stays, retry by reopening
 	case "approval":
 		m.yoloConfirm = false
 		for i, mode := range approvalModes {
@@ -1474,7 +1527,7 @@ func (m *Model) primeOverlayTab() {
 		}
 	case "skills":
 		m.skillConfirm = ""
-		m.send(protocol.SkillsList())
+		_ = m.send(protocol.SkillsList()) // overlay-open refresh; stale list stays, retry by reopening
 	case "tasks":
 		m.taskEditing = false
 		m.taskEditorError = ""
@@ -1484,10 +1537,10 @@ func (m *Model) primeOverlayTab() {
 		m.pendingAnswering = false
 		m.pendingAnswerInput.Blur()
 		m.pendingCursor = minInt(m.pendingCursor, maxInt(0, len(m.pendingQueue)-1))
-		m.send(protocol.PendingList())
+		_ = m.send(protocol.PendingList()) // overlay-open refresh; stale list stays, retry by reopening
 	case "undo":
 		m.undoCursor = firstAvailableUndo(m.undoEntries, 0)
-		m.send(protocol.UndoList())
+		_ = m.send(protocol.UndoList()) // overlay-open refresh; stale list stays, retry by reopening
 	}
 }
 
@@ -1566,8 +1619,14 @@ func (m *Model) submit() tea.Cmd {
 			m.reflow()
 			return nil
 		}
+		memoryTurnIdx := len(m.transcript.Turns)
 		m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "memory", Text: memory, Time: time.Now().Format("15:04")})
-		m.startAgentMessage("Remember this user preference using MemoryWrite: " + memory)
+		if !m.startAgentMessage("Remember this user preference using MemoryWrite: " + memory) {
+			// Send failed — drop the memory turn we speculatively appended so
+			// the transcript doesn't claim a write that never went out.
+			m.transcript.Turns = append(m.transcript.Turns[:memoryTurnIdx], m.transcript.Turns[memoryTurnIdx+1:]...)
+			m.reflow()
+		}
 		return nil
 	}
 	m.startMessage(content)
@@ -1583,6 +1642,7 @@ func (m *Model) startMessage(content string) {
 	// inlined file contents so the transcript stays readable.
 	bubble := content
 	payload := content + attachmentsBlock(m.attachments)
+	attachments := m.attachments
 	if len(m.attachments) > 0 {
 		names := make([]string, 0, len(m.attachments))
 		for _, attachment := range m.attachments {
@@ -1597,29 +1657,50 @@ func (m *Model) startMessage(content string) {
 		m.attachments = nil
 	}
 
+	if err := m.send(protocol.Message(payload)); err != nil {
+		// Put the operator's text back and leave the transcript untouched.
+		m.composer.input.SetValue(content)
+		m.attachments = attachments
+		m.reportSendFailure("message", err)
+		m.reflow()
+		return
+	}
+
 	m.transcript.Turns = append(m.transcript.Turns,
 		Turn{Role: "user", Text: bubble, Time: now.Format("15:04")},
 		Turn{Role: "agent", Time: now.Format("15:04"), Started: now},
 	)
 	m.running = true
 	m.activeRunID = ""
-	m.send(protocol.Message(payload))
 }
 
-func (m *Model) startAgentMessage(content string) {
+// startAgentMessage sends a synthetic agent-directed message (currently the
+// "#" memory-write path). It reports whether the send succeeded so callers
+// that already mutated other state on the caller's behalf (e.g. submit()
+// appending a memory turn before calling this) can roll that back on failure
+// instead of leaving the transcript asserting a run that never started.
+func (m *Model) startAgentMessage(content string) bool {
+	if err := m.send(protocol.Message(content)); err != nil {
+		m.reportSendFailure("message", err)
+		return false
+	}
 	now := time.Now()
 	m.turnTokensOut = m.tokensOut
 	m.turnCost = m.costUSD
 	m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "agent", Time: now.Format("15:04"), Started: now})
 	m.running = true
-	m.send(protocol.Message(content))
+	return true
 }
 
 func (m *Model) startPlanMessage(content string) {
+	if err := m.send(protocol.PlanRequest(content)); err != nil {
+		m.reportSendFailure("plan", err)
+		m.reflow()
+		return
+	}
 	now := time.Now()
 	m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "user", Text: content, Time: now.Format("15:04")})
 	m.running = true
-	m.send(protocol.PlanRequest(content))
 }
 
 // handleSlash dispatches every "/command" the composer can submit. The
@@ -1645,7 +1726,9 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 		for _, mode := range []string{"strict", "bash", "danger", "yolo"} {
 			if args == mode {
 				m.approvalMode = mode
-				m.send(protocol.SetApprovalMode(mode))
+				if err := m.send(protocol.SetApprovalMode(mode)); err != nil {
+					m.reportSendFailure("approval mode", err)
+				}
 				m.persistApprovalMode()
 				m.notices.Add(NoticeInfo, "approval mode", mode, "")
 				return nil, true
@@ -1667,7 +1750,9 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 			m.openOverlay("model")
 		}
 	case "compact":
-		m.send(protocol.Compact())
+		if err := m.send(protocol.Compact()); err != nil {
+			m.reportSendFailure("compact", err)
+		}
 	case "plan":
 		if strings.TrimSpace(args) == "" {
 			m.notices.Add(NoticeError, "what should be planned?", "/plan <request>", "")
@@ -1710,7 +1795,7 @@ func (m *Model) handleSlash(content string) (tea.Cmd, bool) {
 	case "skills":
 		m.openOverlay("skills")
 		if args == "mine" {
-			m.send(protocol.SkillsMine())
+			_ = m.send(protocol.SkillsMine()) // list refresh from /skills mine; stale list stays, retry by reopening
 		}
 	case "git":
 		action, rest, _ := strings.Cut(args, " ")
@@ -1816,17 +1901,27 @@ func (m *Model) persistApprovalMode() {
 	_ = m.prefs.Save("")
 }
 
-func (m *Model) send(message protocol.ClientMessage) {
-	if m.sender != nil {
-		m.sender.Send(message)
+func (m *Model) send(message protocol.ClientMessage) error {
+	if m.sender == nil {
+		return errNoSender
 	}
+	return m.sender.Send(message)
+}
+
+var errNoSender = errors.New("not connected")
+
+// reportSendFailure surfaces a refused frame instead of dropping it silently.
+func (m *Model) reportSendFailure(action string, err error) {
+	m.notices.Add(NoticeError, action+" not sent", err.Error(), "check connection and retry")
 }
 
 func (m *Model) requestSessions() {
 	m.sessionPicker = true
 	m.sessionCursor = 0
 	m.sessionOptions = nil
-	m.send(protocol.SessionList(""))
+	if err := m.send(protocol.SessionList("")); err != nil {
+		m.reportSendFailure("sessions", err)
+	}
 	m.reflow()
 }
 
@@ -1939,11 +2034,11 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if remembered := m.prefs.ApprovalModeByProfile[m.profile]; remembered != "" && remembered != m.approvalMode && !msg.Yolo {
 			if remembered == "strict" || remembered == "bash" || remembered == "danger" || remembered == "yolo" {
 				m.approvalMode = remembered
-				m.send(protocol.SetApprovalMode(remembered))
+				_ = m.send(protocol.SetApprovalMode(remembered)) // best-effort restore of a remembered approval mode on reconnect; operator can still change it explicitly
 			}
 		}
 		if remembered := m.prefs.ModelByProfile[m.profile]; remembered != "" && remembered != m.model {
-			m.send(protocol.SetModel(remembered))
+			_ = m.send(protocol.SetModel(remembered)) // best-effort restore of a remembered model on reconnect; operator can still change it explicitly
 			m.notices.Add(NoticeInfo, "remembered model applied", remembered, "applies to this session")
 		}
 	case "models":
@@ -1994,7 +2089,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			if len(m.sessionOptions) == 0 {
 				m.notices.Add(NoticeInfo, "no past sessions", "starting a fresh session", "send a message to begin")
 			} else {
-				m.send(protocol.Resume(m.sessionOptions[0].ID))
+				_ = m.send(protocol.Resume(m.sessionOptions[0].ID)) // automatic continue-session pick; failure leaves a fresh session, nothing to roll back
 			}
 			break
 		}
@@ -2026,7 +2121,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.notices.Add(NoticeInfo, "skill "+msg.Action, detail, suggestion)
 		if msg.Action == "saved" {
 			if skill, ok := m.selectedSkill(); ok {
-				m.send(protocol.SkillGet(skill.Name, skill.Source))
+				_ = m.send(protocol.SkillGet(skill.Name, skill.Source)) // preview fetch; stale/empty preview stays, retry by reselecting
 			}
 		}
 	case "approval_mode_changed":

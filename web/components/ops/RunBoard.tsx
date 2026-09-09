@@ -1,8 +1,10 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { buildScopedUrl, isStaleScope, type RequestScope } from '../../lib/scopedRequest'
 
 export interface RunRow { id: string; status: string; tokens?: number; costUsd?: number; model?: string }
 export function cancelRunUrl(baseUrl: string, id: string): string { return `${baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(id)}` }
+export function runsUrl(baseUrl: string, scope: RequestScope = {}): string { return buildScopedUrl(baseUrl, '/runs', scope) }
 export function runStatusLabel(status: string): string { return status === 'waiting_input' ? 'waiting for input' : status.replace('_', ' ') }
 export function runBoardEmptyLabel(rows: RunRow[]): string { return rows.length ? '' : 'No active runs' }
 export function mergeRunEvent(rows: RunRow[], event: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }): RunRow[] {
@@ -14,9 +16,15 @@ export function mergeRunEvent(rows: RunRow[], event: { type: string; run_id?: st
   return index >= 0 ? rows.map((row, rowIndex) => rowIndex === index ? next : row) : [...rows, next]
 }
 
-export function RunBoard({ baseUrl, onCancel, liveEvents = [] }: { baseUrl: string; onCancel?: (id: string) => void; liveEvents?: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }[] }) {
+export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [] }: { baseUrl: string; scope?: RequestScope; onCancel?: (id: string) => void; liveEvents?: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }[] }) {
   const [rows, setRows] = useState<RunRow[]>([])
-  useEffect(() => { void fetch(`${baseUrl}/runs`).then(response => response.ok ? response.json() : { runs: [] }).then(body => setRows(body.runs ?? [])).catch(() => setRows([])) }, [baseUrl])
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  useEffect(() => {
+    const requestedScope = scopeRef.current
+    setRows([]) // drop the previous scope's runs before the new scoped read lands
+    void fetch(runsUrl(baseUrl, requestedScope)).then(response => response.ok ? response.json() : { runs: [] }).then(body => { if (!isStaleScope(requestedScope, scopeRef.current)) setRows(body.runs ?? []) }).catch(() => { if (!isStaleScope(requestedScope, scopeRef.current)) setRows([]) })
+  }, [baseUrl, scope.userId, scope.profile])
   useEffect(() => { setRows(current => liveEvents.reduce(mergeRunEvent, current)) }, [liveEvents])
   return <section className="run-board"><h2>Runs</h2>{rows.length === 0 ? <p>{runBoardEmptyLabel(rows)}</p> : rows.map(row => <article key={row.id} className={`run-row run-row--${row.status}`}><strong>{row.id}</strong><span>{runStatusLabel(row.status)}</span><span>{row.tokens ?? 0} tokens</span>{onCancel && row.status === 'running' ? <button onClick={() => onCancel(row.id)}>cancel</button> : null}</article>)}</section>
 }

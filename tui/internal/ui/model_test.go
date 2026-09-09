@@ -16,8 +16,9 @@ import (
 
 type recordingSender struct{ messages []protocol.ClientMessage }
 
-func (s *recordingSender) Send(message protocol.ClientMessage) {
+func (s *recordingSender) Send(message protocol.ClientMessage) error {
 	s.messages = append(s.messages, message)
+	return nil
 }
 
 func TestModelStreamsTurnAndResolvesTool(t *testing.T) {

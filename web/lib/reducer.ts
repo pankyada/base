@@ -59,6 +59,7 @@ export interface State {
   activeTab: number
   input: string
   busy: boolean
+  sendError?: string
   focusPane: 'conv' | 'work'
   paletteOpen: boolean
   tokens: { in: number; out: number }
@@ -110,6 +111,7 @@ export interface State {
 export type Action =
   | { type: 'INPUT'; payload: string }
   | { type: 'USER_MSG'; payload: string }
+  | { type: 'SEND_FAILED'; reason: string }
   | { type: 'SERVER_MSG'; payload: ServerMessage }
   | { type: 'TOGGLE_PALETTE' }
   | { type: 'TOGGLE_TWEAKS' }
@@ -127,6 +129,15 @@ export type Action =
   | { type: 'SET_HISTORY'; payload: SessionSummary[] }
   | { type: 'HYDRATE_MESSAGES'; payload: { messages: UIMessage[]; prepend: boolean } }
   | { type: 'RECORD_EXECUTION'; payload: { code?: string; result: ExecutionResult } }
+
+export const initialState: State = {
+  messages: [], tabs: [], activeTab: 0, input: '', busy: false,
+  focusPane: 'conv', paletteOpen: false, tokens: { in: 0, out: 0 },
+  pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular',
+  todos: [], pendingInputRequest: null, pendingCodeExecution: null,
+  profile: '…', sessionId: '…',
+  activeProject: 'inbox', activeProjectName: 'Inbox', projects: [], history: [],
+}
 
 const id = () => Math.random().toString(36).slice(2)
 
@@ -154,8 +165,11 @@ function applyMessageToLane(state: State, runId: string | undefined, update: (me
 
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case 'INPUT': return { ...state, input: action.payload }
-    case 'USER_MSG': return { ...state, input: '', busy: true, messages: [...state.messages, { id: id(), role: 'user', content: action.payload }] }
+    case 'INPUT': return { ...state, input: action.payload, sendError: undefined }
+    case 'USER_MSG': return { ...state, input: '', busy: true, sendError: undefined, messages: [...state.messages, { id: id(), role: 'user', content: action.payload }] }
+    // A frame the transport refused must never look sent: keep the composed
+    // text and stay idle so the operator can retry.
+    case 'SEND_FAILED': return { ...state, sendError: action.reason }
     case 'TOGGLE_PALETTE': return { ...state, paletteOpen: !state.paletteOpen }
     case 'TOGGLE_TWEAKS': return { ...state, tweaksOpen: !state.tweaksOpen }
     case 'SET_TAB': return { ...state, activeTab: action.payload }

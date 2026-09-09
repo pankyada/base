@@ -12,8 +12,8 @@ import { Hero } from './Hero'
 import { Message } from './Message'
 import { AgentTurn } from './AgentTurn'
 import { Composer } from './Composer'
-import type { UIMessage, ExecutionResult } from '../lib/types'
-import { reducer, type State, type Action } from '../lib/reducer'
+import type { UIMessage, ExecutionResult, ClientMessage } from '../lib/types'
+import { reducer, initialState, type State, type Action } from '../lib/reducer'
 export { reducer }
 export type { State, Action }
 import { HarnessPython } from './HarnessPython'
@@ -25,17 +25,11 @@ import { Rail } from './chrome/Rail'
 import { StageStrip } from './turn/StageStrip'
 import { Toasts } from './chrome/Toasts'
 import { useSharedHarnessWS } from './chrome/SocketProvider'
+import { sendFailureReason } from '../hooks/useHarnessWS'
 import { escapeHtml, sessionToHtml } from '../lib/export'
 
 export function HarnessApp() {
-  const [state, dispatch] = useReducer(reducer, {
-    messages: [], tabs: [], activeTab: 0, input: '', busy: false,
-    focusPane: 'conv', paletteOpen: false, tokens: { in: 0, out: 0 },
-    pendingApproval: null, tweaksOpen: false, theme: 'dark', palette: 'amber', density: 'regular',
-    todos: [], pendingInputRequest: null, pendingCodeExecution: null,
-    profile: '…', sessionId: '…',
-    activeProject: 'inbox', activeProjectName: 'Inbox', projects: [], history: [],
-  })
+  const [state, dispatch] = useReducer(reducer, initialState)
 
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
   const { send, status, reconnect, events, subscribe, userId, setUserId } = useSharedHarnessWS()
@@ -47,7 +41,7 @@ export function HarnessApp() {
   }, [])
 
   const hydrateTranscript = useCallback((messages: UIMessage[], prepend: boolean) => dispatch({ type: 'HYDRATE_MESSAGES', payload: { messages, prepend } }), [])
-  const transcript = useHarnessQuery(wsUrl.replace(/^ws/, 'http'), state.sessionId, hydrateTranscript)
+  const transcript = useHarnessQuery(wsUrl.replace(/^ws/, 'http'), state.sessionId, hydrateTranscript, { userId, profile: state.profile })
 
   // Auto-assign new sessions to the active project (skip inbox — that's the default)
   const assignedFor = useRef<string>('')
@@ -94,21 +88,32 @@ export function HarnessApp() {
 
   const workspaceOpen = state.tabs.length > 0 || (state.surfaces?.length ?? 0) > 0
 
+  // Only treat a message as sent once the transport confirms the write; a
+  // refused frame keeps the text in the composer and reports why.
   const handleSend = () => {
     if (!state.input.trim()) return
-    dispatch({ type: 'USER_MSG', payload: state.input })
-    send({ type: 'message', content: state.input })
+    const content = state.input
+    const result = send({ type: 'message', content })
+    if (!result.ok) { dispatch({ type: 'SEND_FAILED', reason: sendFailureReason(result) }); return }
+    dispatch({ type: 'USER_MSG', payload: content })
   }
 
   const handleSuggest = (id: string) => {
     const content = `Run the ${id} task.`
+    const result = send({ type: 'message', content })
+    if (!result.ok) { dispatch({ type: 'SEND_FAILED', reason: sendFailureReason(result) }); return }
     dispatch({ type: 'USER_MSG', payload: content })
-    send({ type: 'message', content })
   }
 
-  const handleCancel = () => { if (state.busy) send({ type: 'cancel' }) }
-  const handleCompact = () => send({ type: 'compact' })
-  const handleSurfaceEmit = (name: string, payload: unknown) => send({ type: 'message', content: '[surface event ' + name + '] ' + JSON.stringify(payload ?? null) })
+  const sendControl = (msg: ClientMessage) => {
+    const result = send(msg)
+    if (!result.ok) dispatch({ type: 'SEND_FAILED', reason: sendFailureReason(result) })
+    return result
+  }
+
+  const handleCancel = () => { if (state.busy) sendControl({ type: 'cancel' }) }
+  const handleCompact = () => sendControl({ type: 'compact' })
+  const handleSurfaceEmit = (name: string, payload: unknown) => sendControl({ type: 'message', content: '[surface event ' + name + '] ' + JSON.stringify(payload ?? null) })
   const handleExportSession = () => {
     const body = state.messages.map(message => `<article><strong>${escapeHtml(message.role)}</strong><p>${escapeHtml(message.content ?? message.result ?? message.name ?? '')}</p></article>`).join('')
     const html = sessionToHtml(`${state.profile} session`, body)
@@ -210,6 +215,7 @@ export function HarnessApp() {
             onCancel={handleCancel}
             onCompact={handleCompact}
             compactOffer={shouldOfferCompact(state.context?.tokens, state.context?.window)}
+            sendError={state.sendError}
           />
         </ConvColumn>
 

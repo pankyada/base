@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { DatasetColumn, DatasetRecord, DatasetSchema } from '../../lib/datasets'
 import { SchemaCard } from './SchemaCard'
 import { DataTable } from '../../widgets/DataTable'
+import { buildScopedUrl } from '../../lib/scopedRequest'
 
 export function nullPercent(column: DatasetColumn, rows: number | undefined): number { return !rows ? 0 : Math.round((column.nulls / rows) * 100) }
 export function datasetContext(dataset: DatasetRecord, columns: string[]): string { return `[dataset ${dataset.filename} at ${dataset.path}; ${dataset.rows ?? 'unknown'} rows × ${dataset.columns ?? 'unknown'} columns; columns: ${columns.join(', ') || 'none'}; provenance: ${dataset.provenance}]` }
@@ -11,7 +12,7 @@ export function uploadDataset(baseUrl: string, file: File, onProgress: (percent:
 
 interface Props { baseUrl: string; userId?: string; onContext: (context: string) => void }
 export function DatasetDrawer({ baseUrl, userId, onContext }: Props) {
-  const requestUrl = (path: string) => `${baseUrl}${path}${userId ? `?user=${encodeURIComponent(userId)}` : ''}`
+  const requestUrl = (path: string) => buildScopedUrl(baseUrl, path, { userId })
   const [datasets, setDatasets] = useState<DatasetRecord[]>([])
   const [selected, setSelected] = useState<DatasetRecord>()
   const [schema, setSchema] = useState<DatasetSchema>()
@@ -19,7 +20,8 @@ export function DatasetDrawer({ baseUrl, userId, onContext }: Props) {
   const [error, setError] = useState<string>()
   const [progress, setProgress] = useState<number>()
   const load = async () => { try { const response = await fetch(requestUrl('/datasets')); if (!response.ok) throw new Error(`datasets request failed (${response.status})`); setDatasets((await response.json()).datasets ?? []) } catch (cause) { setError(cause instanceof Error ? cause.message : 'datasets request failed') } }
-  useEffect(() => { void load() }, [baseUrl])
+  // Identity switch must drop the previous user's dataset list/selection before the new scoped read lands, not after.
+  useEffect(() => { setDatasets([]); setSelected(undefined); setSchema(undefined); setPreview(undefined); void load() }, [baseUrl, userId])
   const select = async (dataset: DatasetRecord) => { setSelected(dataset); try { const [schemaResponse, previewResponse] = await Promise.all([fetch(requestUrl(`/datasets/${dataset.id}/schema`)), fetch(requestUrl(`/datasets/${dataset.id}/preview`))]); setSchema((await schemaResponse.json()).schema); const previewBody = await previewResponse.json(); setPreview(previewBody); onContext(datasetContext(dataset, previewBody.columns ?? [])) } catch (cause) { setError(cause instanceof Error ? cause.message : 'dataset detail request failed') } }
   const upload = async (file: File) => { setProgress(0); try { await uploadDataset(requestUrl('/datasets'), file, setProgress); await load() } catch (cause) { setError(cause instanceof Error ? cause.message : 'upload failed') } finally { setProgress(undefined) } }
   return <aside className="dataset-drawer"><h2>Datasets</h2><input type="file" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file) }} />{progress != null ? <progress value={progress} max={100}>{progress}%</progress> : null}{error ? <div role="alert">{error}</div> : null}<ul>{datasets.map(dataset => <li key={dataset.id}><button onClick={() => void select(dataset)}>{dataset.name}</button>{dataset.provenance === 'untrusted' ? <small> untrusted</small> : null}</li>)}</ul>{selected && schema ? <SchemaCard schema={schema} rows={selected.rows} /> : null}{preview ? <DataTable data={preview.rows} /> : null}</aside>

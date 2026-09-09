@@ -9,9 +9,10 @@ interface Props {
   onCancel?: () => void
   onCompact?: () => void
   compactOffer?: boolean
+  sendError?: string
 }
 
-export function Composer({ value, onChange, onSubmit, busy, compact, onCancel, onCompact, compactOffer }: Props) {
+export function Composer({ value, onChange, onSubmit, busy, compact, onCancel, onCompact, compactOffer, sendError }: Props) {
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -32,6 +33,11 @@ export function Composer({ value, onChange, onSubmit, busy, compact, onCancel, o
           style={{ width: '100%', background: 'transparent', border: 'none', color: 'var(--text)', outline: 'none', resize: 'none', fontFamily: 'inherit' }}
           rows={compact ? 1 : 3}
         />
+        {sendError && (
+          <div role="alert" className="composer-send-error" style={{ fontSize: '0.75rem', color: 'var(--danger, #d66)', marginTop: '0.5rem' }}>
+            {sendError} — your message is still here; retry when reconnected.
+          </div>
+        )}
         {!compact && (
           <div style={{ fontSize: '0.75rem', color: 'var(--dim)', marginTop: '0.5rem', textAlign: 'right' }}>
             Enter to send, Shift+Enter for new line

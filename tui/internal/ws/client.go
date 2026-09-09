@@ -2,6 +2,7 @@
 package ws
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
@@ -121,14 +122,19 @@ func sleepOrStop(stop <-chan struct{}, delay time.Duration) bool {
 	}
 }
 
-// Send writes a client frame if connected; drops it otherwise.
-func (c *Client) Send(m protocol.ClientMessage) {
+// Send writes a client frame if connected. It reports failure instead of
+// dropping the frame silently, so the caller can put the operator's input
+// back rather than let it look sent.
+func (c *Client) Send(m protocol.ClientMessage) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.conn != nil {
-		_ = c.conn.WriteJSON(m)
+	if c.conn == nil {
+		return errNotConnected
 	}
+	return c.conn.WriteJSON(m)
 }
+
+var errNotConnected = errors.New("not connected")
 
 // Close stops reconnect attempts and closes the active socket.
 func (c *Client) Close() {

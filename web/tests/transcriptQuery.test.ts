@@ -10,6 +10,11 @@ describe('transcript query', () => {
   })
 
   it('builds bounded paging URLs', () => {
-    expect(transcriptUrl('http://localhost:7337', 's 1', 'abc')).toBe('http://localhost:7337/sessions/s%201/messages?before=abc')
+    expect(transcriptUrl('http://localhost:7337', 's 1', {}, 'abc')).toBe('http://localhost:7337/sessions/s%201/messages?before=abc')
+  })
+
+  it('includes user and profile scope when provided', () => {
+    expect(transcriptUrl('http://localhost:7337', 's1', { userId: 'user-a', profile: 'coding' }, 'abc'))
+      .toBe('http://localhost:7337/sessions/s1/messages?user=user-a&profile=coding&before=abc')
   })
 })

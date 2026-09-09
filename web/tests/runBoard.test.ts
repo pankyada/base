@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeRunEvent, runStatusLabel, runBoardEmptyLabel } from '../components/ops/RunBoard'
+import { mergeRunEvent, runStatusLabel, runBoardEmptyLabel, runsUrl } from '../components/ops/RunBoard'
 
 describe('run board', () => {
   it('keeps concurrent lanes and distinguishes waiting input', () => {
@@ -16,6 +16,14 @@ describe('run board', () => {
 
   it('has a deliberate empty state', () => {
     expect(runBoardEmptyLabel([])).toBe('No active runs')
+  })
+
+  it('scopes /runs to the active identity and profile, distinct per identity', () => {
+    const a = runsUrl('http://localhost:7337', { userId: 'user-a', profile: 'coding' })
+    const b = runsUrl('http://localhost:7337', { userId: 'user-b', profile: 'coding' })
+    expect(a).toContain('user=user-a')
+    expect(a).toContain('profile=coding')
+    expect(a).not.toBe(b)
   })
 
   it('keeps budget exhaustion visible in the live lane', () => {
