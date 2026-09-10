@@ -322,7 +322,10 @@ export type ServerMessage =
   | { type: 'tool_auto_approved'; id: string; name: string; scope: 'session'; agent_id?: string; run_id?: string }
   | { type: 'session_ready'; sessionId: string; profile: string; model?: string; effort?: string | null; working_dir?: string; allowed_packages?: string[]; budget?: { max_cost_usd: number }; yolo: boolean; protocol_version?: number; provider_status?: ProviderStatus; capabilities?: { runtime_recovery?: boolean; correlated_decisions?: boolean; model_effort_selection?: boolean } }
   | { type: 'session_end'; sessionId: string; agent_id?: string; run_id?: string; status?: 'completed' | 'budget_exceeded' | 'cancelled' | 'failed'; reason?: string }
-  | { type: 'session_resumed'; agent_id?: string; sessionId: string }
+  // `profile` is required: the server always resolves a concrete post-resume profile
+  // (the resumed session's own profile, falling back to the connection's profile) before
+  // this message is ever sent, so there is no emitter that genuinely cannot know it.
+  | { type: 'session_resumed'; agent_id?: string; sessionId: string; profile: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; usage?: UsageMetadataWire; agent_id?: string; run_id?: string }
   | { type: 'error'; message: string; request_id?: string; agent_id?: string; run_id?: string }
   | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[]; agent_id?: string; run_id?: string }

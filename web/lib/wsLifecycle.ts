@@ -26,7 +26,10 @@ export function nextRecoveryState(current: RecoveryState, msg: ServerMessage): R
       return { sessionId: (msg as any).sessionId, profile: (msg as any).profile }
     }
     if ((msg as any).type === 'session_resumed') {
-      return { ...current, sessionId: (msg as any).sessionId }
+      // Resume can switch profiles server-side (src/server/index.ts re-resolves baseProfile to
+      // the resumed session's own profile), so adopt the reported profile instead of keeping
+      // whatever the connection was on before the resume.
+      return { ...current, sessionId: (msg as any).sessionId, profile: (msg as any).profile }
     }
   }
   return current

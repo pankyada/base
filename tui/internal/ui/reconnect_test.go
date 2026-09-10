@@ -69,8 +69,9 @@ func TestReconnectRestoresSessionAndProfile(t *testing.T) {
 		t.Fatalf("expected a resume(sess-1) frame after reconnect, got %+v", sender.attempts)
 	}
 
-	// Server confirms the restore.
-	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-1"}}))
+	// Server confirms the restore and, since PT-033, names the post-resume
+	// profile authoritatively.
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-1", Profile: "devops"}}))
 	if m.reconnectPending {
 		t.Fatal("reconnectPending should clear once the resume is acknowledged")
 	}
@@ -78,10 +79,32 @@ func TestReconnectRestoresSessionAndProfile(t *testing.T) {
 		t.Fatalf("expected the operator to be back in sess-1, got %q", m.sessionID)
 	}
 	if m.profile != "devops" {
-		t.Fatalf("expected profile to remain devops (carried by hello, unaffected by resume), got %q", m.profile)
+		t.Fatalf("expected profile taken from session_resumed (devops), got %q", m.profile)
 	}
 	if !hasNoticeContaining(m, "reconnected") {
 		t.Fatal("expected a notice confirming the session was restored")
+	}
+}
+
+// TestResumeAdoptsCrossProfile covers PT-033: resuming a session created
+// under a different profile switches the connection server-side, and the
+// model must follow the profile session_resumed reports rather than keep
+// showing the one hello connected with.
+func TestResumeAdoptsCrossProfile(t *testing.T) {
+	sender := &failingSender{err: nil}
+	m := NewModel(sender, "devops", "tester", prefs.Preferences{})
+	m = asModel(m.Update(ws.ConnectedMsg{}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_ready", SessionID: "sess-p", Profile: "devops"}}))
+	if m.profile != "devops" {
+		t.Fatalf("setup: expected devops, got %q", m.profile)
+	}
+
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-q", Profile: "research"}}))
+	if m.sessionID != "sess-q" {
+		t.Fatalf("expected sess-q, got %q", m.sessionID)
+	}
+	if m.profile != "research" {
+		t.Fatalf("expected profile to follow session_resumed (research), got %q", m.profile)
 	}
 }
 

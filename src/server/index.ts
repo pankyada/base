@@ -1397,7 +1397,10 @@ async function main() {
             ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
             : new FsMemoryProvider(connectionProfile.artifact_dir, session)
           usageAtConnectionStart = { ...session.usage }
-          send({ type: 'session_resumed', sessionId: session.id })
+          // Resume can switch profiles (baseProfile above is re-resolved to the resumed
+          // session's own profile), so report the post-resume profile, not whatever the
+          // connection was on before this frame.
+          send({ type: 'session_resumed', sessionId: session.id, profile: connectionProfile.name })
         } else {
           send({ type: 'error', message: `Session ${msg.sessionId} not found` })
         }

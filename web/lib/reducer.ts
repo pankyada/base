@@ -220,7 +220,8 @@ export function reducer(state: State, action: Action): State {
           const status = msg.status === 'budget_exceeded' || msg.status === 'cancelled' || msg.status === 'failed' ? msg.status : 'done'
           return withLane({ ...state, busy: false }, msg.run_id, current => ({ ...current, status }))
         }
-        case 'session_resumed': return { ...state, busy: false, sessionId: msg.sessionId }
+        // Resume can switch profiles server-side, so adopt the reported profile too.
+        case 'session_resumed': return { ...state, busy: false, sessionId: msg.sessionId, profile: msg.profile }
         case 'error': return withLane({ ...state, busy: false, notices: [...(state.notices ?? []), { level: 'error', message: msg.message }] }, msg.run_id, current => ({ ...current, status: 'error' }))
         case 'code_execute': return { ...state, pendingCodeExecution: { id: msg.id, code: msg.code, language: msg.language, data: msg.data } }
         case 'artifacts': {

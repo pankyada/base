@@ -2128,6 +2128,11 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.sessionPicker = true
 	case "session_resumed":
 		m.sessionID = msg.SessionID
+		// Resume can switch the connection's profile server-side (PT-033);
+		// adopt it so the TUI stops showing the pre-resume profile.
+		if msg.Profile != "" {
+			m.profile = msg.Profile
+		}
 		m.running = false
 		m.activeTool = ""
 		m.activeToolStarted = time.Time{}

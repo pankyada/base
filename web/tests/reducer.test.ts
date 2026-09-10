@@ -59,6 +59,12 @@ describe('protocol reducer', () => {
     expect(state.runs?.['budget-run']?.status).toBe('budget_exceeded')
   })
 
+  it('adopts the resumed session\'s own profile on session_resumed (PT-033: resume can switch profiles)', () => {
+    const state = reducer(base, { type: 'SERVER_MSG', payload: { type: 'session_resumed', sessionId: 's2', profile: 'research' } })
+    expect(state.sessionId).toBe('s2')
+    expect(state.profile).toBe('research')
+  })
+
   it('retains server-owned runtime and mission receipts for attached clients', () => {
     let state = reducer(base, { type: 'SERVER_MSG', payload: { type: 'runtime', snapshot: { session_id: 's', user: 'u', revision: 2, status: 'running', last_seq: 4, events: [], gap: false } } })
     state = reducer(state, { type: 'SERVER_MSG', payload: { type: 'mission', mission: { id: 'm', status: 'accepted', revision: 2, outcome: 'ship', criteria: [{ id: 'c', description: 'works', state: 'verified' }] }, receipts: [{ id: 'r' }] } })

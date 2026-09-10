@@ -119,4 +119,21 @@ describe('Core WebSocket scope fixture', () => {
     expect(runtime.snapshot.events.length).toBeLessThanOrEqual(256)
     socket.close()
   })
+
+  it('reports the resumed session\'s own profile in session_resumed, not the connection profile (PT-033)', async () => {
+    const first = await open(wsUrl)
+    const created = await hello(first, 'carol', 'fixture')
+    expect(created).toMatchObject({ type: 'session_ready', profile: 'fixture' })
+    first.close()
+
+    // New connection starts on a different profile ('other'), then resumes the session
+    // created under 'fixture' — session_resumed must report the resumed session's own
+    // profile ('fixture'), since the resume handler re-resolves baseProfile to it.
+    const second = await open(wsUrl)
+    await hello(second, 'carol', 'other')
+    second.send(JSON.stringify({ type: 'resume', sessionId: created.sessionId }))
+    const resumed = await nextType(second, 'session_resumed')
+    expect(resumed).toMatchObject({ type: 'session_resumed', sessionId: created.sessionId, profile: 'fixture' })
+    second.close()
+  })
 })

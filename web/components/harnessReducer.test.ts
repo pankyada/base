@@ -31,7 +31,7 @@ describe('reducer project/history handling', () => {
     expect(next.activeProjectName).toBe('Beta')
   })
   it('session_resumed keeps busy false', () => {
-    const next = reducer({ ...base, busy: true }, { type: 'SERVER_MSG', payload: { type: 'session_resumed', sessionId: 's1' } })
+    const next = reducer({ ...base, busy: true }, { type: 'SERVER_MSG', payload: { type: 'session_resumed', sessionId: 's1', profile: 'coding' } })
     expect(next.busy).toBe(false)
   })
 })

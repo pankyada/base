@@ -149,7 +149,7 @@ type ServerMessage struct {
 	Options []string `json:"options,omitempty"` // input_request
 
 	SessionID       string          `json:"sessionId,omitempty"`        // session_ready/end/resumed, artifacts
-	Profile         string          `json:"profile,omitempty"`          // session_ready
+	Profile         string          `json:"profile,omitempty"`          // session_ready, session_resumed
 	Model           string          `json:"model,omitempty"`            // session_ready
 	WorkingDir      string          `json:"working_dir,omitempty"`      // session_ready
 	Yolo            bool            `json:"yolo,omitempty"`             // session_ready

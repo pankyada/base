@@ -7,10 +7,16 @@ describe('nextRecoveryState', () => {
     expect(state).toEqual({ sessionId: 's1', profile: 'coding' })
   })
 
-  it('updates only sessionId on session_resumed, keeping the known profile', () => {
+  it('adopts the reported profile on session_resumed (PT-033: resume can switch profiles)', () => {
     const start: RecoveryState = { sessionId: 's1', profile: 'coding' }
-    const state = nextRecoveryState(start, { type: 'session_resumed', sessionId: 's2' } as any)
+    const state = nextRecoveryState(start, { type: 'session_resumed', sessionId: 's2', profile: 'coding' } as any)
     expect(state).toEqual({ sessionId: 's2', profile: 'coding' })
+  })
+
+  it('adopts a different profile on a cross-profile resume', () => {
+    const start: RecoveryState = { sessionId: 's1', profile: 'coding' }
+    const state = nextRecoveryState(start, { type: 'session_resumed', sessionId: 's2', profile: 'research' } as any)
+    expect(state).toEqual({ sessionId: 's2', profile: 'research' })
   })
 
   it('leaves state untouched for unrelated frames', () => {

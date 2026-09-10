@@ -13,7 +13,9 @@ type HomeBatch = { pending: unknown; runs: unknown; usage: unknown; triggers: un
 
 /** Active profile, read off the WS event stream (this page doesn't run the reducer HarnessApp uses). */
 function activeProfile(events: { type: string }[]): string | undefined {
-  const message = [...events].reverse().find(event => event.type === 'session_ready' || event.type === 'profiles')
+  // session_resumed also carries the (possibly switched) post-resume profile — see PT-033 —
+  // so it counts as a profile source alongside session_ready/profiles.
+  const message = [...events].reverse().find(event => event.type === 'session_ready' || event.type === 'session_resumed' || event.type === 'profiles')
   if (!message) return undefined
   return (message as { profile?: string; current?: string }).profile ?? (message as { current?: string }).current
 }
