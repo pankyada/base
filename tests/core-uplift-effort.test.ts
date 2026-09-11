@@ -61,6 +61,12 @@ describe('Core model effort contract', () => {
     const base = { model: 'gpt-5.4-mini', instructions: 'hello', messages: [{ role: 'user' as const, content: 'hi' }], stream: true as const }
     expect(serializeCodexRequest({ ...base, reasoningEffort: 'low' }).reasoning).toEqual({ effort: 'low' })
     expect(serializeCodexRequest(base).reasoning).toBeUndefined()
+    expect(() => serializeCodexRequest({ ...base, reasoningEffort: 'ultra' }, {
+      status: 'supported', options: [{ value: 'ultra', label: 'ultra', selectable: true }], source: 'live', checked_at: new Date().toISOString(), stale: false,
+    })).toThrow(/unavailable/i)
+    expect(() => serializeCodexRequest({ ...base, reasoningEffort: 'low' }, {
+      status: 'supported', options: [{ value: 'low', label: 'low', selectable: true }], source: 'live', checked_at: new Date().toISOString(), stale: true,
+    })).toThrow(/unavailable/i)
   })
 
   it('validates effort syntax offline while accepting unknown provider model IDs', () => {

@@ -18,6 +18,7 @@ export interface BulletinPost {
 }
 
 export class Bulletin {
+  private static readonly MAX_TURN_KEYS = 256
   private posts: BulletinPost[] = []
   private seq = 0
   private perTurn = new Map<string, number>()
@@ -32,6 +33,9 @@ export class Bulletin {
     const count = this.perTurn.get(turnKey) ?? 0
     if (count >= 5) throw new Error('board post refused: 5 posts already made this turn; maximum is 5')
     this.perTurn.set(turnKey, count + 1)
+    // Bulletin is ephemeral and retains only the newest posts. Keep matching
+    // recent rate keys bounded too; this is not durable exactly-once state.
+    while (this.perTurn.size > Bulletin.MAX_TURN_KEYS) this.perTurn.delete(this.perTurn.keys().next().value!)
     const post: BulletinPost = { ...input, id: randomUUID(), seq: ++this.seq, subject, body, ts: Date.now() }
     this.posts.push(post)
     if (this.posts.length > 200) this.posts.shift()

@@ -132,6 +132,12 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       })
     }
 
+    // AgentLoop reports interruption through its session-end callback and
+    // returns so callers can release turn resources. A cancelled one-shot
+    // run must still reject here; otherwise REST marks it completed and
+    // returns partial text as a successful result.
+    if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
+
     const messages = session.messages as Array<{ role: string; content?: string | null }>
     const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
     const finalText = lastAssistant?.content ?? ''

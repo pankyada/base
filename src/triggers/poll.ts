@@ -9,7 +9,7 @@ export interface PollConfig {
   mode?: 'skip' | 'queue' | 'parallel'
 }
 
-export type PollProbe = (tool: string, args: Record<string, unknown>) => Promise<unknown>
+export type PollProbe = (tool: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>
 export type PollFire = (input: Record<string, unknown>, config: PollConfig) => Promise<void>
 export type PollSkip = (reason: 'cursor_unchanged' | 'probe_error', probeMs?: number) => void
 
@@ -35,6 +35,7 @@ export function cursorAt(value: unknown, path: string): string | null {
 
 export class PollTrigger {
   private timer: ReturnType<typeof setTimeout> | null = null
+  private activeController: AbortController | null = null
   private stopped = false
   private errors: number
 
@@ -51,17 +52,28 @@ export class PollTrigger {
   }
 
   start(): void { this.schedule() }
-  stop(): void { this.stopped = true; if (this.timer) clearTimeout(this.timer) }
+  stop(): void {
+    this.stopped = true
+    if (this.timer) clearTimeout(this.timer)
+    this.activeController?.abort()
+  }
 
   async tick(): Promise<void> {
+    if (this.stopped || this.activeController) return
     const started = Date.now()
     let output: unknown
+    const controller = new AbortController()
+    this.activeController = controller
     try {
-      output = await this.probe(this.config.probe.tool, this.config.probe.args ?? {})
+      output = await this.probe(this.config.probe.tool, this.config.probe.args ?? {}, controller.signal)
     } catch {
+      if (this.stopped || controller.signal.aborted) return
       this.recordProbeError(started)
       return
+    } finally {
+      if (this.activeController === controller) this.activeController = null
     }
+    if (this.stopped || controller.signal.aborted) return
 
     const cursor = cursorAt(output, this.config.cursor_path)
     if (cursor === null) {

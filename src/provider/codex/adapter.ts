@@ -4,9 +4,11 @@ import { extractResidency, type OAuthFetch } from '../auth/oauth.js'
 import { sanitizeError } from '../auth/redact.js'
 import { abortable, boundedJson, lifetime } from '../auth/async.js'
 import { ProviderError } from '../errors.js'
+import type { EffortCapability } from '../../types.js'
 import type { ModelCallContext, ProviderClient, ProviderEvent, ProviderRequest, ProviderResult } from '../types.js'
 import { prepareCodexHistory, serializeCodexRequest } from './request.js'
 import { parseCodexSse } from './stream.js'
+import { codexCatalogScope } from './models.js'
 
 export const CODEX_API_ENDPOINT = 'https://chatgpt.com/backend-api/codex/responses'
 
@@ -17,6 +19,8 @@ export interface CodexAdapterOptions {
   userAgent?: string
   timeoutMs?: number
   reasoningEffort?: string
+  /** Validated provider catalog capability for a dynamically discovered model. */
+  effortCapability?: EffortCapability
 }
 
 export function createCodexProvider(model: string, options: CodexAdapterOptions = {}): ProviderClient {
@@ -29,10 +33,10 @@ export function createCodexProvider(model: string, options: CodexAdapterOptions 
         throw new ProviderError('Codex credential generation changed; start a new turn before executing tools', { code: 'credential_changed' })
       }
     },
-    stream: (request, context) => streamCodex(request, context, options),
+    stream: (request, context) => streamCodex(request, context, options, model),
     generate: async (request, context) => {
       let result: ProviderResult | undefined
-      for await (const event of streamCodex(request, context, options)) {
+      for await (const event of streamCodex(request, context, options, model)) {
         if (event.type === 'done') result = event.result
       }
       if (!result) throw new ProviderError('Codex stream ended without a result', { code: 'unexpected_eof' })
@@ -45,6 +49,7 @@ async function* streamCodex(
   request: ProviderRequest,
   context: ModelCallContext | undefined,
   options: CodexAdapterOptions,
+  providerModel: string,
 ): AsyncIterable<ProviderEvent> {
   if (process.env.HARNESS_DISABLE_CODEX_OAUTH === '1') {
     throw new ProviderError('Codex OAuth is disabled; configure an API profile', { code: 'disabled' })
@@ -64,11 +69,16 @@ async function* streamCodex(
   operation.signal.addEventListener('abort', timeoutWatcher, { once: true })
 
   try {
+    if (options.effortCapability && request.model !== providerModel) {
+      throw new ProviderError('Codex effort metadata belongs to another model; refresh model metadata', { code: 'stale_capability' })
+    }
     const initial = await getValidCodexCredential({ home: options.home, fetch: fetcher, signal: operation.signal })
     if (context?.credentialGeneration && context.credentialGeneration !== initial.generation) {
       throw new ProviderError('Codex credential changed before inference', { code: 'credential_changed' })
     }
-    const body = serializeCodexRequest(prepareCodexHistory({ ...request, reasoningEffort: request.reasoningEffort ?? options.reasoningEffort }, initial.generation))
+    const effectiveEffort = request.reasoningEffort ?? options.reasoningEffort
+    if (effectiveEffort) assertFreshCatalogCapability(options.effortCapability, options.endpoint ?? CODEX_API_ENDPOINT, initial.account_id)
+    const body = serializeCodexRequest(prepareCodexHistory({ ...request, reasoningEffort: effectiveEffort }, initial.generation), options.effortCapability)
     let credential = initial
     let replayed = false
 
@@ -131,6 +141,24 @@ async function* streamCodex(
     clearTimeout(timeout)
     operation.signal.removeEventListener('abort', timeoutWatcher)
     upstreamSignal?.removeEventListener('abort', abortOperation)
+  }
+}
+
+function assertFreshCatalogCapability(capability: EffortCapability | undefined, responseEndpoint: string, accountId: string): void {
+  if (!capability || capability.source !== 'live') return
+  if (capability.stale || capability.status !== 'supported' || !capability.scope) {
+    throw new ProviderError('Codex effort metadata is stale; refresh model metadata before inference', { code: 'stale_capability' })
+  }
+  let catalogEndpoint: string
+  try {
+    const endpoint = new URL(responseEndpoint)
+    endpoint.pathname = endpoint.pathname.replace(/\/responses\/?$/, '/models')
+    catalogEndpoint = endpoint.toString().replace(/\/$/, '')
+  } catch {
+    throw new ProviderError('Codex effort metadata scope is invalid', { code: 'stale_capability' })
+  }
+  if (capability.scope.transport !== 'codex_subscription' || capability.scope.endpoint !== catalogEndpoint || capability.scope.provider_scope !== codexCatalogScope('codex_subscription', catalogEndpoint, accountId)) {
+    throw new ProviderError('Codex effort metadata belongs to another account or endpoint; refresh model metadata', { code: 'stale_capability' })
   }
 }
 

@@ -770,7 +770,8 @@ and [task tracker](PRODUCT_STATE.md).
 
 ## Active implementation track — Core uplift
 
-✅ Core-only implementation complete locally through PT-030; implementation,
+✅ Core local implementation and corrective acceptance complete through PT-030/PT-037
+on 2026-09-11. Corrective changes included in delivery PT-038; see E-018 in tracker.
 Order: scope → recovery → human decisions → provider/effort → lifecycle/history/platform
 → prompt/execution/telemetry cleanup → existing orchestration contract groundwork.
 

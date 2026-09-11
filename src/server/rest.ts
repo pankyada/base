@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto'
 import type { RunStore } from '../runs/store.js'
 import type { Run } from '../runs/types.js'
 import type { Skill } from '../tools/types.js'
-import { createProject, listProjects, ensureInbox } from '../projects/store.js'
+import { createProject, getProject, listProjects, ensureInbox } from '../projects/store.js'
 import { listSessionSummaries, assignSession } from '../session/store.js'
 import type { ChannelRuntime } from '../channels/runtime.js'
 import { PendingStore } from '../runs/pending.js'
@@ -142,7 +142,7 @@ function createReplayCapture(user: string, profile: Profile, runId: string, inpu
   const effects = new Map<string, EffectReceipt>()
   const persist = (sessionId?: string, status?: string): void => {
     if (sessionId) journal.session_id = sessionId
-    if (status) recordEvent(journal, 'result', { status }, 'session_end')
+    if (status) recordEvent(journal, 'result', { status, run_id: runId }, 'session_end')
     try { store.save(journal) } catch (error: any) { console.warn(`[replay] REST journal save failed: ${error.message}`) }
   }
   recordEvent(journal, 'result', { input }, 'turn_start')
@@ -271,10 +271,9 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
   const prepared = prepareRun(await readBody(req), deps, requestQueryUser(req))
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body)
 
+  const runId = makeRunId()
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
   const sse = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-
-  const runId = makeRunId()
   const capture = createReplayCapture(prepared.userId, prepared.profile, runId, prepared.userMessage)
   const abort = new AbortController()
   req.on('close', () => abort.abort())
@@ -287,14 +286,14 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
 
   const replayEvents = headlessEvents(capture)
   const events: AgentLoopEvents = {
-    onToken: t => { replayEvents.onToken(t); sse('token', { content: t }) },
+    onToken: t => { replayEvents.onToken(t); sse('token', { content: t, run_id: runId }) },
     // A prompted tool may be immediately denied below; tool_start marks its lifecycle, not execution.
-    onToolStart: (id, n, i) => { replayEvents.onToolStart(id, n, i); sse('tool_start', { id, name: n, input: i }) },
-    onToolEnd: (id, n, r, ok) => { replayEvents.onToolEnd(id, n, r, ok); sse('tool_end', { id, name: n, result: r, ok }) },
+    onToolStart: (id, n, i) => { replayEvents.onToolStart(id, n, i); sse('tool_start', { id, name: n, input: i, run_id: runId }) },
+    onToolEnd: (id, n, r, ok) => { replayEvents.onToolEnd(id, n, r, ok); sse('tool_end', { id, name: n, result: r, ok, run_id: runId }) },
     onEvidence: replayEvents.onEvidence,
     onToolPrompt: async () => false,
     onSessionEnd: replayEvents.onSessionEnd,
-    onStats: (tokens_in, tokens_out, cost_usd) => sse('stats', { tokens_in, tokens_out, cost_usd }),
+    onStats: (tokens_in, tokens_out, cost_usd) => sse('stats', { tokens_in, tokens_out, cost_usd, run_id: runId }),
   }
 
   try {
@@ -310,7 +309,7 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
     capture.persist(result.session.id, 'completed')
     const out = processOutput(result.finalText, prepared.compiled)
     if (!out.ok) {
-      sse('error', { error: out.error })
+      sse('error', { error: out.error, run_id: runId })
     } else {
       sse('result', { output: out.output, usage: result.usage, session_id: result.session.id, run_id: runId })
     }
@@ -332,7 +331,7 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
       })
     }
     capture.persist(undefined, (e as Error).name === 'AbortError' ? 'cancelled' : 'failed')
-    if ((e as Error).name !== 'AbortError') sse('error', { error: e.message })
+    if ((e as Error).name !== 'AbortError') sse('error', { error: e.message, run_id: runId })
   } finally {
     res.end()
   }
@@ -557,6 +556,7 @@ async function handleAssignSession(req: IncomingMessage, res: ServerResponse, se
   const user = body.user ? sanitizeUserId(body.user) : null
   if (!user) return sendJson(res, 400, { error: 'missing user' })
   if (!body.projectId) return sendJson(res, 400, { error: 'missing projectId' })
+  if (!getProject(user, body.projectId)) return sendJson(res, 404, { error: 'project not found' })
   assignSession(user, sessionId, body.projectId)
   sendJson(res, 200, { sessions: listSessionSummaries(user) })
 }
@@ -668,10 +668,10 @@ async function handleAcpMessages(
   deps.abortRegistry.set(runId, abort)
 
   const events: AgentLoopEvents = {
-    onToken: t => sse('message', { type: 'token', content: t }),
+    onToken: t => sse('message', { type: 'token', content: t, run_id: runId }),
     // A prompted tool may be immediately denied below; tool_start marks its lifecycle, not execution.
-    onToolStart: (id, n, i) => sse('message', { type: 'tool_start', id, name: n, input: i }),
-    onToolEnd: (id, n, r, ok) => sse('message', { type: 'tool_end', id, name: n, result: r, ok }),
+    onToolStart: (id, n, i) => sse('message', { type: 'tool_start', id, name: n, input: i, run_id: runId }),
+    onToolEnd: (id, n, r, ok) => sse('message', { type: 'tool_end', id, name: n, result: r, ok, run_id: runId }),
     onToolPrompt: async () => false,
     onSessionEnd: () => {},
     onStats: () => {},
@@ -705,7 +705,7 @@ async function handleAcpMessages(
         finished_at: new Date().toISOString(),
       })
     }
-    if ((e as Error).name !== 'AbortError') sse('error', { message: e.message })
+    if ((e as Error).name !== 'AbortError') sse('error', { message: e.message, run_id: runId })
   } finally {
     res.end()
   }

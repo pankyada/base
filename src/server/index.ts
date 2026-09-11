@@ -48,7 +48,7 @@ import { listModels, validateModelEffort } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
-import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type InputRequestKind, type UsageMetadataWire } from '../types.js'
+import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type EffortCapability, type InputRequestKind, type UsageMetadataWire } from '../types.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
@@ -67,6 +67,7 @@ import { sessionEndFromError, type SessionEndStatus } from './session-status.js'
 import { createRootFrame } from '../agents/frames.js'
 import { delegateTool } from '../tools/builtin/delegate.js'
 import { Bulletin } from '../agents/bulletin.js'
+import { postBoardMessage } from './board-handler.js'
 import pkg from '../../package.json' with { type: 'json' }
 import { SessionRuntimeRegistry } from './session-runtime.js'
 import { MissionStore, completeHumanCriterion, createMission, evidenceRef, evaluateCriterion, finalizeMission, type EvidenceRef } from '../missions/index.js'
@@ -112,6 +113,10 @@ function readSessionCount(artifactDir: string): number {
 function writeSessionCount(artifactDir: string, count: number): void {
   mkdirSync(artifactDir, { recursive: true })
   writeFileSync(`${artifactDir}/session-count.json`, JSON.stringify({ count }), 'utf-8')
+}
+
+function currentCodexGeneration(): string | undefined {
+  try { return codexAuthStatus().generation } catch { return undefined }
 }
 
 async function main() {
@@ -263,13 +268,13 @@ async function main() {
 
   const schedulers = [...profiles.values()].map(owner => new TriggerManager({
     profile: owner, runStore, abortRegistry, channels: channelsByProfile.get(owner.name), pendingStore,
-    probe: async (tool, args) => {
+    probe: async (tool, args, signal) => {
       const [serverName, toolName] = tool.split('__', 2)
       const entries = await createMcpClients(owner)
       try {
         const entry = entries.find(candidate => candidate.serverName === serverName && candidate.tools.some(candidateTool => candidateTool.name === toolName))
         if (!entry || !toolName) throw new Error(`poll probe tool "${tool}" is unavailable`)
-        const result = await entry.client.callTool({ name: toolName, arguments: args })
+        const result = await entry.client.callTool({ name: toolName, arguments: args }, undefined, { signal })
         const content = result.content as Array<{ type: string; text?: string }>
         const text = content.map(item => item.text ?? '').join('\n')
         try { return JSON.parse(text) } catch { return { text } }
@@ -394,7 +399,10 @@ async function main() {
     let connectionModel = profile.model.id
     let connectionEffort: string | null = profile.model.reasoning_effort ?? (profile.model.auth === 'codex_oauth' ? profile.model.codex.reasoning_effort ?? null : null)
     let connectionModels = listModels(profile)
+    let connectionEffortCapability: EffortCapability | undefined = connectionModels.find(model => model.id === connectionModel)?.effort
+    let modelCatalogGeneration: string | undefined = profile.model.auth === 'codex_oauth' ? currentCodexGeneration() : undefined
     let modelCatalogRequest = 0
+    let modelSelectionRequest = 0
     let miningSkills = false
     let safetyDisclosed = false
     let protocolVersion = PROTOCOL_VERSION
@@ -428,7 +436,7 @@ async function main() {
       const model = { ...baseProfile.model, id: connectionModel, reasoning_effort: connectionEffort ?? undefined,
         ...(baseProfile.model.auth === 'codex_oauth' ? { codex: { ...baseProfile.model.codex, reasoning_effort: connectionEffort ?? undefined } } : {}) }
       connectionProfile = { ...baseProfile, model }
-      connectionProvider = createProvider(connectionProfile)
+      connectionProvider = createProvider(connectionProfile, { effortCapability: connectionEffortCapability })
       connectionRawProvider = connectionProvider
       connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
       connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai, connectionProvider)
@@ -447,13 +455,16 @@ async function main() {
       flushConnectionUsage()
       baseProfile = selected
       connectionModels = listModels(selected)
+      connectionEffortCapability = connectionModels.find(model => model.id === selected.model.id)?.effort
+      modelCatalogGeneration = selected.model.auth === 'codex_oauth' ? currentCodexGeneration() : undefined
       modelCatalogRequest += 1
+      modelSelectionRequest += 1
       connectionProfile = selected
       approvalLimit = resolveApprovalLimit(connectionProfile)
       approvalMode = approvalLimit
       connectionModel = connectionProfile.model.id
       connectionEffort = connectionProfile.model.reasoning_effort ?? (connectionProfile.model.auth === 'codex_oauth' ? connectionProfile.model.codex.reasoning_effort ?? null : null)
-      connectionProvider = createProvider(connectionProfile)
+      connectionProvider = createProvider(connectionProfile, { effortCapability: connectionEffortCapability })
       connectionRawProvider = connectionProvider
       connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
       connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai, connectionProvider)
@@ -837,7 +848,7 @@ async function main() {
       if (correlation === null) { send({ type: 'error', message: 'invalid request id' }); return }
       const decisionCorrelation = typeof rawRequestId === 'string' && rawRequestId.length > 0 && rawRequestId.length <= 256 ? { request_id: rawRequestId } : {}
 
-      const mutatingMessages = new Set(['message', 'plan_request', 'cancel', 'tool_approve', 'tool_deny', 'input_response', 'code_result', 'ui_result', 'set_profile', 'set_model', 'set_approval_mode', 'skill_save', 'skill_promote', 'skill_discard', 'skills_mine', 'compact', 'pending_answer', 'undo_apply', 'spawn', 'agent_cancel', 'project_create', 'project_assign', 'mission_create', 'mission_human', 'challenge_open', 'challenge_answer'])
+      const mutatingMessages = new Set(['message', 'plan_request', 'cancel', 'tool_approve', 'tool_deny', 'input_response', 'code_result', 'ui_result', 'set_profile', 'set_model', 'set_approval_mode', 'skill_save', 'skill_promote', 'skill_discard', 'skills_mine', 'compact', 'pending_answer', 'undo_apply', 'spawn', 'agent_cancel', 'project_create', 'project_assign', 'board_post', 'mission_create', 'mission_human', 'challenge_open', 'challenge_answer'])
       if (observerOnly && mutatingMessages.has(msg.type)) { send({ type: 'error', message: 'observer connection cannot mutate session; claim control first', ...decisionCorrelation }); return }
       if (mutatingMessages.has(msg.type) && controllerLease) {
         try { sessionRuntime.assertController(controllerId, controllerLease) }
@@ -1110,6 +1121,7 @@ async function main() {
         const activeProfile = { ...baseProfile, model: { ...baseProfile.model, id: connectionModel } }
         const selectedProfile = baseProfile
         const request = ++modelCatalogRequest
+        const discoveryGeneration = activeProfile.model.auth === 'codex_oauth' ? currentCodexGeneration() : undefined
         const notices: string[] = []
         let models
         try {
@@ -1118,8 +1130,16 @@ async function main() {
           models = listModels(activeProfile)
           notices.push('Model discovery unavailable: showing bundled models.')
         }
+        const currentGeneration = activeProfile.model.auth === 'codex_oauth' ? currentCodexGeneration() : undefined
         if (baseProfile !== selectedProfile || request !== modelCatalogRequest || ws.readyState !== WebSocket.OPEN) return
+        if (discoveryGeneration !== currentGeneration) {
+          send({ type: 'notice', level: 'warn', message: 'model catalog changed while discovery was pending', detail: 'refresh model metadata before selecting an effort' })
+          return
+        }
         connectionModels = models
+        modelCatalogGeneration = currentGeneration
+        connectionEffortCapability = models.find(model => model.id === connectionModel)?.effort
+        if (connectionEffortCapability?.status === 'supported' && connectionEffort !== null) rebuildConnectionProfile()
         for (const message of notices.filter(message => /unavailable|No API key/.test(message))) send({ type: 'notice', level: 'warn', message })
         send({ type: 'models', models, current: connectionModel, effort: connectionEffort })
         return
@@ -1133,39 +1153,72 @@ async function main() {
       }
 
       if (msg.type === 'set_model') {
-        if (activeContext || pendingApprovals.size > 0 || maintenanceControllers.size > 0) {
-          send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active', detail: 'cancel and wait for the current turn to finish first' })
+        const rawModelRequestId = (msg as any).request_id
+        if (rawModelRequestId !== undefined && (typeof rawModelRequestId !== 'string' || rawModelRequestId.length === 0 || rawModelRequestId.length > 256)) {
+          send({ type: 'error', message: 'invalid request id' })
           return
         }
+        const modelCorrelation = rawModelRequestId === undefined ? {} : { request_id: rawModelRequestId }
+        const rawModel = (msg as any).model
+        if (typeof rawModel !== 'string' || rawModel.length === 0 || rawModel.length > 256) {
+          send({ type: 'notice', level: 'error', message: 'model change refused', detail: 'model must be a non-empty string of at most 256 characters', ...modelCorrelation })
+          return
+        }
+        const rawEffort = (msg as any).effort
+        if (rawEffort !== undefined && rawEffort !== null && (typeof rawEffort !== 'string' || rawEffort.length === 0 || rawEffort.length > 64)) {
+          send({ type: 'notice', level: 'error', message: 'model effort change refused', detail: 'effort must be null or a string of at most 64 characters', ...modelCorrelation })
+          return
+        }
+        if (activeContext || pendingApprovals.size > 0 || maintenanceControllers.size > 0) {
+          send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active', detail: 'cancel and wait for the current turn to finish first', ...modelCorrelation })
+          return
+        }
+        const selectionRequest = ++modelSelectionRequest
         let candidate = connectionModels.find(model => model.id === msg.model) ?? listModels(baseProfile).find(model => model.id === msg.model)
+        if (candidate?.effort?.source === 'live' && modelCatalogGeneration !== currentCodexGeneration()) candidate = undefined
         if (!candidate && connectionProfile.model.auth === 'codex_oauth') {
           const selectedProfile = baseProfile
+          const discoveryGeneration = currentCodexGeneration()
           try {
             const models = await discoverProfileModels(baseProfile)
-            if (baseProfile !== selectedProfile || ws.readyState !== WebSocket.OPEN) return
+            const currentGeneration = currentCodexGeneration()
+            if (baseProfile !== selectedProfile || ws.readyState !== WebSocket.OPEN || discoveryGeneration !== currentGeneration) {
+              send({ type: 'notice', level: 'warn', message: 'model catalog changed while discovery was pending', detail: 'refresh model metadata before selecting an effort', ...modelCorrelation })
+              return
+            }
+            if (selectionRequest !== modelSelectionRequest) {
+              send({ type: 'notice', level: 'warn', message: 'model change superseded', ...modelCorrelation })
+              return
+            }
             if (activeContext || pendingApprovals.size > 0 || maintenanceControllers.size > 0) {
-              send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active' })
+              send({ type: 'notice', level: 'warn', message: 'model change refused while a turn is active', ...modelCorrelation })
               return
             }
             connectionModels = models
+            modelCatalogGeneration = currentGeneration
             candidate = models.find(model => model.id === msg.model)
           } catch { /* retain the existing unavailable-model response */ }
         }
+        if (selectionRequest !== modelSelectionRequest) {
+          send({ type: 'notice', level: 'warn', message: 'model change superseded', ...modelCorrelation })
+          return
+        }
         if (candidate && !candidate.available) {
-          send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason })
+          send({ type: 'notice', level: 'error', message: `model ${msg.model} requires another provider`, detail: candidate.reason, ...modelCorrelation })
           return
         }
         if (!candidate) candidate = { id: msg.model, label: msg.model, provider: connectionProfile.model.auth === 'codex_oauth' ? 'OpenAI Codex' : 'custom provider', base_url: connectionProfile.model.auth === 'codex_oauth' ? '' : connectionProfile.model.base_url, context_window: 0, input_price: 0, output_price: 0, tags: ['unknown'], available: true, effort: { status: 'unknown', options: [], source: 'live', checked_at: new Date().toISOString(), stale: false } }
         const requestedEffort = msg.effort === undefined ? (msg.model === connectionModel ? connectionEffort : null) : msg.effort
         const effortResult = validateModelEffort(candidate, requestedEffort)
         if (!effortResult.ok) {
-          send({ type: 'notice', level: 'error', message: 'model effort change refused', detail: effortResult.reason, ...(msg.request_id ? { request_id: msg.request_id } : {}) })
+          send({ type: 'notice', level: 'error', message: 'model effort change refused', detail: effortResult.reason, ...modelCorrelation })
           return
         }
         connectionModel = msg.model
         connectionEffort = effortResult.effort
+        connectionEffortCapability = candidate.effort
         rebuildConnectionProfile()
-        send({ type: 'model_changed', model: connectionModel, effort: connectionEffort, ...(msg.request_id ? { request_id: msg.request_id } : {}) })
+        send({ type: 'model_changed', model: connectionModel, effort: connectionEffort, ...modelCorrelation })
         return
       }
 
@@ -1375,6 +1428,7 @@ async function main() {
       }
 
       if (msg.type === 'resume') {
+        modelSelectionRequest += 1
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
           flushConnectionUsage()
@@ -1386,7 +1440,9 @@ async function main() {
           connectionProfile = baseProfile
           connectionModel = connectionProfile.model.id
           connectionEffort = connectionProfile.model.reasoning_effort ?? (connectionProfile.model.auth === 'codex_oauth' ? connectionProfile.model.codex.reasoning_effort ?? null : null)
-          connectionProvider = createProvider(connectionProfile)
+          connectionEffortCapability = listModels(connectionProfile).find(model => model.id === connectionModel)?.effort
+          modelCatalogGeneration = connectionProfile.model.auth === 'codex_oauth' ? currentCodexGeneration() : undefined
+          connectionProvider = createProvider(connectionProfile, { effortCapability: connectionEffortCapability })
           connectionRawProvider = connectionProvider
           connectionOpenai = connectionProfile.model.auth === 'codex_oauth' ? undefined : createProviderClient(connectionProfile)
           connectionImprover = new DefaultImprover(connectionProfile, connectionOpenai, connectionProvider)
@@ -1409,6 +1465,28 @@ async function main() {
 
       const projectReply = handleProjectMessage(msg, userId)
       if (projectReply) { send(projectReply); return }
+
+      if (msg.type === 'board_post') {
+        try {
+          const liveRecipients = new Set(['root', ...agentControllers.keys()])
+          const turnKey = `root:${session.id}:${activeContext?.runId ?? session.messages.length}`
+          postBoardMessage(msg, {
+            bulletin,
+            sessionId: session.id,
+            profileName: connectionProfile.name,
+            agentFrame: createRootFrame(connectionProfile.name, session.id),
+            recipientAgentIds: liveRecipients,
+            turnKey,
+            taintSources: session.taint_sources,
+            onAgentMessage: post => {
+              if (protocolVersion >= 4) send({ type: 'agent_message', post: { ...post, body_preview: post.body.slice(0, 240) } })
+            },
+          })
+        } catch (error: any) {
+          send({ type: 'error', message: error instanceof Error ? error.message : String(error) })
+        }
+        return
+      }
 
       if (msg.type === 'message' && msg.content.trimStart().startsWith('/spawn ')) {
         const [, agent, ...words] = msg.content.trim().split(/\s+/)

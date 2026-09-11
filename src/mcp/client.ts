@@ -83,8 +83,8 @@ export function getMcpToolDefinitions(profile: Profile, entries: McpEntry[]): To
         name: `${entry.serverName}__${tool.name}`,
         description: `[MCP:${entry.serverName}] ${tool.description || tool.name}`,
         parameters: tool.inputSchema,
-        async execute(input) {
-          const r = await entry.client.callTool({ name: tool.name, arguments: input })
+        async execute(input, context) {
+          const r = await entry.client.callTool({ name: tool.name, arguments: input }, undefined, { signal: context.signal })
           const content = r.content as Array<{ type: string; text?: string }>
           return content.map(c => c.text ?? JSON.stringify(c)).join('\n')
         },

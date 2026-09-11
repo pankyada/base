@@ -1,11 +1,11 @@
 import { homedir } from 'node:os'
-import { createHash } from 'node:crypto'
 import type { Profile } from '../profiles/schema.js'
 import type { EffortCapability, ModelInfo } from '../types.js'
 import { FALLBACK_PRICES, MODEL_REGISTRY, listModels } from './registry.js'
 import { readCodexAuth } from '../provider/auth/store.js'
 import { createProviderClient } from '../provider/client.js'
 import { CODEX_API_ENDPOINT } from '../provider/codex/adapter.js'
+import { codexCatalogScope } from '../provider/codex/models.js'
 import pkg from '../../package.json' with { type: 'json' }
 
 export async function discoverProfileModels(profile: Profile, options: { homeDir?: string; environment?: NodeJS.ProcessEnv; report?: (message: string) => void } = {}): Promise<ModelInfo[]> {
@@ -296,6 +296,6 @@ function unknownEffort(source: EffortCapability['source'], transport: string, en
 }
 
 function providerScope(transport: string, endpoint: string, account: string): { transport: string; endpoint: string; provider_scope: string } {
-  const provider_scope = createHash('sha256').update(`${transport}\u0000${endpoint}\u0000${account}`).digest('hex').slice(0, 16)
+  const provider_scope = codexCatalogScope(transport, endpoint, account)
   return { transport, endpoint, provider_scope }
 }

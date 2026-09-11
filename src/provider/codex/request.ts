@@ -1,3 +1,4 @@
+import type { EffortCapability } from '../../types.js'
 import type { ProviderMessage, ProviderRequest, ProviderTool } from '../types.js'
 import { assertCodexModel } from './models.js'
 import { validateContinuation, type CodexContinuation } from './continuation.js'
@@ -13,9 +14,17 @@ export interface ResponsesRequest {
   reasoning?: { effort?: string }
 }
 
-export function serializeCodexRequest(request: ProviderRequest): ResponsesRequest {
+export function serializeCodexRequest(request: ProviderRequest, effortCapability?: EffortCapability): ResponsesRequest {
   const capability = assertCodexModel(request.model)
-  if (request.reasoningEffort && !capability.efforts.includes(request.reasoningEffort)) {
+  const supportedEfforts = effortCapability
+    ? effortCapability.status === 'supported'
+      ? effortCapability.options.filter(option => option.selectable).map(option => option.value)
+      : []
+    : capability.efforts
+  if (request.reasoningEffort === 'ultra' || (request.reasoningEffort && effortCapability?.stale)) {
+    throw new Error(`reasoning effort ${request.reasoningEffort} is unavailable for ${request.model}`)
+  }
+  if (request.reasoningEffort && !supportedEfforts.includes(request.reasoningEffort)) {
     throw new Error(`reasoning effort ${request.reasoningEffort} is unsupported for ${request.model}`)
   }
 

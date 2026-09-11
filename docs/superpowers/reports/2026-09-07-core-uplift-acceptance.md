@@ -4,6 +4,22 @@ Date: 2026-09-07 (Australia/Sydney). Track: PT-023–PT-030. This report records
 local Core evidence only; client adoption, live provider, device, Windows and
 deployment gates remain separate.
 
+## 2026-09-11 corrective acceptance review
+
+The original closeout below is historical. A requirement-level review reopened
+S4–S8 and found missing coverage and real defects. New evidence supersedes the
+blanket completion claims, without erasing the earlier results:
+
+- [S4–S7 audit](2026-09-11-core-acceptance-audit.md): scoped Codex effort propagation and mounted selection races; bounded bulletin rate history.
+- [Lifecycle/contracts](2026-09-11-core-lifecycle-contracts.md): concurrent profile-owned fake MCP processes, actual shutdown/restart, active fake voice interruption, REST project ownership, board dispatch, SSE and persisted terminal correlation.
+- [Cancellation fixes](2026-09-11-core-cancellation-fix.md): Bash/hooks process cleanup, MCP signal propagation and stopped poll behavior.
+- [Final validation](2026-09-11-core-final-validation.md): authoritative final command results for the corrective working tree.
+- [External gates](2026-09-11-core-external-gates.md): Windows/device/live-account and installed provenance remain separate.
+
+Corrective changes are working-tree edits, not a new release/deployment. Earlier
+Core implementation was committed as `499c36d`; that commit does not contain
+these corrective changes. Final task status is maintained in PRODUCT_STATE.md.
+
 ## Baseline (S0)
 
 Before Core edits: `pnpm test` passed 157 files / 896 tests; `pnpm typecheck`,

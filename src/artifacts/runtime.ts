@@ -77,7 +77,7 @@ export function createArtifactGenerator(skills: Skill[] = []) {
     if (decision.value === 'prompt' && !gate.confirmed) throw new ArtifactRuntimeDeniedError('approval', 'artifact generator requires explicit confirmation')
     if (isGatedEffect(effect, gate.profile.safety?.gate_writes) && !gate.confirmed) throw new ArtifactRuntimeDeniedError('approval', 'effectful artifact generator requires explicit confirmation')
 
-    await runHooks('pre_tool', gate.profile, { TOOL_NAME: request.generatingTool })
+    await runHooks('pre_tool', gate.profile, { TOOL_NAME: request.generatingTool }, context.signal)
     const started = Date.now()
     let ok = false
     let returnedProvenance: 'trusted' | 'untrusted' = 'trusted'
@@ -131,7 +131,7 @@ export function createArtifactGenerator(skills: Skill[] = []) {
       throw error
     } finally {
       if (session.usage.input > 0 || session.usage.output > 0 || (session.usage.model_attempts ?? 0) > 0) recordUsage(gate.user, session.usage)
-      await runHooks('post_tool', gate.profile, { TOOL_NAME: request.generatingTool, TOOL_OK: String(ok) })
+      await runHooks('post_tool', gate.profile, { TOOL_NAME: request.generatingTool, TOOL_OK: String(ok) }, context.signal)
       logEvent({ session: session.id, profile: gate.profile.name, kind: 'tool', name: request.generatingTool, duration_ms: Date.now() - started, ok })
     }
   }

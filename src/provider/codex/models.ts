@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { ProviderTool } from '../types.js'
 export interface CodexModelCapability { id: string; efforts: readonly string[]; contextWindow: number; maxOutputTokens: number; images: boolean; structuredOutput: boolean; sourceRevision: string; capabilitySource: string; sourceDerivedAt: string; evidence: 'source' | 'fixture' | 'live'; providerDefault?: string }
 export const CODEX_MODELS: readonly CodexModelCapability[] = [
@@ -13,5 +14,9 @@ export function assertCodexModel(model: string): CodexModelCapability {
   // Unknown IDs remain usable with provider default; explicit effort requires
   // a discovered/documented capability and is rejected by serialization.
   return codexCapability(model)!
+}
+/** Opaque account-bound scope used to validate live model catalog metadata. */
+export function codexCatalogScope(transport: string, endpoint: string, account: string): string {
+  return createHash('sha256').update(`${transport}\u0000${endpoint}\u0000${account}`).digest('hex').slice(0, 16)
 }
 export function codexTool(tool: ProviderTool): Record<string, unknown> { return { type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters } }

@@ -50,6 +50,29 @@ describe('PollTrigger', () => {
     expect(skip).toHaveBeenCalledWith('probe_error', expect.any(Number))
   })
 
+  it('aborts an in-flight probe on stop without recording or firing late work', async () => {
+    const cursors = cursorStore()
+    const fire = vi.fn()
+    let aborted = false
+    let release!: () => void
+    const probe = vi.fn((_tool: string, _args: Record<string, unknown>, signal?: AbortSignal) => new Promise<unknown>((resolve, reject) => {
+      release = () => resolve({ id: 'late' })
+      signal?.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')) }, { once: true })
+    }))
+    const trigger = new PollTrigger(
+      { name: 'mail', every: '5m', probe: { tool: 'mail__list' }, cursor_path: 'id' },
+      'user', 'profile', cursors as any, probe, fire, vi.fn(),
+    )
+    const running = trigger.tick()
+    trigger.stop()
+    release()
+    await running
+    await trigger.tick()
+    expect(aborted).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(fire).not.toHaveBeenCalled()
+  })
+
   it('cold-starts after a probe error without firing', async () => {
     const cursors = cursorStore()
     const fire = vi.fn()

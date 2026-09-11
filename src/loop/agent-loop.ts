@@ -98,7 +98,7 @@ export async function runAgentLoop(
     const owner = [...session.messages].reverse().find((message: any) => message?.role === 'assistant' && message.tool_calls?.some((call: any) => call.id === tc.id)) as any
     await context.provider?.assertCredentialGeneration?.(owner?.providerState?.accountGeneration)
     context.budget?.checkTool(tc.name, context.session.usage.cost_usd)
-    await runHooks('pre_tool', profile, { TOOL_NAME: tc.name })
+    await runHooks('pre_tool', profile, { TOOL_NAME: tc.name }, signal ?? context.signal)
     signal?.throwIfAborted()
     context.signal?.throwIfAborted()
     await context.provider?.assertCredentialGeneration?.(owner?.providerState?.accountGeneration)
@@ -141,7 +141,7 @@ export async function runAgentLoop(
       kind: isMcp ? 'mcp' : 'tool',
       name: tc.name, duration_ms, ok,
     })
-    await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) })
+    await runHooks('post_tool', profile, { TOOL_NAME: tc.name, TOOL_OK: String(ok) }, signal ?? context.signal)
     if (effect !== 'read') audit({ run_id: context.runId, session_id: session.id, user: session.user, profile: profile.name, tool: tc.name, input, effect, decision: auditDecision.decision, decided_by: auditDecision.decided_by, decided_reason: auditDecision.reason, tainted: (session.taint_sources?.length ?? 0) > 0, ok, ...(undo ? { undo } : {}) })
     if (provenance === 'untrusted') session.taint_sources = [...new Set([...(session.taint_sources ?? []), source ?? tc.name])].slice(0, 8)
 
