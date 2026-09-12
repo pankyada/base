@@ -27,10 +27,10 @@ export function defaultIsEmpty(value: unknown): boolean {
  * non-ok HTTP response are BOTH failures -- the caller must never substitute an empty collection for
  * either. Only a successful, parseable body is eligible to be `empty` or `ready`.
  */
-export async function fetchRemote<T>(url: string, isEmpty: (data: T) => boolean = defaultIsEmpty as (data: T) => boolean): Promise<RemoteData<T>> {
+export async function fetchRemote<T>(url: string, isEmpty: (data: T) => boolean = defaultIsEmpty as (data: T) => boolean, options?: RequestInit): Promise<RemoteData<T>> {
   let response: Response
   try {
-    response = await fetch(url)
+    response = await (options ? fetch(url, options) : fetch(url))
   } catch (cause) {
     return failedRemote(cause instanceof Error ? cause.message : 'network request failed')
   }

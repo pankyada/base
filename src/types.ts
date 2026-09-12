@@ -234,6 +234,7 @@ export interface SessionRuntimeWire {
   latest_usage?: unknown
   budget?: unknown
   actionable_ids?: string[]
+  actionable?: Array<{ id: string; name: string; input: Record<string, unknown>; risk?: RiskLevel; reason?: string; preview?: unknown; agent_id?: string; run_id?: string }>
   recovery_incomplete?: boolean
 }
 

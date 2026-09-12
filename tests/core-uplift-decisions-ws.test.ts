@@ -59,9 +59,12 @@ describe('Core correlated decisions over mounted WebSocket', () => {
       if (!(_req.url?.endsWith('/chat/completions'))) { res.writeHead(404); res.end(); return }
       let body = ''
       _req.on('data', chunk => { body += chunk.toString() })
-      _req.on('end', () => { try { completionRequests.push(JSON.parse(body)) } catch { /* assertion reports missing request */ } })
+      _req.on('end', () => {
+      let request: Wire = {}
+      try { request = JSON.parse(body); completionRequests.push(request) } catch { /* assertion reports missing request */ }
       completionCalls += 1
-      if (completionCalls === 1) return streamResponse(res, [
+      const reconnectApproval = JSON.stringify(request).includes('reconnect approval')
+      if (completionCalls === 1 || reconnectApproval) return streamResponse(res, [
         { choices: [{ delta: { tool_calls: [{ index: 0, id: 'approval-call', function: { name: 'Bash', arguments: '{"command":"rm -rf /tmp/core-uplift-decision-noop"}' } }] } }] },
         { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } }, '[DONE]',
       ])
@@ -73,6 +76,7 @@ describe('Core correlated decisions over mounted WebSocket', () => {
         { choices: [{ delta: { content: 'done' } }] },
         { choices: [{ delta: {} }], usage: { prompt_tokens: 1, completion_tokens: 1 } }, '[DONE]',
       ])
+      })
     }))
     const prompt = join(root, 'prompt.md'); writeFileSync(prompt, 'fixture prompt', 'utf8')
     const profiles = join(root, '.harness', 'profiles'); mkdirSync(profiles, { recursive: true })
@@ -119,6 +123,27 @@ describe('Core correlated decisions over mounted WebSocket', () => {
     socket.send(answer); expect(await nextType(socket, 'notice')).toMatchObject({ request_id: 'input-1', message: 'response accepted' })
     expect((await nextType(socket, 'session_end')).status).toBe('completed')
     expect(completionCalls).toBe(3); expect(ready.profile).toBe('fixture'); socket.close()
+  })
+
+  it('recovers an in-process approval after its controlling socket reconnects', async () => {
+    const first = await open(wsUrl); const ready = await hello(first)
+    first.send(JSON.stringify({ type: 'message', content: 'reconnect approval' }))
+    const prompt = await nextType(first, 'tool_prompt')
+    const closed = new Promise<void>(resolve => first.once('close', () => resolve()))
+    first.close()
+    await closed
+
+    const second = await open(wsUrl); await hello(second)
+    second.send(JSON.stringify({ type: 'resume', sessionId: ready.sessionId }))
+    expect(await nextType(second, 'session_resumed')).toMatchObject({ sessionId: ready.sessionId, profile: 'fixture' })
+    second.send(JSON.stringify({ type: 'runtime_subscribe', session_id: ready.sessionId }))
+    const runtime = await nextType(second, 'runtime')
+    expect(runtime.snapshot.actionable).toEqual([expect.objectContaining({ id: prompt.id, name: 'Bash', input: { command: 'rm -rf /tmp/core-uplift-decision-noop' } })])
+
+    second.send(JSON.stringify({ type: 'tool_approve', id: prompt.id, request_id: 'reconnect-approve' }))
+    expect(await nextType(second, 'notice')).toMatchObject({ request_id: 'reconnect-approve', message: 'decision accepted' })
+    expect((await nextType(second, 'tool_end')).ok).toBe(true)
+    second.close()
   })
 
   it('rejects unknown and mismatched actions, and blocks observers', async () => {

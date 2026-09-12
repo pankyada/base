@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
+import Link from 'next/link'
 
 export function Shell({ children }: { children: ReactNode }) {
-  return <div className="route-shell"><nav><a href="/">analyst</a><a href="/ops">ops</a><a href="/home">assistant</a></nav>{children}</div>
+  return <div className="route-shell"><nav><Link href="/">analyst</Link><Link href="/ops">ops</Link><Link href="/home">assistant</Link></nav>{children}</div>
 }

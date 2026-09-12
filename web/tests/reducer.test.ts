@@ -8,6 +8,29 @@ const base: State = {
 }
 
 describe('protocol reducer', () => {
+  it('clears session-dependent state when scope changes before the new handshake', () => {
+    const scoped = { ...base, profile: 'other', sessionId: 'session-other', messages: [{ id: 'old', role: 'user' as const, content: 'private A' }], input: 'draft', sendError: 'old scope', busy: true, tokens: { in: 4, out: 2 }, costUsd: 0.4, usage: { input_tokens: 4, output_tokens: 2 } as any }
+    const reset = reducer(scoped, { type: 'RESET_SCOPE' })
+    expect(reset.profile).toBe('other')
+    expect(reset.sessionId).toBe('…')
+    expect(reset.messages).toEqual([])
+    expect(reset.input).toBe('draft')
+    expect(reset.busy).toBe(false)
+    expect(reset.sendError).toBeUndefined()
+    expect(reset.tokens).toEqual({ in: 0, out: 0 })
+    expect(reset.usage).toBeUndefined()
+  })
+  it('resets session and project selection so a new identity cannot inherit old routing', () => {
+    const scoped = { ...base, profile: 'other', sessionId: 'session-a', activeProject: 'private-a', activeProjectName: 'Private A', messages: [{ id: 'old', role: 'user' as const, content: 'private A' }] }
+    const reset = reducer(scoped, { type: 'RESET_SCOPE' })
+    expect(reset.sessionId).toBe('…')
+    expect(reset.activeProject).toBe('inbox')
+    expect(reset.activeProjectName).toBe('Inbox')
+  })
+  it('retains profile catalog while replacing the active session scope', () => {
+    const scoped = { ...base, profiles: [{ name: 'test' }, { name: 'other' }] as any, sessionId: 'session-a' }
+    expect(reducer(scoped, { type: 'RESET_SCOPE' }).profiles).toHaveLength(2)
+  })
   it('keeps concurrent run lanes separate', () => {
     const one = reducer(base, { type: 'SERVER_MSG', payload: { type: 'turn_start', run_id: 'r1' } })
     const two = reducer(one, { type: 'SERVER_MSG', payload: { type: 'token', run_id: 'r1', content: 'one' } })
@@ -73,5 +96,13 @@ describe('protocol reducer', () => {
     expect(state.mission?.status).toBe('accepted')
     expect(state.missionReceipts).toEqual([{ id: 'r' }])
     expect(state.receipt).toEqual({ id: 'r', accepted: true })
+  })
+
+  it('restores only server-retained approval details from the current runtime snapshot', () => {
+    const state = reducer(base, { type: 'SERVER_MSG', payload: { type: 'runtime', snapshot: {
+      session_id: 's', user: 'u', revision: 2, status: 'running', last_seq: 4, events: [], gap: false,
+      actionable_ids: ['approval'], actionable: [{ id: 'approval', name: 'Bash', input: { command: 'true' }, risk: 'danger' }],
+    } } })
+    expect(state.pendingApproval).toMatchObject({ id: 'approval', name: 'Bash', input: { command: 'true' } })
   })
 })

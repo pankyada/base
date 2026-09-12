@@ -84,6 +84,47 @@ func TestReconnectRestoresSessionAndProfile(t *testing.T) {
 	if !hasNoticeContaining(m, "reconnected") {
 		t.Fatal("expected a notice confirming the session was restored")
 	}
+	if !attemptsContainType(sender.attempts, "runtime_subscribe") {
+		t.Fatal("expected runtime subscription after session resume")
+	}
+}
+
+func attemptsContainType(attempts []protocol.ClientMessage, want string) bool {
+	for _, attempt := range attempts {
+		raw, err := json.Marshal(attempt)
+		if err != nil {
+			continue
+		}
+		var decoded struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &decoded) == nil && decoded.Type == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRuntimeRestoresOnlyFullApprovalPrompt(t *testing.T) {
+	sender := &failingSender{}
+	m := NewModel(sender, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_ready", SessionID: "sess-1"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "runtime", Runtime: &protocol.RuntimeSnapshot{SessionID: "sess-1", Actionable: []protocol.RecoverablePrompt{{ID: "tool-1", Name: "Bash", Input: map[string]interface{}{"command": "pwd"}}}}})
+	if m.pendingApproval == nil || m.pendingApproval.ID != "tool-1" {
+		t.Fatalf("approval not restored: %#v", m.pendingApproval)
+	}
+	if len(m.currentAgent().Sections) != 1 || !m.currentAgent().Sections[0].AwaitingApproval {
+		t.Fatalf("recovered section missing: %#v", m.currentAgent().Sections)
+	}
+	m.handleServerMessage(protocol.ServerMessage{Type: "runtime", Runtime: &protocol.RuntimeSnapshot{SessionID: "sess-1", Actionable: []protocol.RecoverablePrompt{{ID: "bare"}}}})
+	if m.pendingApproval.ID != "tool-1" {
+		t.Fatal("bare actionable ID created authority")
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = updated.(Model)
+	if m.pendingApproval != nil || !attemptsContainType(sender.attempts, "tool_approve") {
+		t.Fatalf("recovered approval did not use normal control path: %#v", sender.attempts)
+	}
 }
 
 // TestResumeAdoptsCrossProfile covers PT-033: resuming a session created

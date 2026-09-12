@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { InputRequestKind } from '../lib/types'
 
 interface Props {
+  error?: string
   id: string
   prompt: string
   kind: InputRequestKind
@@ -10,7 +11,7 @@ interface Props {
   onSubmit: (id: string, value: string) => void
 }
 
-export function InputRequestModal({ id, prompt, kind, options = [], onSubmit }: Props) {
+export function InputRequestModal({ error, id, prompt, kind, options = [], onSubmit }: Props) {
   const [textValue, setTextValue] = useState('')
   const [cursor, setCursor] = useState(0)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -52,6 +53,7 @@ export function InputRequestModal({ id, prompt, kind, options = [], onSubmit }: 
         <div style={{ color: 'var(--accent)', marginBottom: '0.75rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Agent Question</div>
         <div style={{ marginBottom: '1rem', color: 'var(--text)' }}>{prompt}</div>
 
+        {error ? <p role="alert">{error}</p> : null}
         {kind === 'text' && (
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <input

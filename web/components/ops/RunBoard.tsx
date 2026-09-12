@@ -20,25 +20,30 @@ export function mergeRunEvent(rows: RunRow[], event: { type: string; run_id?: st
 
 interface RunsBody { runs?: RunRow[] }
 
-export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [] }: { baseUrl: string; scope?: RequestScope; onCancel?: (id: string) => void; liveEvents?: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }[] }) {
+export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [], refreshToken = 0 }: { baseUrl: string; scope?: RequestScope; refreshToken?: number; onCancel?: (id: string) => void; liveEvents?: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }[] }) {
   const [remote, setRemote] = useState<RemoteData<RunsBody>>({ status: 'loading' })
   const [rows, setRows] = useState<RunRow[]>([])
   const scopeRef = useRef(scope)
   scopeRef.current = scope
+  const lastScope = useRef<string>()
+  const [lastUpdated, setLastUpdated] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const requestedScope = scopeRef.current
-    setRemote({ status: 'loading' })
-    setRows([]) // drop the previous scope's runs before the new scoped read lands
+    let disposed = false
+    const key = JSON.stringify([baseUrl, scope.userId, scope.profile])
+    if (lastScope.current !== key) { setRemote({ status: 'loading' }); setRows([]); setLastUpdated(undefined); lastScope.current = key }
     void fetchScopedRemote<RunsBody>(baseUrl, '/runs', requestedScope, () => scopeRef.current, { isEmpty: body => (body.runs ?? []).length === 0 }).then(result => {
-      if (result === 'stale') return
+      if (disposed || result === 'stale') return
       setRemote(result)
       if (result.status === 'ready') setRows(result.data.runs ?? [])
       if (result.status === 'empty') setRows([])
+      if (result.status === 'ready' || result.status === 'empty') setLastUpdated(new Date().toISOString())
     })
-  }, [baseUrl, scope.userId, scope.profile, attempt])
+    return () => { disposed = true }
+  }, [baseUrl, scope.userId, scope.profile, attempt, refreshToken])
   useEffect(() => { setRows(current => liveEvents.reduce(mergeRunEvent, current)) }, [liveEvents])
-  return <section className="run-board"><h2>Runs</h2>
+  return <section className="run-board"><h2>Runs</h2>{lastUpdated ? <small>Updated {new Date(lastUpdated).toLocaleTimeString()}</small> : null}
     {remote.status === 'loading' ? <p role="status">Loading runs…</p> : null}
     {remote.status === 'failed' ? <Unavailable reason={remote.reason} onRetry={() => setAttempt(a => a + 1)} /> : null}
     {remote.status !== 'loading' && remote.status !== 'failed' ? (rows.length === 0 ? <p>{runBoardEmptyLabel(rows)}</p> : rows.map(row => <article key={row.id} className={`run-row run-row--${row.status}`}><strong>{row.id}</strong><span>{runStatusLabel(row.status)}</span><span>{row.tokens ?? 0} tokens</span>{onCancel && row.status === 'running' ? <button onClick={() => onCancel(row.id)}>cancel</button> : null}</article>)) : null}

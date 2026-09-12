@@ -82,6 +82,7 @@ func TestEncodeRevampClientMessages(t *testing.T) {
 		{"models_list", ModelsList(), `{"type":"models_list"}`},
 		{"set_model", SetModel("gpt-5.4-mini"), `{"type":"set_model","model":"gpt-5.4-mini"}`},
 		{"approval", SetApprovalMode("danger"), `{"type":"set_approval_mode","mode":"danger"}`},
+		{"runtime subscribe", RuntimeSubscribe("s1"), `{"type":"runtime_subscribe","session_id":"s1"}`},
 		{"skills_list", SkillsList(), `{"type":"skills_list"}`},
 		{"commands_list", CommandsList(), `{"type":"commands_list"}`},
 		{"skill_get", SkillGet("linting", "proposed"), `{"type":"skill_get","name":"linting","source":"proposed"}`},
@@ -109,6 +110,9 @@ func TestDecodeRevampServerMessages(t *testing.T) {
 		want func(ServerMessage) bool
 	}{
 		{`{"type":"tool_prompt","id":"t1","name":"Bash","risk":"danger","reason":"destructive"}`, func(m ServerMessage) bool { return m.Risk == "danger" && m.Reason == "destructive" }},
+		{`{"type":"runtime","snapshot":{"session_id":"s1","actionable":[{"id":"t1","name":"Bash","input":{"command":"pwd"}}]}}`, func(m ServerMessage) bool {
+			return m.Runtime != nil && m.Runtime.SessionID == "s1" && len(m.Runtime.Actionable) == 1 && m.Runtime.Actionable[0].Input["command"] == "pwd"
+		}},
 		{`{"type":"stats","context_window":128000,"context_tokens":64000}`, func(m ServerMessage) bool { return m.ContextWindow == 128000 && m.ContextTokens == 64000 }},
 		{`{"type":"models","current":"gpt-5.4-mini","models":[{"id":"gpt-5.4-mini","available":true}]}`, func(m ServerMessage) bool { return m.Current == "gpt-5.4-mini" && len(m.Models) == 1 }},
 		{`{"type":"skills","proposed":[{"name":"x","source":"proposed"}],"installed":[]}`, func(m ServerMessage) bool { return len(m.Proposed) == 1 && m.Proposed[0].Source == "proposed" }},

@@ -1128,3 +1128,26 @@ an execution/selection concern. Ultra stays disabled pending adapter evidence.
 *Consequences:* Catalog metadata cannot claim entitlement, inference quality or
 billing support. Client protocol fields remain additive and generated only;
 picker/client adoption and live provider acceptance remain PT-016/PT-014.
+
+### ADR-83
+
+**Live approvals survive reconnect only while their server process remains alive** — 🔄
+
+*Context:* Approval callbacks were connection-local. Closing a browser or TUI
+socket aborted the turn and resolved every prompt false, even though the
+server-owned runtime still identified an actionable approval. A reconnecting
+client had neither the authority callback nor, after event-tail overflow, the
+prompt body required to render a safe control.
+
+*Decision:* Keep a bounded, scoped in-process approval registry and a bounded
+full-payload actionable projection in the session runtime. A reconnect must
+resume the same user-owned session and claim a fresh controller lease before
+resolving a live approval. The registry expires callbacks closed; explicit
+cancel resolves them false; snapshots never create a control from an ID alone.
+Process restart clears callbacks and marks active work interrupted, preserving
+ADR-81's no-restored-executable-authority rule.
+
+*Consequences:* Transient transport loss can continue a paused approval with
+the existing control frames. Durable deferred asks remain the PendingStore
+path. This does not promise exactly-once external effects, cross-session
+handoff, or recovery after process restart.

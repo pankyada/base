@@ -2,9 +2,13 @@
 package ws
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +28,23 @@ type DisconnectedMsg struct{}
 // MalformedMsg reports a frame that could not be decoded. The client keeps
 // reading after it so one bad frame cannot kill the session.
 type MalformedMsg struct{ Err error }
+
+// TranscriptTurn is the read-only projection returned by the scoped session
+// messages API. It deliberately carries only renderable conversation text.
+type TranscriptTurn struct {
+	Role string
+	Text string
+}
+
+// TranscriptLoadedMsg delivers a session history hydration result to the UI.
+type TranscriptLoadedMsg struct {
+	SessionID string
+	UserID    string
+	Profile   string
+	Revision  uint64
+	Turns     []TranscriptTurn
+	Err       error
+}
 
 // Client owns a single reconnecting connection.
 type Client struct {
@@ -132,6 +153,86 @@ func (c *Client) Send(m protocol.ClientMessage) error {
 		return errNotConnected
 	}
 	return c.conn.WriteJSON(m)
+}
+
+// LoadTranscript hydrates a resumed session through the existing scoped REST
+// read contract. WS resume acknowledges attachment; REST supplies history.
+func (c *Client) LoadTranscript(sessionID, userID, profile string) tea.Cmd {
+	port := c.port
+	return func() tea.Msg {
+		endpoint := "http://localhost:" + port + "/sessions/" + url.PathEscape(sessionID) + "/messages?user=" + url.QueryEscape(userID) + "&profile=" + url.QueryEscape(profile)
+		client := http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(endpoint)
+		if err != nil {
+			return TranscriptLoadedMsg{SessionID: sessionID, UserID: userID, Profile: profile, Err: fmt.Errorf("load session history: %w", err)}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			return TranscriptLoadedMsg{SessionID: sessionID, UserID: userID, Profile: profile, Err: fmt.Errorf("load session history: HTTP %s: %s", resp.Status, string(body))}
+		}
+		var payload struct {
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return TranscriptLoadedMsg{SessionID: sessionID, UserID: userID, Profile: profile, Err: fmt.Errorf("load session history: decode: %w", err)}
+		}
+		turns := make([]TranscriptTurn, 0, len(payload.Messages))
+		for _, message := range payload.Messages {
+			text, ok := messageText(message.Content)
+			if !ok || text == "" {
+				continue
+			}
+			role := message.Role
+			switch role {
+			case "assistant":
+				role = "agent"
+			case "tool", "system":
+				role = "local"
+			case "user":
+				// Render directly.
+			default:
+				role = "local"
+			}
+			turns = append(turns, TranscriptTurn{Role: role, Text: text})
+		}
+		return TranscriptLoadedMsg{SessionID: sessionID, UserID: userID, Profile: profile, Turns: turns}
+	}
+}
+
+func messageText(raw json.RawMessage) (string, bool) {
+	var text string
+	if len(raw) != 0 && json.Unmarshal(raw, &text) == nil {
+		return text, true
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", false
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var parts []string
+		for _, block := range blocks {
+			if block.Text != "" {
+				parts = append(parts, block.Text)
+			}
+		}
+		return strings.Join(parts, "\n"), len(parts) > 0
+	}
+	var block struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &block) == nil && block.Text != "" {
+		return block.Text, true
+	}
+	// Tool-call argument objects and unknown content blocks are not prose;
+	// avoid dumping raw JSON into the conversation transcript.
+	return "", false
 }
 
 var errNotConnected = errors.New("not connected")

@@ -33,6 +33,12 @@ export function HarnessApp() {
 
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
   const { send, status, reconnect, events, subscribe, userId, setUserId } = useSharedHarnessWS()
+  const previousUserId = useRef(userId)
+  useEffect(() => {
+    if (previousUserId.current === userId) return
+    previousUserId.current = userId
+    dispatch({ type: 'RESET_SCOPE' })
+  }, [userId])
   useEffect(() => {
     events.forEach(message => dispatch({ type: 'SERVER_MSG', payload: message }))
     return subscribe(message => dispatch({ type: 'SERVER_MSG', payload: message }))
@@ -107,7 +113,7 @@ export function HarnessApp() {
 
   const sendControl = (msg: ClientMessage) => {
     const result = send(msg)
-    if (!result.ok) dispatch({ type: 'SEND_FAILED', reason: sendFailureReason(result) })
+    dispatch({ type: 'SEND_FAILED', reason: result.ok ? '' : sendFailureReason(result) })
     return result
   }
 
@@ -126,22 +132,19 @@ export function HarnessApp() {
   }
 
   const handleApprove = () => {
-    if (state.pendingApproval) send({ type: 'tool_approve', id: state.pendingApproval.id })
-    dispatch({ type: 'RESOLVE_APPROVAL' })
+    if (state.pendingApproval && sendControl({ type: 'tool_approve', id: state.pendingApproval.id }).ok) dispatch({ type: 'RESOLVE_APPROVAL' })
   }
 
   const handleDeny = () => {
-    if (state.pendingApproval) send({ type: 'tool_deny', id: state.pendingApproval.id })
-    dispatch({ type: 'RESOLVE_APPROVAL' })
+    if (state.pendingApproval && sendControl({ type: 'tool_deny', id: state.pendingApproval.id }).ok) dispatch({ type: 'RESOLVE_APPROVAL' })
   }
 
   const handleInputResponse = (id: string, value: string) => {
-    send({ type: 'input_response', id, value })
-    dispatch({ type: 'RESOLVE_INPUT_REQUEST' })
+    if (sendControl({ type: 'input_response', id, value }).ok) dispatch({ type: 'RESOLVE_INPUT_REQUEST' })
   }
 
   const handleCodeResult = (result: ExecutionResult) => {
-    send({ type: 'code_result', id: result.id, stdout: result.stdout, stderr: result.stderr, exit_code: result.exit_code, files: result.files })
+    if (!sendControl({ type: 'code_result', id: result.id, stdout: result.stdout, stderr: result.stderr, exit_code: result.exit_code, files: result.files }).ok) return
     dispatch({ type: 'RECORD_EXECUTION', payload: { code: state.pendingCodeExecution?.code, result } })
   }
 
@@ -171,7 +174,7 @@ export function HarnessApp() {
       <TopBar
         profileName={state.profile}
         profiles={state.profiles}
-        onSetProfile={name => send({ type: 'set_profile', profile: name })}
+        onSetProfile={name => { if (sendControl({ type: 'set_profile', profile: name }).ok && name !== state.profile) dispatch({ type: 'RESET_SCOPE' }) }}
         projectName={state.activeProjectName}
         sessionId={state.sessionId}
         busy={state.busy}
@@ -191,6 +194,7 @@ export function HarnessApp() {
       <StageStrip stages={state.stages} />
       <div className={`stage ${workspaceOpen ? 'split' : 'idle'}`}>
         <ConvColumn split={workspaceOpen}>
+          {transcript.error ? <div role="alert" style={{ color: 'var(--del)', padding: '0.5rem' }}>Transcript unavailable: {transcript.error} <button onClick={transcript.retry}>Retry</button></div> : null}
           {state.messages.length === 0 ? (
             <Hero onSelect={handleSuggest} />
           ) : (
@@ -205,7 +209,7 @@ export function HarnessApp() {
               ))}
             </div>
           )}
-          {state.executions?.map((execution, index) => <NotebookCell key={`${execution.result.id}-${index}`} result={execution.result} code={execution.code} onRerun={() => execution.code ? send({ type: 'message', content: `Run this code again:\n\n${execution.code}` }) : undefined} onEdit={() => dispatch({ type: 'INPUT', payload: execution.code ?? '' })} />)}
+          {state.executions?.map((execution, index) => <NotebookCell key={`${execution.result.id}-${index}`} result={execution.result} code={execution.code} onRerun={() => execution.code ? sendControl({ type: 'message', content: `Run this code again:\n\n${execution.code}` }) : undefined} onEdit={() => dispatch({ type: 'INPUT', payload: execution.code ?? '' })} />)}
           <Composer
             value={state.input}
             onChange={v => dispatch({ type: 'INPUT', payload: v })}
@@ -221,7 +225,7 @@ export function HarnessApp() {
 
         {workspaceOpen && (
           <div className="col-work">
-            <Workspace projectId={state.activeProject} tabs={state.tabs} activeTab={state.activeTab} onTabChange={i => dispatch({ type: 'SET_TAB', payload: i })} surfaces={state.surfaces} allowedPackages={state.allowedPackages ?? []} onSurfaceEmit={handleSurfaceEmit} onSurfaceResult={result => send({ type: 'ui_result', id: result.id, ok: result.ok, errors: result.errors, stdout: result.stdout, duration_ms: result.duration_ms, bytes: result.bytes })} datasetBaseUrl={wsUrl.replace(/^ws/, 'http')} datasetUser={userId} onDatasetContext={context => dispatch({ type: 'INPUT', payload: `${state.input}${state.input ? '\n' : ''}${context}` })} />
+            <Workspace projectId={state.activeProject} tabs={state.tabs} activeTab={state.activeTab} onTabChange={i => dispatch({ type: 'SET_TAB', payload: i })} surfaces={state.surfaces} allowedPackages={state.allowedPackages ?? []} onSurfaceEmit={handleSurfaceEmit} onSurfaceResult={result => sendControl({ type: 'ui_result', id: result.id, ok: result.ok, errors: result.errors, stdout: result.stdout, duration_ms: result.duration_ms, bytes: result.bytes })} datasetBaseUrl={wsUrl.replace(/^ws/, 'http')} datasetUser={userId} onDatasetContext={context => dispatch({ type: 'INPUT', payload: `${state.input}${state.input ? '\n' : ''}${context}` })} />
           </div>
         )}
       </div>
@@ -253,26 +257,27 @@ export function HarnessApp() {
           activeProject={state.activeProject}
           projects={state.projects}
           history={state.history}
-          onRequestProjects={() => send({ type: 'project_list' })}
-          onRequestHistory={(projectId) => send({ type: 'session_list', ...(projectId ? { projectId } : {}) })}
-          onSwitchProject={(id, name) => { dispatch({ type: 'SET_ACTIVE_PROJECT', id, name }); send({ type: 'session_list', projectId: id }) }}
-          onNewProject={(name) => send({ type: 'project_create', name })}
-          onResume={(sessionId, project) => { send({ type: 'resume', sessionId }); const p = state.projects.find(x => x.id === project); dispatch({ type: 'SET_ACTIVE_PROJECT', id: project, name: p?.name ?? 'Inbox' }) }}
-          onAssign={(projectId) => { if (state.sessionId && state.sessionId !== '…') send({ type: 'project_assign', sessionId: state.sessionId, projectId }) }}
+          onRequestProjects={() => sendControl({ type: 'project_list' })}
+          onRequestHistory={(projectId) => sendControl({ type: 'session_list', ...(projectId ? { projectId } : {}) })}
+          onSwitchProject={(id, name) => { if (sendControl({ type: 'session_list', projectId: id }).ok) dispatch({ type: 'SET_ACTIVE_PROJECT', id, name }) }}
+          onNewProject={(name) => sendControl({ type: 'project_create', name })}
+          onResume={(sessionId, project) => { if (!sendControl({ type: 'resume', sessionId }).ok) return; const p = state.projects.find(x => x.id === project); dispatch({ type: 'SET_ACTIVE_PROJECT', id: project, name: p?.name ?? 'Inbox' }) }}
+          onAssign={(projectId) => { if (state.sessionId && state.sessionId !== '…') sendControl({ type: 'project_assign', sessionId: state.sessionId, projectId }) }}
           models={state.models}
           commands={state.commands}
-          onSetModel={model => send({ type: 'set_model', model })}
+          onSetModel={model => sendControl({ type: 'set_model', model })}
           profiles={state.profiles}
-          onSetProfile={name => send({ type: 'set_profile', profile: name })}
+          onSetProfile={name => { if (sendControl({ type: 'set_profile', profile: name }).ok && name !== state.profile) dispatch({ type: 'RESET_SCOPE' }) }}
           approvalMode={state.approvalMode}
-          onSetApprovalMode={mode => send({ type: 'set_approval_mode', mode })}
+          onSetApprovalMode={mode => sendControl({ type: 'set_approval_mode', mode })}
         />
       )}
       {state.pendingApproval && (
-        <ApprovalModal toolName={state.pendingApproval.name} toolInput={state.pendingApproval.input} risk={state.pendingApproval.risk} reason={state.pendingApproval.reason} preview={state.pendingApproval.preview} onApprove={handleApprove} onDeny={handleDeny} />
+        <ApprovalModal error={state.sendError} toolName={state.pendingApproval.name} toolInput={state.pendingApproval.input} risk={state.pendingApproval.risk} reason={state.pendingApproval.reason} preview={state.pendingApproval.preview} onApprove={handleApprove} onDeny={handleDeny} />
       )}
       {state.pendingInputRequest && (
         <InputRequestModal
+          error={state.sendError}
           id={state.pendingInputRequest.id}
           prompt={state.pendingInputRequest.prompt}
           kind={state.pendingInputRequest.kind}

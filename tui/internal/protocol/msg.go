@@ -187,6 +187,23 @@ type ServerMessage struct {
 	Undo      []UndoEntry      `json:"entries,omitempty"`
 	Mission   json.RawMessage  `json:"mission,omitempty"`
 	Receipt   json.RawMessage  `json:"receipt,omitempty"`
+	Runtime   *RuntimeSnapshot `json:"snapshot,omitempty"`
+}
+
+// RuntimeSnapshot is the bounded recovery projection. Actionable IDs alone
+// never authorize a TUI control; Actionable carries the complete prompt.
+type RuntimeSnapshot struct {
+	SessionID  string              `json:"session_id"`
+	Actionable []RecoverablePrompt `json:"actionable,omitempty"`
+}
+
+type RecoverablePrompt struct {
+	ID      string                 `json:"id"`
+	Name    string                 `json:"name"`
+	Input   map[string]interface{} `json:"input"`
+	Risk    string                 `json:"risk,omitempty"`
+	Reason  string                 `json:"reason,omitempty"`
+	Preview interface{}            `json:"preview,omitempty"`
 }
 
 // DecodeServer parses one server->client frame.
@@ -209,33 +226,34 @@ type helloMsg struct {
 	Profile         string `json:"profile,omitempty"`
 }
 
-func (helloMsg) isClientMessage()           {}
-func (messageMsg) isClientMessage()         {}
-func (planRequestMsg) isClientMessage()     {}
-func (cancelMsg) isClientMessage()          {}
-func (resumeMsg) isClientMessage()          {}
-func (toolApproveMsg) isClientMessage()     {}
-func (toolDenyMsg) isClientMessage()        {}
-func (inputResponseMsg) isClientMessage()   {}
-func (projectCreateMsg) isClientMessage()   {}
-func (projectListMsg) isClientMessage()     {}
-func (projectAssignMsg) isClientMessage()   {}
-func (sessionListMsg) isClientMessage()     {}
-func (setApprovalModeMsg) isClientMessage() {}
-func (modelsListMsg) isClientMessage()      {}
-func (setModelMsg) isClientMessage()        {}
-func (skillsListMsg) isClientMessage()      {}
-func (commandsListMsg) isClientMessage()    {}
-func (skillGetMsg) isClientMessage()        {}
-func (skillSaveMsg) isClientMessage()       {}
-func (skillPromoteMsg) isClientMessage()    {}
-func (skillDiscardMsg) isClientMessage()    {}
-func (skillsMineMsg) isClientMessage()      {}
-func (compactMsg) isClientMessage()         {}
-func (pendingListMsg) isClientMessage()     {}
-func (pendingAnswerMsg) isClientMessage()   {}
-func (undoListMsg) isClientMessage()        {}
-func (undoApplyMsg) isClientMessage()       {}
+func (helloMsg) isClientMessage()            {}
+func (messageMsg) isClientMessage()          {}
+func (planRequestMsg) isClientMessage()      {}
+func (cancelMsg) isClientMessage()           {}
+func (resumeMsg) isClientMessage()           {}
+func (toolApproveMsg) isClientMessage()      {}
+func (toolDenyMsg) isClientMessage()         {}
+func (inputResponseMsg) isClientMessage()    {}
+func (projectCreateMsg) isClientMessage()    {}
+func (projectListMsg) isClientMessage()      {}
+func (projectAssignMsg) isClientMessage()    {}
+func (sessionListMsg) isClientMessage()      {}
+func (setApprovalModeMsg) isClientMessage()  {}
+func (modelsListMsg) isClientMessage()       {}
+func (setModelMsg) isClientMessage()         {}
+func (skillsListMsg) isClientMessage()       {}
+func (commandsListMsg) isClientMessage()     {}
+func (skillGetMsg) isClientMessage()         {}
+func (skillSaveMsg) isClientMessage()        {}
+func (skillPromoteMsg) isClientMessage()     {}
+func (skillDiscardMsg) isClientMessage()     {}
+func (skillsMineMsg) isClientMessage()       {}
+func (compactMsg) isClientMessage()          {}
+func (pendingListMsg) isClientMessage()      {}
+func (pendingAnswerMsg) isClientMessage()    {}
+func (undoListMsg) isClientMessage()         {}
+func (undoApplyMsg) isClientMessage()        {}
+func (runtimeSubscribeMsg) isClientMessage() {}
 
 func Hello(userID string, profile ...string) ClientMessage {
 	msg := helloMsg{Type: "hello", UserID: userID, ProtocolVersion: ProtocolVersion}
@@ -411,6 +429,15 @@ type toolDenyMsg struct {
 
 func ToolDeny(id string) ClientMessage {
 	return toolDenyMsg{Type: "tool_deny", ID: id}
+}
+
+type runtimeSubscribeMsg struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+}
+
+func RuntimeSubscribe(sessionID string) ClientMessage {
+	return runtimeSubscribeMsg{Type: "runtime_subscribe", SessionID: sessionID}
 }
 
 type inputResponseMsg struct {

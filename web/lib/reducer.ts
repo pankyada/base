@@ -118,6 +118,7 @@ export type Action =
   | { type: 'SET_TAB'; payload: number }
   | { type: 'TOGGLE_FOCUS' }
   | { type: 'CLEAR' }
+  | { type: 'RESET_SCOPE' }
   | { type: 'RESOLVE_APPROVAL' }
   | { type: 'SET_THEME'; theme: string; palette: string; density: string }
   | { type: 'INPUT_REQUEST'; payload: { id: string; prompt: string; kind: InputRequestKind; options?: string[] } }
@@ -175,6 +176,9 @@ export function reducer(state: State, action: Action): State {
     case 'SET_TAB': return { ...state, activeTab: action.payload }
     case 'TOGGLE_FOCUS': return { ...state, focusPane: state.focusPane === 'conv' ? 'work' : 'conv' }
     case 'CLEAR': return { ...state, messages: [], tabs: [], busy: false, pendingApproval: null, approvalQueue: [] }
+    // Identity/profile changes must drop session-dependent data before the next scoped read lands.
+    // Keep the authoritative session/profile selected by the new socket handshake.
+    case 'RESET_SCOPE': return { ...state, sessionId: '…', activeProject: 'inbox', activeProjectName: 'Inbox', messages: [], tabs: [], activeTab: 0, busy: false, sendError: undefined, pendingApproval: null, approvalQueue: [], pendingInputRequest: null, pendingCodeExecution: null, tokens: { in: 0, out: 0 }, costUsd: undefined, usage: undefined, context: undefined, stages: [], runs: undefined, activeRunId: undefined, notices: [], projects: [], history: [], pending: undefined, undoEntries: undefined, skills: undefined, skillContent: undefined, skillResults: undefined, commands: undefined, plan: undefined, surfaces: undefined, runtime: undefined, mission: undefined, missionReceipts: undefined, receipt: undefined, challenges: undefined, todos: [], executions: undefined, budget: undefined, providerStatus: undefined, models: undefined, currentModel: undefined, allowedPackages: undefined, approvalMode: undefined }
     case 'RESOLVE_APPROVAL': { const queue = [...(state.approvalQueue ?? [])].slice(1); return { ...state, approvalQueue: queue, pendingApproval: queue[0] ?? null } }
     case 'SET_THEME': return { ...state, theme: action.theme, palette: action.palette, density: action.density }
     case 'INPUT_REQUEST': return { ...state, pendingInputRequest: action.payload }
@@ -229,7 +233,11 @@ export function reducer(state: State, action: Action): State {
           return { ...state, tabs: [...state.tabs, tab], activeTab: state.tabs.length }
         }
         case 'ui_render': return { ...state, surfaces: mergeSurface(state.surfaces ?? [], msg.surface, msg.run_id) }
-        case 'runtime': return { ...state, runtime: msg.snapshot }
+        case 'runtime': {
+          if (msg.snapshot.session_id !== state.sessionId) return { ...state, runtime: msg.snapshot }
+          const recovered = (msg.snapshot.actionable ?? []).map(item => ({ id: item.id, name: item.name, input: item.input, risk: item.risk, reason: item.reason, preview: item.preview }))
+          return { ...state, runtime: msg.snapshot, ...(msg.snapshot.actionable ? { approvalQueue: recovered, pendingApproval: recovered[0] ?? null } : {}) }
+        }
         case 'mission': return { ...state, mission: msg.mission, missionReceipts: msg.receipts }
         case 'receipt': return { ...state, receipt: msg.receipt }
         case 'challenge': return { ...state, challenges: [...(state.challenges ?? []).filter(item => item.id !== msg.challenge.id), msg.challenge] }

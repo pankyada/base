@@ -70,6 +70,7 @@ import { Bulletin } from '../agents/bulletin.js'
 import { postBoardMessage } from './board-handler.js'
 import pkg from '../../package.json' with { type: 'json' }
 import { SessionRuntimeRegistry } from './session-runtime.js'
+import { RecoverableApprovalRegistry } from './recoverable-approvals.js'
 import { MissionStore, completeHumanCriterion, createMission, evidenceRef, evaluateCriterion, finalizeMission, type EvidenceRef } from '../missions/index.js'
 import { ReplayStore } from '../replay/store.js'
 import { hashArguments, markCheckpoint, newJournal, recordEffect, recordEvent, type EffectReceipt, type RunJournal } from '../replay/index.js'
@@ -326,10 +327,11 @@ async function main() {
 
   const openSockets = new Set<WebSocket>()
   const sessionRuntimes = new SessionRuntimeRegistry()
+  const recoverableApprovals = new RecoverableApprovalRegistry()
   const runtimePeers = new Map<string, Set<WebSocket>>()
   const addRuntimePeer = (sessionId: string, socket: WebSocket): void => { const peers = runtimePeers.get(sessionId) ?? new Set<WebSocket>(); peers.add(socket); runtimePeers.set(sessionId, peers) }
   const removeRuntimePeer = (sessionId: string, socket: WebSocket): void => { const peers = runtimePeers.get(sessionId); peers?.delete(socket); if (peers?.size === 0) runtimePeers.delete(sessionId) }
-  const runtimeCleanupTimer = setInterval(() => sessionRuntimes.cleanup(), 30_000)
+  const runtimeCleanupTimer = setInterval(() => { sessionRuntimes.cleanup(); recoverableApprovals.cleanup() }, 30_000)
   runtimeCleanupTimer.unref()
 
   wss.on('connection', (ws: WebSocket) => {
@@ -344,6 +346,9 @@ async function main() {
       ? new GraphMemoryProvider(profile.artifact_dir, session)
       : new FsMemoryProvider(profile.artifact_dir, session)
     let usageAtConnectionStart = { ...session.usage }
+    // A reconnect may control a run owned by the disconnected socket.  That
+    // owner remains the only writer of the session until the live run ends.
+    let detachedLiveRun = false
     let abortController = new AbortController()
     const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void; name: string }>()
     const sessionApprovalGrants = new SessionApprovalGrants()
@@ -361,7 +366,21 @@ async function main() {
         resolve(true)
         return
       }
-      pendingApprovals.set(id, { resolve, name })
+      // Resolution can arrive through a later connection.  Keep the original
+      // connection's local bookkeeping in sync with the server-owned entry.
+      const pending = {
+        name,
+        resolve: (approved: boolean) => {
+          pendingApprovals.delete(id)
+          resolve(approved)
+        },
+      }
+      pendingApprovals.set(id, pending)
+      // Capture this run's controller.  `cancel` replaces the connection's
+      // controller for future work, and must never abort a later run instead.
+      const approvalController = abortController
+      try { recoverableApprovals.register(sessionRuntime.session_id, userId, { id, ...pending, cancel: () => approvalController.abort() }) }
+      catch (error) { pendingApprovals.delete(id); resolve(false); sendForRun({ type: 'notice', level: 'error', message: 'approval recovery unavailable', detail: error instanceof Error ? error.message : String(error) }); return }
       const tool = getAllTools().find(item => item.name === name) ?? connectionAgentTools.find(item => item.name === name)
       let preview: unknown
       if (tool?.preview && activeContext) {
@@ -443,6 +462,7 @@ async function main() {
     }
 
     const flushConnectionUsage = (): void => {
+      if (detachedLiveRun) return
       const delta = usageDeltaFromSession(usageAtConnectionStart, session.usage)
       saveSession(session)
       recordUsage(session.user, delta)
@@ -519,11 +539,16 @@ async function main() {
       // would recursively embed prior snapshots and grow persisted state on
       // every attach/reconnect.
       if (msg.type !== 'runtime') sessionRuntime.emit(msg.type, msg)
-      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+      const deliveredToOrigin = ws.readyState === ws.OPEN
+      if (deliveredToOrigin) ws.send(JSON.stringify(msg))
       if (msg.type !== 'runtime') {
         const runtime = sessionRuntime.state
         for (const peer of runtimePeers.get(sessionRuntime.session_id) ?? []) {
           if (peer === ws || peer.readyState !== peer.OPEN) continue
+          // A resumed client needs actual terminal frames emitted by the
+          // disconnected owner. While the origin remains open, peers receive
+          // only a runtime projection so request-local errors stay private.
+          if (!deliveredToOrigin) peer.send(JSON.stringify(msg))
           peer.send(JSON.stringify({ type: 'runtime', snapshot: { ...runtime, controller: runtime.controller ? { id: runtime.controller.id, expires_at: runtime.controller.expires_at } : undefined, gap: false } } satisfies ServerMessage))
         }
       }
@@ -1342,7 +1367,7 @@ async function main() {
         for (const controller of agentControllers.values()) controller.abort()
         agentControllers.clear()
         abortController = new AbortController()
-		for (const pending of pendingApprovals.values()) pending.resolve(false)
+		recoverableApprovals.cancel(sessionRuntime.session_id, userId)
 		pendingApprovals.clear()
         sessionApprovalGrants.clear()
 		for (const resolve of pendingInputRequests.values()) resolve('')
@@ -1355,11 +1380,12 @@ async function main() {
         if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 256) { send({ type: 'error', message: 'invalid decision id' }); return }
         try {
           runCorrelatedDecision(msg.id, msg.request_id, () => {
-            const pending = pendingApprovals.get(msg.id)
+            const pending = pendingApprovals.get(msg.id) ?? recoverableApprovals.get(sessionRuntime.session_id, userId, msg.id)
             if (!pending) throw new Error('stale or unknown decision id')
             if (msg.type === 'tool_approve' && msg.remember) sessionApprovalGrants.remember(pending.name, 'prompt')
             pending.resolve(msg.type === 'tool_approve')
             pendingApprovals.delete(msg.id)
+            recoverableApprovals.remove(sessionRuntime.session_id, userId, msg.id)
             sessionRuntime.emit(msg.type, { id: msg.id })
             return true
           })
@@ -1432,8 +1458,10 @@ async function main() {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
           flushConnectionUsage()
+          removeRuntimePeer(sessionRuntime.session_id, ws)
           session = loaded
           sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
+          detachedLiveRun = recoverableApprovals.has(session.id, userId)
           addRuntimePeer(session.id, ws)
           controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false
           baseProfile = profiles.get(loaded.profile) ?? baseProfile
@@ -1661,9 +1689,12 @@ async function main() {
 
     ws.on('close', () => {
       openSockets.delete(ws)
-      abortController.abort()
-      for (const controller of maintenanceControllers) controller.abort()
-      maintenanceControllers.clear()
+      const keepForApprovalRecovery = pendingApprovals.size > 0
+      if (!keepForApprovalRecovery) {
+        abortController.abort()
+        for (const controller of maintenanceControllers) controller.abort()
+        maintenanceControllers.clear()
+      }
       // Disconnect relinquishes the controller lease so a reconnecting local
       // client can claim control immediately; runtime state stays server-owned.
       if (controllerLease) {
@@ -1671,21 +1702,29 @@ async function main() {
         controllerLease = undefined
       }
       removeRuntimePeer(sessionRuntime.session_id, ws)
-	  for (const pending of pendingApprovals.values()) pending.resolve(false)
-	  pendingApprovals.clear()
+      if (!keepForApprovalRecovery) {
+	    recoverableApprovals.cancel(sessionRuntime.session_id, userId)
+	    pendingApprovals.clear()
+      }
       sessionApprovalGrants.clear()
-	  for (const resolve of pendingInputRequests.values()) resolve('')
-	  pendingInputRequests.clear()
-      resolvePendingClientWork('Client disconnected before completion.')
+      if (!keepForApprovalRecovery) {
+	    for (const resolve of pendingInputRequests.values()) resolve('')
+	    pendingInputRequests.clear()
+        resolvePendingClientWork('Client disconnected before completion.')
+      }
       flushConnectionUsage()
 
       // Destroy per-connection MCP clients (fire-and-forget)
-      if (mcpIdleTimer) clearTimeout(mcpIdleTimer)
-      void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
+      if (!keepForApprovalRecovery) {
+        if (mcpIdleTimer) clearTimeout(mcpIdleTimer)
+        void destroyMcpClients(mcpEntries).catch(e => console.error('[mcp] destroy error:', e.message))
+      }
 
       // on_stop hooks (fire-and-forget — close handler cannot be async)
-      void runHooks('on_stop', connectionProfile, { SESSION_ID: session.id, PROFILE: connectionProfile.name })
-        .catch(e => console.error('[on_stop hook] error:', e.message))
+      if (!keepForApprovalRecovery) {
+        void runHooks('on_stop', connectionProfile, { SESSION_ID: session.id, PROFILE: connectionProfile.name })
+          .catch(e => console.error('[on_stop hook] error:', e.message))
+      }
 
       // Disconnect must not resurrect detached model work. Improvement runs
       // remain explicit actions while a connection is alive.

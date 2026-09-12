@@ -87,6 +87,16 @@ describe('single-socket discipline (createConnect)', () => {
     expect(refs.ws.current).toBe(current) // no reconnect timer scheduled from the stale close
   })
 
+  it('manual reconnect closes the superseded socket before replacing it', () => {
+    const { sockets, refs, connect } = harness()
+    connect()
+    const first = sockets[0]
+    first.open()
+    connect()
+    expect(first.closed).toBe(true)
+    expect(refs.ws.current).toBe(sockets[1])
+  })
+
   it('exactly one socket survives after several identity-switch-style mount/unmount pairs, never accumulating', () => {
     const refsAcrossMounts: unknown[] = []
     for (let i = 0; i < 3; i++) {

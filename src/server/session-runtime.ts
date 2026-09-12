@@ -5,12 +5,17 @@ import { atomicWriteJson, readJson } from '../shared/atomic-json.js'
 import { sanitizeUserId, userPaths } from '../session/user-paths.js'
 
 export interface RuntimeEvent { seq: number; type: string; payload: unknown; at: string }
+export interface RecoverableApproval {
+  id: string; name: string; input: Record<string, unknown>
+  risk?: 'safe' | 'caution' | 'danger'; reason?: string; preview?: unknown
+  agent_id?: string; run_id?: string
+}
 export interface RuntimeSnapshot {
   session_id: string; user: string; revision: number
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
   last_seq: number; controller?: { id: string; lease: string; expires_at: number }
   events: RuntimeEvent[]; run_id?: string; latest_usage?: unknown
-  budget?: unknown; actionable_ids: string[]; recovery_incomplete?: boolean
+  budget?: unknown; actionable_ids: string[]; actionable?: RecoverableApproval[]; recovery_incomplete?: boolean
 }
 export interface Subscription { mode: 'events' | 'snapshot'; events?: RuntimeEvent[]; snapshot: RuntimeSnapshot; gap: boolean }
 
@@ -26,6 +31,7 @@ export class SessionRuntime {
   private budget?: unknown
   private recoveryIncomplete = false
   private readonly actionable = new Set<string>()
+  private readonly actionableApprovals = new Map<string, RecoverableApproval>()
   private readonly responses = new Map<string, { result?: unknown; error?: unknown; failed?: boolean; invoking?: boolean }>()
   constructor(readonly session_id: string, readonly user: string, private readonly maxEvents = 256, private readonly disconnectedTtlMs = 5 * 60_000, private readonly persist?: string, restored?: RuntimeSnapshot, private readonly maxResponses = 4096) {
     if (!Number.isSafeInteger(maxEvents) || maxEvents < 1 || maxEvents > 4096 || !Number.isSafeInteger(maxResponses) || maxResponses < 1) throw new Error('invalid runtime retention limit')
@@ -39,6 +45,7 @@ export class SessionRuntime {
     this.budget = structuredClone(restored.budget)
     this.recoveryIncomplete = restored.recovery_incomplete ?? false
     this.actionable.clear()
+    this.actionableApprovals.clear()
     for (const id of restored.actionable_ids ?? []) if (typeof id === 'string') this.actionable.add(id)
     this.events.push(...structuredClone(restored.events.filter(event => event.type !== 'runtime').slice(-this.maxEvents)))
     // All action callbacks are ephemeral, including malformed legacy terminal snapshots.
@@ -67,6 +74,7 @@ export class SessionRuntime {
       ...(this.budget !== undefined ? { budget: clone(this.budget) } : {}),
       ...(this.recoveryIncomplete ? { recovery_incomplete: true } : {}),
       actionable_ids: [...this.actionable],
+      ...(this.actionableApprovals.size ? { actionable: [...this.actionableApprovals.values()].map(clone) } : {}),
     }
   }
   private persistState(): void { if (this.persist) atomicWriteJson(this.persist, this.snapshot()) }
@@ -95,7 +103,15 @@ export class SessionRuntime {
       if (id.length <= 256 && this.actionable.size < 256) this.actionable.add(id)
       else this.recoveryIncomplete = true
     }
-    if (['response', 'tool_end', 'input_response', 'code_result', 'ui_result', 'tool_approve', 'tool_deny'].includes(type) && id) this.actionable.delete(id)
+    if (type === 'tool_prompt' && id) {
+      const approval = recoverableApproval(data)
+      if (approval) this.actionableApprovals.set(id, approval)
+      else this.recoveryIncomplete = true
+    }
+    if (['response', 'tool_end', 'input_response', 'code_result', 'ui_result', 'tool_approve', 'tool_deny'].includes(type) && id) {
+      this.actionable.delete(id)
+      this.actionableApprovals.delete(id)
+    }
     const event = { seq: ++this.seq, type, payload: this.bounded(payload), at: new Date().toISOString() }
     this.events.push(event)
     if (this.events.length > this.maxEvents) this.events.splice(0, this.events.length - this.maxEvents)
@@ -171,6 +187,15 @@ export class SessionRuntime {
   }
   cleanup(now = Date.now()): boolean { if (this.controller && this.controller.expires_at <= now) { this.controller = undefined; this.emit('controller_expired', {}); return true } return false }
   get state(): RuntimeSnapshot { return this.snapshot() }
+}
+
+function recoverableApproval(data: Record<string, unknown> | undefined): RecoverableApproval | undefined {
+  if (!data || typeof data.id !== 'string' || typeof data.name !== 'string' || !data.input || typeof data.input !== 'object' || Array.isArray(data.input)) return undefined
+  const approval: RecoverableApproval = { id: data.id, name: data.name, input: data.input as Record<string, unknown> }
+  if (data.risk === 'safe' || data.risk === 'caution' || data.risk === 'danger') approval.risk = data.risk
+  for (const key of ['reason', 'agent_id', 'run_id'] as const) if (typeof data[key] === 'string') approval[key] = data[key]
+  if (data.preview !== undefined) approval.preview = data.preview
+  return approval
 }
 
 export class SessionRuntimeRegistry {

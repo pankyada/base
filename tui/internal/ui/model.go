@@ -27,6 +27,13 @@ type MessageSender interface {
 	Send(protocol.ClientMessage) error
 }
 
+// TranscriptLoader is optional so small test senders and alternate clients
+// can keep implementing the write-only MessageSender surface. The production
+// WS client uses the scoped REST read API after a resume acknowledgement.
+type TranscriptLoader interface {
+	LoadTranscript(sessionID, userID, profile string) tea.Cmd
+}
+
 type invocableKind uint8
 
 const (
@@ -105,6 +112,7 @@ type Model struct {
 	continueSession    bool
 	resumeID           string
 	resumeRequested    bool
+	transcriptRevision uint64 // invalidates late history hydration after a new turn/resume
 	continueLookup     bool
 	reconnectTarget    string // sessionID to restore after a reconnect; set on disconnect, cleared once resume settles
 	reconnectPending   bool   // true while a reconnect-driven resume is outstanding
@@ -333,8 +341,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case ws.ConnectedMsg:
 		wasDisconnected := !m.notices.DisconnectedAt.IsZero()
 		m.connected = true
-		_ = m.send(protocol.ModelsList()) // background sync on connect; refreshed again on next reconnect
-		_ = m.send(protocol.SkillsList()) // background sync on connect; refreshed again on next reconnect
+		_ = m.send(protocol.ModelsList())   // background sync on connect; refreshed again on next reconnect
+		_ = m.send(protocol.SkillsList())   // background sync on connect; refreshed again on next reconnect
 		_ = m.send(protocol.CommandsList()) // background sync on connect; refreshed again on next reconnect
 		if m.reconnectTarget != "" {
 			// A reconnect after we already had a session attached: hello just
@@ -383,10 +391,39 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.notices.Add(NoticeError, "malformed server frame", msg.Err.Error(), "connection remains open")
 		m.reflow()
 		return m, nil
+	case ws.TranscriptLoadedMsg:
+		if msg.SessionID != m.sessionID || (msg.UserID != "" && msg.UserID != m.userID) || (msg.Profile != "" && msg.Profile != m.profile) || msg.Revision != m.transcriptRevision {
+			return m, nil
+		}
+		if msg.Err != nil {
+			m.notices.Add(NoticeError, "session history unavailable", msg.Err.Error(), "retry by resuming the session again")
+			m.reflow()
+			return m, nil
+		}
+		m.transcript.Turns = make([]Turn, 0, len(msg.Turns))
+		for _, loaded := range msg.Turns {
+			m.transcript.Turns = append(m.transcript.Turns, Turn{Role: loaded.Role, Text: loaded.Text})
+		}
+		m.reflow()
+		return m, nil
 	case ws.ServerMsg:
 		previousDir := m.workingDir
 		m.handleServerMessage(msg.Msg)
 		var cmds []tea.Cmd
+		if msg.Msg.Type == "session_resumed" {
+			if loader, ok := m.sender.(TranscriptLoader); ok {
+				load := loader.LoadTranscript(m.sessionID, m.userID, m.profile)
+				revision := m.transcriptRevision
+				cmds = append(cmds, func() tea.Msg {
+					loaded := load()
+					if history, ok := loaded.(ws.TranscriptLoadedMsg); ok {
+						history.Revision = revision
+						return history
+					}
+					return loaded
+				})
+			}
+		}
 		if m.workingDir != previousDir {
 			m.refreshProject()
 			cmds = append(cmds, gitStatusCmd(m.workingDir))
@@ -1658,6 +1695,7 @@ func (m *Model) submit() tea.Cmd {
 }
 
 func (m *Model) startMessage(content string) {
+	m.transcriptRevision++
 	now := time.Now()
 	m.turnTokensOut = m.tokensOut
 	m.turnCost = m.costUSD
@@ -1704,6 +1742,7 @@ func (m *Model) startMessage(content string) {
 // appending a memory turn before calling this) can roll that back on failure
 // instead of leaving the transcript asserting a run that never started.
 func (m *Model) startAgentMessage(content string) bool {
+	m.transcriptRevision++
 	if err := m.send(protocol.Message(content)); err != nil {
 		m.reportSendFailure("message", err)
 		return false
@@ -1721,6 +1760,7 @@ func (m *Model) startAgentMessage(content string) bool {
 // restore it verbatim, matching startMessage's retained-input behavior —
 // handleSlash already consumed the composer by the time this runs.
 func (m *Model) startPlanMessage(content, original string) {
+	m.transcriptRevision++
 	if err := m.send(protocol.PlanRequest(content)); err != nil {
 		m.reportSendFailure("plan", err)
 		m.composer.input.SetValue(original)
@@ -2127,11 +2167,17 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		}
 		m.sessionPicker = true
 	case "session_resumed":
+		m.transcriptRevision++
 		m.sessionID = msg.SessionID
 		// Resume can switch the connection's profile server-side (PT-033);
 		// adopt it so the TUI stops showing the pre-resume profile.
 		if msg.Profile != "" {
 			m.profile = msg.Profile
+		}
+		if msg.SessionID != "" {
+			if err := m.send(protocol.RuntimeSubscribe(msg.SessionID)); err != nil {
+				m.reportSendFailure("runtime subscribe", err)
+			}
 		}
 		m.running = false
 		m.activeTool = ""
@@ -2295,6 +2341,19 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 				section.AwaitingApproval = true
 				break
 			}
+		}
+	case "runtime":
+		if msg.Runtime == nil || msg.Runtime.SessionID != m.sessionID {
+			return
+		}
+		for _, prompt := range msg.Runtime.Actionable {
+			if prompt.ID == "" || prompt.Name == "" || prompt.Input == nil {
+				continue
+			}
+			m.pendingApproval = &ApprovalRequest{ID: prompt.ID, Name: prompt.Name, Input: prompt.Input, Risk: prompt.Risk, Reason: prompt.Reason, Preview: prompt.Preview}
+			agent := m.currentAgent()
+			category, _ := categorize(prompt.Name)
+			agent.Sections = append(agent.Sections, Section{ID: prompt.ID, Name: prompt.Name, Arg: summarizeInput(prompt.Name, prompt.Input, m.workingDir), State: SectionDone, AwaitingApproval: true, Metric: "awaiting approval", Motion: m.transcript.Motion, RevealAt: -1, Category: category})
 		}
 	case "input_request":
 		m.pendingInput = newInputRequest(msg.ID, msg.Prompt, msg.Kind, msg.Options)

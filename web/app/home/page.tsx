@@ -11,22 +11,13 @@ import { Unavailable } from '../../components/chrome/Unavailable'
 
 type HomeBatch = { pending: unknown; runs: unknown; usage: unknown; triggers: unknown; memory: unknown; metrics: unknown; conflicts: unknown }
 
-/** Active profile, read off the WS event stream (this page doesn't run the reducer HarnessApp uses). */
-function activeProfile(events: { type: string }[]): string | undefined {
-  // session_resumed also carries the (possibly switched) post-resume profile — see PT-033 —
-  // so it counts as a profile source alongside session_ready/profiles.
-  const message = [...events].reverse().find(event => event.type === 'session_ready' || event.type === 'session_resumed' || event.type === 'profiles')
-  if (!message) return undefined
-  return (message as { profile?: string; current?: string }).profile ?? (message as { current?: string }).current
-}
-
 export default function HomePage() {
   const [data, setData] = useState<Record<string, unknown>>({})
   const [batch, setBatch] = useState<{ [K in keyof HomeBatch]: RemoteData<HomeBatch[K]> } | undefined>(undefined)
   const [memoryAt, setMemoryAt] = useState<string>()
   const base = process.env.NEXT_PUBLIC_HARNESS_HTTP_URL || 'http://localhost:7337'
-  const { events, userId } = useSharedHarnessWS()
-  const profile = activeProfile(events)
+  const { userId, operator } = useSharedHarnessWS()
+  const profile = operator.profile
   const scope: RequestScope = { userId, profile }
   const scopeRef = useRef(scope)
   scopeRef.current = scope

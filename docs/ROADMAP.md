@@ -617,6 +617,8 @@ file is a chat window.
 
 ### ❌ 29. Operator console & assistant surface
 
+2026-09-12 checkpoint: PT-008 typed deferred answers and live snapshot refresh implemented and locally validated (tracker E-020). PT-044 now provides bounded same-process approval recovery and Web acceptance (E-021); PT-007 retained state/ACK work still needs TUI recovery-control acceptance. Overall #29 remains partial; major layout/assistant work and broader acceptance are open.
+
 Everything #17–#23 built is invisible in a browser. Two faces close that.
 
 **To build (operator, `/ops`):**

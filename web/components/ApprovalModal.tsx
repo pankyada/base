@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 interface Props {
+  error?: string
   toolName: string
   toolInput: unknown
   risk?: 'safe' | 'caution' | 'danger'
@@ -13,7 +14,7 @@ interface Props {
 
 export function previewToolInput(toolName: string, input: unknown): string { const value = input && typeof input === 'object' ? input as Record<string, unknown> : {}; if (toolName === 'Bash') return JSON.stringify({ command: value.command, cwd: value.cwd }, null, 2); if (toolName === 'Write' || toolName === 'Edit') return JSON.stringify({ path: value.path, old: value.old, content: value.content, new: value.new }, null, 2); if (toolName.toLowerCase().includes('http') || toolName.toLowerCase().includes('network')) return JSON.stringify({ host: value.host ?? value.url }, null, 2); return JSON.stringify(input, null, 2) }
 
-export function ApprovalModal({ toolName, toolInput, risk, reason, preview, onApprove, onDeny }: Props) {
+export function ApprovalModal({ error, toolName, toolInput, risk, reason, preview, onApprove, onDeny }: Props) {
   const [dangerArmed, setDangerArmed] = useState(false)
   // Refs keep callbacks current without re-adding the listener on every render
   const onApproveRef = useRef(onApprove)
@@ -40,6 +41,7 @@ export function ApprovalModal({ toolName, toolInput, risk, reason, preview, onAp
           {previewToolInput(toolName, toolInput)}
         </pre>
         {preview !== undefined ? <><div style={{ color: 'var(--info)', marginBottom: '0.25rem' }}>Side effect preview</div><pre style={{ background: 'var(--bg)', padding: '0.5rem', border: '1px solid var(--border)', overflowX: 'auto', marginBottom: '1rem', color: 'var(--dim)' }}>{JSON.stringify(preview, null, 2)}</pre></> : null}
+        {error ? <p role="alert">{error}</p> : null}
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
           <button onClick={onDeny} style={{ padding: '0.5rem 1rem', background: 'transparent', border: '1px solid var(--del)', color: 'var(--del)', cursor: 'pointer' }}>Deny (n)</button>
           <button onClick={() => { if (risk === 'danger' && !dangerArmed) setDangerArmed(true); else onApprove() }} style={{ padding: '0.5rem 1rem', background: risk === 'danger' ? 'var(--del)' : 'transparent', border: '1px solid var(--ok)', color: risk === 'danger' ? 'var(--bg)' : 'var(--ok)', cursor: 'pointer' }}>{risk === 'danger' && !dangerArmed ? 'Confirm danger' : 'Allow (y)'}</button>

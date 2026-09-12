@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeTranscript, transcriptUrl } from '../hooks/useHarnessQuery'
+import { normalizeTranscript, transcriptRequestIsCurrent, transcriptUrl } from '../hooks/useHarnessQuery'
 
 describe('transcript query', () => {
   it('normalizes stored transcript rows for the reducer', () => {
@@ -16,5 +16,11 @@ describe('transcript query', () => {
   it('includes user and profile scope when provided', () => {
     expect(transcriptUrl('http://localhost:7337', 's1', { userId: 'user-a', profile: 'coding' }, 'abc'))
       .toBe('http://localhost:7337/sessions/s1/messages?user=user-a&profile=coding&before=abc')
+  })
+
+  it('rejects delayed transcript response when session changes inside same user/profile scope', () => {
+    expect(transcriptRequestIsCurrent('session-a', 'session-b', { userId: 'user-a', profile: 'coding' }, { userId: 'user-a', profile: 'coding' })).toBe(false)
+    expect(transcriptRequestIsCurrent('session-a', 'session-a', { userId: 'user-a', profile: 'coding' }, { userId: 'user-b', profile: 'coding' })).toBe(false)
+    expect(transcriptRequestIsCurrent('session-a', 'session-a', { userId: 'user-a', profile: 'coding' }, { userId: 'user-a', profile: 'coding' })).toBe(true)
   })
 })

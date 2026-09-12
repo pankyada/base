@@ -109,6 +109,13 @@ export function createConnect(deps: ConnectionDeps, refs: ConnectionRefs): () =>
 
   const connect = (): void => {
     if (refs.retry.current) { cancelTimeout(refs.retry.current); refs.retry.current = null }
+    // Manual reconnect can happen while the current socket is open. Close it before replacing
+    // the ref so the old transport cannot remain connected as an unobserved orphan.
+    const previous = refs.ws.current
+    if (previous) {
+      refs.ws.current = null
+      previous.close()
+    }
     deps.setStatus('connecting')
     const sock = deps.socketFactory(deps.url)
     refs.ws.current = sock

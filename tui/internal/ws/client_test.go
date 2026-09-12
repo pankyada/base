@@ -1,8 +1,10 @@
 package ws
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -10,6 +12,51 @@ import (
 
 	"harness-tui/internal/protocol"
 )
+
+func TestLoadTranscriptUsesScopedReadAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions/sess%2Fhistory/messages" && r.URL.Path != "/sessions/sess/history/messages" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		if r.URL.Query().Get("user") != "tester" || r.URL.Query().Get("profile") != "research" {
+			t.Fatalf("scope query=%s", r.URL.RawQuery)
+		}
+		w.Header().Set("content-type", "application/json")
+		fmt.Fprint(w, `{"messages":[{"role":"user","content":"old question"},{"role":"assistant","content":[{"type":"output_text","text":"CA08 persisted marker"}]},{"role":"tool","content":{"type":"tool_call","arguments":"secret"}}]}`)
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(parsed.Port(), "tester", "research")
+	msg, ok := c.LoadTranscript("sess/history", "tester", "research")().(TranscriptLoadedMsg)
+	if !ok {
+		t.Fatal("expected TranscriptLoadedMsg")
+	}
+	if msg.Err != nil {
+		t.Fatalf("load failed: %v", msg.Err)
+	}
+	if len(msg.Turns) != 2 || msg.Turns[1].Role != "agent" || msg.Turns[1].Text != "CA08 persisted marker" {
+		t.Fatalf("turns=%#v", msg.Turns)
+	}
+}
+
+func TestLoadTranscriptReportsHTTPFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"unknown session"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(parsed.Port(), "tester", "research")
+	msg, ok := c.LoadTranscript("missing", "tester", "research")().(TranscriptLoadedMsg)
+	if !ok || msg.Err == nil || !strings.Contains(msg.Err.Error(), "404") {
+		t.Fatalf("message=%#v", msg)
+	}
+}
 
 // TestSendNoConnection covers the case Send must never paper over: a caller
 // tries to write before (or after) the transport has a live socket.
