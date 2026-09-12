@@ -233,7 +233,7 @@ export interface SessionRuntimeWire {
   revision: number
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
   last_seq: number
-  controller?: { id: string; expires_at: number }
+  controller?: { id: string; expires_at?: number }
   events: Array<{ seq: number; type: string; payload: unknown; at: string }>
   gap: boolean
   run_id?: string

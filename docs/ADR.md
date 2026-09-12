@@ -1145,6 +1145,11 @@ full-payload actionable projection in the session runtime. A reconnect must
 resume the same user-owned session and claim a fresh controller lease before
 resolving a live approval. The registry expires callbacks closed; explicit
 cancel resolves them false; snapshots never create a control from an ID alone.
+Controller leases claimed by a live socket do not expire due to idle time; the
+server releases them when that socket closes or switches sessions. Explicit
+time-limited claims still expire through runtime cleanup. This prevents an
+active client from losing control while preserving stale-token rejection after
+release and fresh authority on reconnect.
 Process restart clears callbacks and marks active work interrupted, preserving
 ADR-81's no-restored-executable-authority rule.
 

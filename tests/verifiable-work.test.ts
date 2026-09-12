@@ -93,6 +93,20 @@ describe('verifiable agent work foundations', () => {
     expect(reconnect.lease).not.toBe(claim.lease)
   })
 
+  it('keeps a connected controller valid beyond the disconnect lease TTL and rejects released leases', () => {
+    const runtime = new SessionRuntime('connected-session', 'alice', 8, 5)
+    const connected = runtime.claimConnected('tui')
+    expect(runtime.cleanup(Date.now() + 10)).toBe(false)
+    expect(runtime.respond('turn-1', 'tui', connected.lease, () => 'accepted')).toBe('accepted')
+
+    runtime.release('tui', connected.lease)
+    expect(() => runtime.respond('turn-2', 'tui', connected.lease, () => 'stale')).toThrow('stale')
+
+    const disconnected = runtime.claim('browser', undefined, 5)
+    expect(runtime.cleanup(Date.now() + 10)).toBe(true)
+    expect(() => runtime.respond('turn-3', 'browser', disconnected.lease, () => 'stale')).toThrow('stale')
+  })
+
   it('restores terminal runtime state and fails interrupted work after restart', () => {
     const root = mkdtempSync(join(tmpdir(), 'harness-runtime-'))
     const first = new SessionRuntimeRegistry(8, 1000, root)

@@ -13,7 +13,7 @@ export interface RecoverableApproval {
 export interface RuntimeSnapshot {
   session_id: string; user: string; revision: number
   status: 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled'
-  last_seq: number; controller?: { id: string; lease: string; expires_at: number }
+  last_seq: number; controller?: { id: string; lease: string; expires_at?: number }
   events: RuntimeEvent[]; run_id?: string; latest_usage?: unknown
   budget?: unknown; actionable_ids: string[]; actionable?: RecoverableApproval[]; recovery_incomplete?: boolean
 }
@@ -25,7 +25,7 @@ export class SessionRuntime {
   private seq = 0
   private revision = 0
   private status: RuntimeSnapshot['status'] = 'running'
-  private controller?: { id: string; lease: string; expires_at: number }
+  private controller?: { id: string; lease: string; expires_at?: number }
   private runId?: string
   private latestUsage?: unknown
   private budget?: unknown
@@ -139,17 +139,24 @@ export class SessionRuntime {
     return gap ? { mode: 'snapshot', snapshot: this.snapshot(), gap: true } : { mode: 'events', events: structuredClone(this.events.filter(e => e.seq > afterSeq)), snapshot: this.snapshot(), gap: false }
   }
   claim(controllerId: string, expectedRevision?: number, ttlMs = this.disconnectedTtlMs): { lease: string; revision: number } {
+    return this.claimWithExpiry(controllerId, expectedRevision, ttlMs)
+  }
+  /** A socket-bound lease stays valid until its owner releases it on disconnect. */
+  claimConnected(controllerId: string, expectedRevision?: number): { lease: string; revision: number } {
+    return this.claimWithExpiry(controllerId, expectedRevision)
+  }
+  private claimWithExpiry(controllerId: string, expectedRevision?: number, ttlMs?: number): { lease: string; revision: number } {
     if (expectedRevision !== undefined && expectedRevision !== this.revision) throw new Error(`stale controller revision: expected ${expectedRevision}, actual ${this.revision}`)
-    if (this.controller && this.controller.expires_at > Date.now() && this.controller.id !== controllerId) throw new Error('session already has an active controller')
+    if (this.controller && (this.controller.expires_at === undefined || this.controller.expires_at > Date.now()) && this.controller.id !== controllerId) throw new Error('session already has an active controller')
     const lease = randomUUID()
-    this.controller = { id: controllerId, lease, expires_at: Date.now() + Math.max(1, ttlMs) }
+    this.controller = { id: controllerId, lease, ...(ttlMs === undefined ? {} : { expires_at: Date.now() + Math.max(1, ttlMs) }) }
     this.revision++
     this.emit('controller_claimed', { controller_id: controllerId })
     return { lease, revision: this.revision }
   }
   transfer(fromId: string, lease: string, toId: string, ttlMs = this.disconnectedTtlMs): { lease: string; revision: number } { this.assertController(fromId, lease); this.controller = undefined; return this.claim(toId, undefined, ttlMs) }
   release(controllerId: string, lease: string): void { this.assertController(controllerId, lease); this.controller = undefined; this.revision++; this.emit('controller_released', { controller_id: controllerId }) }
-  assertController(controllerId: string, lease: string): void { if (!this.controller || this.controller.id !== controllerId || this.controller.lease !== lease || this.controller.expires_at <= Date.now()) throw new Error('stale or invalid controller lease') }
+  assertController(controllerId: string, lease: string): void { if (!this.controller || this.controller.id !== controllerId || this.controller.lease !== lease || (this.controller.expires_at !== undefined && this.controller.expires_at <= Date.now())) throw new Error('stale or invalid controller lease') }
   /** Duplicate response id returns original result and never invokes handler twice. */
   respond<T>(responseId: string, controllerId: string, lease: string, handler: () => T): T {
     this.assertController(controllerId, lease)
@@ -185,7 +192,7 @@ export class SessionRuntime {
       throw error
     }
   }
-  cleanup(now = Date.now()): boolean { if (this.controller && this.controller.expires_at <= now) { this.controller = undefined; this.emit('controller_expired', {}); return true } return false }
+  cleanup(now = Date.now()): boolean { if (this.controller?.expires_at !== undefined && this.controller.expires_at <= now) { this.controller = undefined; this.emit('controller_expired', {}); return true } return false }
   get state(): RuntimeSnapshot { return this.snapshot() }
 }
 

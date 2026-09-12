@@ -445,6 +445,11 @@ async function main() {
     let controllerId = randomUUID()
     let controllerLease: string | undefined
     let observerOnly = false
+    const releaseControllerLease = (): void => {
+      if (!controllerLease) return
+      try { sessionRuntime.release(controllerId, controllerLease) } catch { /* expired or already transferred */ }
+      controllerLease = undefined
+    }
     // Correlation is opt-in. Keep the request-to-action binding per socket so
     // a replayed request can return its cached result, while reuse for a
     // different action fails closed.
@@ -458,7 +463,7 @@ async function main() {
       if (!controllerLease) throw new Error('controller lease required')
       return sessionRuntime.respond(requestId, controllerId, controllerLease, handler)
     }
-    try { controllerLease = sessionRuntime.claim(controllerId).lease } catch { /* another controller may own an attached session */ }
+    try { controllerLease = sessionRuntime.claimConnected(controllerId).lease } catch { /* another controller may own an attached session */ }
 
     const rebuildConnectionProfile = () => {
       const model = { ...baseProfile.model, id: connectionModel, reasoning_effort: connectionEffort ?? undefined,
@@ -500,12 +505,13 @@ async function main() {
       connectionChannels = channelsByProfile.get(selected.name)!
       voiceInput?.cancel(); voiceInput = null
       voiceOutput?.cancel(); voiceOutput = null
+      releaseControllerLease()
       removeRuntimePeer(sessionRuntime.session_id, ws)
       session = createSession(connectionProfile.name, userId)
       session.working_dir = workingDir
       sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
       addRuntimePeer(session.id, ws)
-      controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false; activeMissionId = undefined; missionEvidence = []
+      controllerId = randomUUID(); controllerLease = sessionRuntime.claimConnected(controllerId).lease; observerOnly = false; activeMissionId = undefined; missionEvidence = []
       memory = connectionProfile.memory?.provider === 'graph'
         ? new GraphMemoryProvider(connectionProfile.artifact_dir, session)
         : new FsMemoryProvider(connectionProfile.artifact_dir, session)
@@ -938,12 +944,10 @@ async function main() {
           if (msg.mode === 'control' && target.session_id !== session.id) {
             send({ type: 'error', message: 'control attach requires a new session connection', ...correlation }); return
           }
+          releaseControllerLease()
           removeRuntimePeer(sessionRuntime.session_id, ws)
-          if (controllerLease) {
-            try { sessionRuntime.release(controllerId, controllerLease) } catch { /* expired or already transferred */ }
-          }
           if (msg.mode === 'control') {
-            const claimed = target.claim(controllerId)
+            const claimed = target.claimConnected(controllerId)
             controllerLease = claimed.lease; observerOnly = false
           } else { controllerLease = undefined; observerOnly = true }
           sessionRuntime = target
@@ -1479,6 +1483,7 @@ async function main() {
         const loaded = loadSession(userId, msg.sessionId)
         if (loaded) {
           flushConnectionUsage()
+          releaseControllerLease()
           removeRuntimePeer(sessionRuntime.session_id, ws)
           session = loaded
           const resumedProfile = profiles.get(loaded.profile) ?? baseProfile
@@ -1488,7 +1493,7 @@ async function main() {
           sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
           detachedLiveRun = recoverableApprovals.has(session.id, userId)
           addRuntimePeer(session.id, ws)
-          controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false
+          controllerId = randomUUID(); controllerLease = sessionRuntime.claimConnected(controllerId).lease; observerOnly = false
           baseProfile = resumedProfile
           connectionProfile = baseProfile
           connectionModel = connectionProfile.model.id
@@ -1722,10 +1727,7 @@ async function main() {
       }
       // Disconnect relinquishes the controller lease so a reconnecting local
       // client can claim control immediately; runtime state stays server-owned.
-      if (controllerLease) {
-        try { sessionRuntime.release(controllerId, controllerLease) } catch { /* expired or already transferred */ }
-        controllerLease = undefined
-      }
+      releaseControllerLease()
       removeRuntimePeer(sessionRuntime.session_id, ws)
       if (!keepForApprovalRecovery) {
 	    recoverableApprovals.cancel(sessionRuntime.session_id, userId)
