@@ -8,6 +8,7 @@ import { runProfileOnce } from '../src/server/run-profile.js'
 import { RunStore } from '../src/runs/store.js'
 import type { Skill } from '../src/tools/types.js'
 import { ReplayStore } from '../src/replay/store.js'
+import pkg from '../package.json' with { type: 'json' }
 
 const FAKE_SKILLS: Skill[] = [
   { name: 'web-search', description: 'Search the web', content: '', filePath: '' },
@@ -64,7 +65,7 @@ describe('REST /health and /run (no auth)', () => {
   it('GET /health returns 200 with profile name', async () => {
     const res = await fetch(`${base}/health`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ status: 'ok', profile: 'default' })
+    expect(await res.json()).toMatchObject({ status: 'ok', profile: 'default', version: pkg.version })
   })
 
   it('returns validated CORS headers and preflight for browser clients', async () => {

@@ -35,8 +35,9 @@ import { hashArguments, markCheckpoint, newJournal, recordEffect, recordEvent, t
 import { detectConflicts, MemoryConflictStore, resolveConflict } from '../memory/conflicts.js'
 import { resolveAclDecision } from '../tools/acl.js'
 import { assertMatchingScopes, normalizeUserScope, ScopeError } from './scope.js'
+import pkg from '../../package.json' with { type: 'json' }
 
-const VERSION = '0.1.0'
+const VERSION = pkg.version
 const MAX_BODY_BYTES = 1 * 1024 * 1024 // 1 MB
 
 export interface RestDeps {

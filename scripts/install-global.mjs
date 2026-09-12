@@ -18,5 +18,9 @@ mkdirSync(destination, { recursive: true })
 for (const name of ['harness', 'harness-server']) copyFileSync(join(root, 'bin', name), join(destination, name))
 const tui = join(destination, os === 'win32' ? 'harness-tui.exe' : 'harness-tui')
 copyFileSync(join(root, 'bin', `harness-tui-${tuiSuffix}`), tui)
-if (os === 'darwin') execFileSync('codesign', ['--force', '--sign', '-', tui], { stdio: 'inherit' })
+if (os === 'darwin') {
+  for (const name of ['harness-server', 'harness-tui']) {
+    execFileSync('codesign', ['--force', '--sign', '-', join(destination, name)], { stdio: 'inherit' })
+  }
+}
 console.log(`Installed Harness binaries to ${destination}`)

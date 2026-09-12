@@ -82,6 +82,11 @@ fi
 
 chmod +x "${INSTALL_DIR}/harness" "${INSTALL_DIR}/harness-server" "${INSTALL_DIR}/harness-tui"
 
+if [ "${OS}" = "Darwin" ]; then
+  codesign --force --sign - "${INSTALL_DIR}/harness-server"
+  codesign --force --sign - "${INSTALL_DIR}/harness-tui"
+fi
+
 if [ ! -f "${PROFILE_DIR}/coding.yaml" ]; then
   tar -xzf "${INSTALL_DIR}/harness-profiles.tar.gz" -C "${HARNESS_DIR}"
   echo "Installed default profiles to ${PROFILE_DIR}"
