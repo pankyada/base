@@ -71,6 +71,15 @@ func TestToolPromptMarksAwaitingApproval(t *testing.T) {
 	}
 }
 
+func TestResumedSessionRestoresItsWorkingDirectory(t *testing.T) {
+	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_ready", SessionID: "fresh", WorkingDir: "/new/launch"})
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_resumed", SessionID: "saved", WorkingDir: "/saved/project"})
+	if m.workingDir != "/saved/project" {
+		t.Fatalf("resumed working directory = %q", m.workingDir)
+	}
+}
+
 func TestApprovalResolutionClearsAwaitingApproval(t *testing.T) {
 	sender := &recordingSender{}
 	m := NewModel(sender, "devops", "tester", prefs.Preferences{})

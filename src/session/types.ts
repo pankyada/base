@@ -26,6 +26,8 @@ export interface Session {
   user: string
   profile: string
   project: string
+  /** Canonical project directory owned by this interactive session; legacy records may omit it. */
+  working_dir?: string
   title?: string
   summary?: string
   created_at: string

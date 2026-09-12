@@ -19,9 +19,9 @@ export interface CommandSummary {
 // Commands follow the exact four-level order used by skills. Mapping the
 // sibling directory keeps discovery precedence in one place: later, more
 // specific roots overwrite earlier names.
-export function resolveCommandDirs(): string[] {
+export function resolveCommandDirs(cwd = process.cwd()): string[] {
   const seen = new Set<string>()
-  return resolveSkillsDirs()
+  return resolveSkillsDirs(cwd)
     .map(dir => resolve(dir, '..', 'commands'))
     .filter(dir => {
       if (seen.has(dir)) return false

@@ -1,12 +1,34 @@
 import { describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { bashTool } from '../src/tools/builtin/bash.js'
+import { globTool } from '../src/tools/builtin/glob.js'
 import { runHooks } from '../src/hooks/runner.js'
 import { getMcpToolDefinitions } from '../src/mcp/client.js'
 
 describe('Core cancellation boundaries', () => {
+  it('runs Bash in the session working directory', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'core-bash-session-cwd-'))
+    try {
+      const result = await bashTool.execute({ command: 'pwd' }, { workingDir: cwd } as any)
+      expect(String(result).trim()).toBe(realpathSync(cwd))
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('defaults Glob to the session working directory', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'core-glob-session-cwd-'))
+    try {
+      writeFileSync(join(cwd, 'session-only.txt'), 'session')
+      const result = await globTool.execute({ pattern: '*.txt' }, { workingDir: cwd } as any)
+      expect(result).toBe('session-only.txt')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('kills Bash and reports cancellation without accepting a late shell result', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'core-bash-cancel-'))
     const marker = join(dir, 'late.txt')

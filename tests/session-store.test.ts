@@ -14,10 +14,12 @@ describe('session store', () => {
   it('saves and loads session by user + id', () => {
     const s = createSession('coding', 'pankaj')
     s.session_memory['foo'] = 'bar'
+    s.working_dir = '/tmp/session-project'
     saveSession(s)
     const loaded = loadSession('pankaj', s.id)
     expect(loaded).not.toBeNull()
     expect(loaded!.session_memory['foo']).toBe('bar')
+    expect(loaded!.working_dir).toBe('/tmp/session-project')
   })
 
   it('returns null for unknown id', () => {

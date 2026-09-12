@@ -2174,6 +2174,9 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if msg.Profile != "" {
 			m.profile = msg.Profile
 		}
+		if msg.WorkingDir != "" {
+			m.workingDir = msg.WorkingDir
+		}
 		if msg.SessionID != "" {
 			if err := m.send(protocol.RuntimeSubscribe(msg.SessionID)); err != nil {
 				m.reportSendFailure("runtime subscribe", err)

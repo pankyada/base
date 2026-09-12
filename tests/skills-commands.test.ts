@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { loadAllCommands, loadCommandsFromDir } from '../src/skills/commands.js'
+import { loadAllCommands, loadCommandsFromDir, resolveCommandDirs } from '../src/skills/commands.js'
 
 function command(root: string, filename: string, name: string, description: string, template: string) {
   writeFileSync(join(root, filename), `---\nname: ${name}\ndescription: ${description}\n---\n${template}`)
@@ -38,6 +38,16 @@ describe('custom command discovery', () => {
     } finally {
       rmSync(globalDir, { recursive: true, force: true })
       rmSync(localDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves command directories from the supplied session working directory', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'commands-session-cwd-'))
+    try {
+      const expected = join(cwd, '.agents', 'commands')
+      expect(resolveCommandDirs(cwd)).toContain(expected)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
     }
   })
 })

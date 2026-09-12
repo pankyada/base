@@ -78,8 +78,8 @@ export function listProposed(profile: Profile): SkillSummary[] {
   })
 }
 
-export function listInstalled(): SkillSummary[] {
-  return loadAllSkills(resolveSkillsDirs()).flatMap(skill => {
+export function listInstalled(cwd = process.cwd()): SkillSummary[] {
+  return loadAllSkills(resolveSkillsDirs(cwd)).flatMap(skill => {
     try {
       return [summary(skill.name, skill.description, skill.filePath, 'installed')]
     } catch {

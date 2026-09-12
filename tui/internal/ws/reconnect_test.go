@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,6 +83,42 @@ func TestClientReconnects(t *testing.T) {
 	_ = sendConn
 	if err := c.Send(protocol.Cancel()); err != nil {
 		t.Fatalf("Send after reconnect: %v", err)
+	}
+}
+
+func TestClientSendsCapturedWorkingDirOnEveryReconnect(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	var connCount int
+	hellos := make(chan map[string]any, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connCount++
+		_, raw, err := conn.ReadMessage()
+		if err == nil {
+			var hello map[string]any
+			if json.Unmarshal(raw, &hello) == nil {
+				hellos <- hello
+			}
+		}
+		_ = conn.Close()
+	}))
+	defer server.Close()
+	port := strings.TrimPrefix(server.URL[strings.LastIndex(server.URL, ":"):], ":")
+	c := NewAtWorkingDir(port, "tester", "coding", "/launch/project")
+	defer c.Close()
+	c.Start(func(tea.Msg) {})
+	for index := 0; index < 2; index++ {
+		select {
+		case hello := <-hellos:
+			if hello["working_dir"] != "/launch/project" {
+				t.Fatalf("hello %d working_dir = %v", index+1, hello["working_dir"])
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for hello %d", index+1)
+		}
 	}
 }
 

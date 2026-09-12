@@ -71,7 +71,7 @@ func TestReconnectRestoresSessionAndProfile(t *testing.T) {
 
 	// Server confirms the restore and, since PT-033, names the post-resume
 	// profile authoritatively.
-	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-1", Profile: "devops"}}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-1", Profile: "devops", WorkingDir: "/saved/project"}}))
 	if m.reconnectPending {
 		t.Fatal("reconnectPending should clear once the resume is acknowledged")
 	}
@@ -80,6 +80,9 @@ func TestReconnectRestoresSessionAndProfile(t *testing.T) {
 	}
 	if m.profile != "devops" {
 		t.Fatalf("expected profile taken from session_resumed (devops), got %q", m.profile)
+	}
+	if m.workingDir != "/saved/project" {
+		t.Fatalf("expected working directory from session_resumed, got %q", m.workingDir)
 	}
 	if !hasNoticeContaining(m, "reconnected") {
 		t.Fatal("expected a notice confirming the session was restored")

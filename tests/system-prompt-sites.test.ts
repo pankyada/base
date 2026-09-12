@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
   systemMessages: [] as string[],
+  projectDirs: [] as (string | undefined)[],
   loadProfile: vi.fn(),
   runAgentLoop: vi.fn(),
 }))
 
 vi.mock('../src/context/project-context.js', () => ({
-  loadProjectContext: () => '\nPROJECT-CONTEXT\n',
+  loadProjectContext: (options?: { cwd?: string }) => { state.projectDirs.push(options?.cwd); return '\nPROJECT-CONTEXT\n' },
 }))
 vi.mock('../src/loop/agent-loop.js', () => ({ runAgentLoop: state.runAgentLoop }))
 vi.mock('../src/mcp/client.js', () => ({
@@ -76,6 +77,7 @@ describe('project context in system prompts', () => {
     writeFileSync(promptPath, 'BASE-PROMPT')
     profile.system_prompt = promptPath
     state.systemMessages.length = 0
+    state.projectDirs.length = 0
     state.loadProfile.mockReset().mockReturnValue({ ...profile, name: 'sub' })
     state.runAgentLoop.mockReset().mockImplementation(async (_input, _profile, session: any) => {
       state.systemMessages.push(session.messages[0].content)
@@ -126,6 +128,12 @@ describe('project context in system prompts', () => {
     )
 
     expect(disabled).toBe('BASE-PROMPT')
+  })
+
+  it('passes the interactive session working directory to project-context discovery', async () => {
+    const memory = { buildSystemPromptSection: vi.fn().mockResolvedValue('') } as any
+    await buildInteractiveSystemPrompt(profile, false, '', memory, '/session/project')
+    expect(state.projectDirs.at(-1)).toBe('/session/project')
   })
 
   afterEach(() => rmSync(root, { recursive: true, force: true }))

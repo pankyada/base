@@ -47,12 +47,12 @@ function byteLength(value: string): number {
 }
 
 /** Load project instructions with visible source labels and a hard byte cap. */
-export function loadProjectContext(opts: { maxBytes?: number } = {}): string {
+export function loadProjectContext(opts: { maxBytes?: number; cwd?: string } = {}): string {
   const maxBytes = Math.max(0, opts.maxBytes ?? DEFAULT_MAX_BYTES)
   if (maxBytes === 0) return ''
 
   let assembled = ''
-  for (const file of resolveContextFiles()) {
+  for (const file of resolveContextFiles(opts.cwd ?? process.cwd())) {
     let body: string
     try {
       body = readFileSync(file, 'utf8')

@@ -42,6 +42,17 @@ describe('project context discovery', () => {
     expect(loadProjectContext()).toBe('')
   })
 
+  it('loads project instructions from an explicit session directory without changing process cwd', () => {
+    const sessionProject = mkdtempSync(join(tmpdir(), 'harness-session-context-'))
+    try {
+      writeFileSync(join(sessionProject, 'AGENTS.md'), 'session-specific instructions')
+      expect(loadProjectContext({ cwd: sessionProject })).toContain('session-specific instructions')
+      expect(process.cwd()).toBe(realpathSync(folder))
+    } finally {
+      rmSync(sessionProject, { recursive: true, force: true })
+    }
+  })
+
   it('uses the most-specific AGENTS and CLAUDE files at each precedence level', () => {
     const levels = [home, repo, subProject, folder]
     for (const [index, root] of levels.entries()) {

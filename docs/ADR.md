@@ -22,6 +22,7 @@ pointer to what replaced them.
 
 | ADR | Decision | Status | Area |
 |---|---|---|---|
+| [84](#adr-84) | Interactive session working directory is persisted workspace state | ✅ | sessions |
 | [79](#adr-79) | Explicit Codex OAuth transport alongside API-key defaults | 🔄 | providers |
 | [80](#adr-80) | Caller scope normalized before Core ownership checks | ✅ | server |
 | [81](#adr-81) | Runtime recovery retains state, never executable authority | 🔄 | runtime |
@@ -1151,3 +1152,29 @@ ADR-81's no-restored-executable-authority rule.
 the existing control frames. Durable deferred asks remain the PendingStore
 path. This does not promise exactly-once external effects, cross-session
 handoff, or recovery after process restart.
+
+### ADR-84
+
+**Interactive session working directory is persisted workspace state** — ✅
+
+*Context:* A health-reused harness server can outlive the TUI process that first
+started it. Binding every connection to the server's startup profile directory
+therefore makes a later TUI launched from another project execute in the old
+workspace. Mutating process-wide CWD is unsafe when one server hosts concurrent
+sessions.
+
+*Decision:* The TUI captures its launch directory once and sends it as an
+optional absolute `working_dir` on hello and reconnect. The server validates and
+canonicalizes an explicit directory, stores it in `Session.working_dir`, keeps it
+when creating a session after profile switch, and restores it on resume. Interactive
+tool contexts, project instructions, skill discovery/listing and command
+discovery use that session value; Bash and default Glob execute there. Hello
+without the field falls back to the selected profile's `working_dir`. Never call
+`process.chdir` to represent client workspace state. `session_ready` and
+`session_resumed` report the effective path.
+
+*Consequences:* One reused server can safely host TUI sessions from different
+directories without changing process-global state. The WS fields are additive;
+legacy clients continue using profile defaults, and old sessions without the
+persisted value use the resumed profile's default. Installed-binary/platform
+acceptance remains separate (PT-013).

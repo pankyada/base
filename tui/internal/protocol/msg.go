@@ -224,6 +224,7 @@ type helloMsg struct {
 	UserID          string `json:"user_id"`
 	ProtocolVersion int    `json:"protocol_version"`
 	Profile         string `json:"profile,omitempty"`
+	WorkingDir      string `json:"working_dir,omitempty"`
 }
 
 func (helloMsg) isClientMessage()            {}
@@ -261,6 +262,10 @@ func Hello(userID string, profile ...string) ClientMessage {
 		msg.Profile = profile[0]
 	}
 	return msg
+}
+
+func HelloWithWorkingDir(userID, profile, workingDir string) ClientMessage {
+	return helloMsg{Type: "hello", UserID: userID, ProtocolVersion: ProtocolVersion, Profile: profile, WorkingDir: workingDir}
 }
 
 type messageMsg struct {

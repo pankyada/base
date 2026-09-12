@@ -1,6 +1,6 @@
 # Primary product features
 
-Updated: 2026-09-07. Seven primary areas agreed from product direction; feature breakdown below is an initial scope proposal, not a claim of implementation or final UX approval.
+Updated: 2026-09-12. Seven primary areas agreed from product direction; feature breakdown below is an initial scope proposal, not a claim of implementation or final UX approval.
 
 Use [PRODUCT_STATE.md](PRODUCT_STATE.md) for current state, evidence and tasks; [ROADMAP.md](ROADMAP.md) for existing numbered commitments. Feature IDs below classify work without replacing roadmap IDs or `PT-NNN` task IDs. Preserve IDs when names change.
 
@@ -21,12 +21,12 @@ Purpose: one runtime and set of contracts every client can understand and depend
 | ID | Primary feature | Scope | Baseline |
 |---|---|---|---|
 | CORE-01 | Identity, credentials and trust | User/profile/project scope, provider authentication, credential lifecycle, origin policy, existing API-key protection and approval boundaries | Existing; client scope propagation partial. Product account login/RBAC is not an approved implementation scope |
-| CORE-02 | Server and connection lifecycle | Startup/discovery, health, configuration, multi-profile hosting, connect/reconnect, shutdown and recovery | Existing; acceptance gaps |
-| CORE-03 | Client protocols and APIs | Versioned WebSocket/REST/SSE contracts, capabilities, events, snapshots, acknowledgments, errors, cancellation and compatibility | Existing; client recovery gaps |
+| CORE-02 | Server and connection lifecycle | Startup/discovery, health, configuration, multi-profile hosting, connect/reconnect, shutdown and recovery | Per-session CWD now travels on hello and survives reconnect/resume (PT-047); other acceptance gaps remain |
+| CORE-03 | Client protocols and APIs | Versioned WebSocket/REST/SSE contracts, capabilities, events, snapshots, acknowledgments, errors, cancellation and compatibility | Additive optional working-directory WS fields are implemented and mirrored in generated Web/Studio types (PT-047); no protocol bump; other client recovery gaps remain |
 | CORE-04 | Providers, models and effort | Provider adapters, catalogs, availability, capability discovery, model switching, reasoning effort and billing attribution | Core effort backend implemented and fixture-validated (PT-026); client picker and live provider acceptance remain open (PT-016/PT-014) |
 | CORE-05 | Profiles and core prompts | Profile configuration, base/system prompts, persona/task overlays, model/tool policies, context construction and change visibility | Existing profile/prompt foundations; management UX not implied |
 | CORE-06 | Execution, tools and extensions | Agent loop, tool registry, MCP, skills, hooks, sandbox/executor integrations | Existing |
-| CORE-07 | Sessions, projects and memory | Durable history, project association, context projection, scoped memory, temporal beliefs and conflicts | Existing; client consistency gaps |
+| CORE-07 | Sessions, projects and memory | Durable history, project association, context projection, scoped memory, temporal beliefs and conflicts | Session working directory is validated/persisted/restored locally (PT-047); broader client consistency gaps remain |
 | CORE-08 | Safety and human control | ACLs, approval modes, provenance, budgets, deferred asks, rehearsal, cancellation, undo and audit | Existing; client operational handling partial |
 | CORE-09 | Multi-agent execution | Delegation, agent-as-tool, profiles, concurrent runs, handoffs and collaboration contracts for agents sharing or separating workspaces | Existing delegation foundation; new Orchestrator requirements proposed |
 | CORE-10 | Background work and channels | Schedules, watch/poll, webhooks, durable runs, inbound/outbound channels and voice interfaces | Existing; multi-profile/audio acceptance partial |
@@ -40,9 +40,9 @@ Authentication belongs here conceptually. Current repository instruction exclude
 | ID | Primary feature | Scope | Baseline |
 |---|---|---|---|
 | TUI-01 | Conversation and execution | Streaming transcript, reasoning/tool visibility, queueing, cancel, readable errors | Existing; delivery failures open |
-| TUI-02 | Coding workspace | File/context attachments, local shell, diffs, project/git/task context | Existing foundation |
+| TUI-02 | Coding workspace | File/context attachments, local shell, diffs, project/git/task context | Interactive execution and project context use the TUI launch CWD (PT-047); installed-binary acceptance PT-013 |
 | TUI-03 | Human decisions | Approvals, input requests, deferred inbox, plans, rehearsal and undo | Existing |
-| TUI-04 | Session and runtime controls | Sessions/projects, profiles, provider/model/effort selection, memory and skills | Existing; effort controls planned |
+| TUI-04 | Session and runtime controls | Sessions/projects, profiles, provider/model/effort selection, memory and skills | Session CWD survives profile switch and is restored on resume (PT-047); effort controls planned and installed acceptance PT-013 |
 | TUI-05 | Terminal interaction and health | Keyboard palette, focus/navigation, themes/density, cost/context, reconnect and setup handoff | Existing; recovery/platform acceptance partial |
 
 ## 3. Web Chat — coding and general agentic work

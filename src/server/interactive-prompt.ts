@@ -9,11 +9,13 @@ export function buildInteractiveSystemPrompt(
   audioCapable: boolean,
   skillIndex: string,
   memory: MemoryProvider,
+  workingDir = profile.working_dir,
 ): Promise<string> {
   return buildSystemPrompt({
     profile,
     systemPromptBase: readFileSync(systemPromptFor(profile, audioCapable), 'utf-8'),
     skillIndex,
     memory,
+    workingDir,
   })
 }

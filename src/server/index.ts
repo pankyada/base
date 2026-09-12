@@ -23,6 +23,7 @@ import { loadAgentTools } from '../agents/loader.js'
 import { buildAgentCatalog } from '../agents/catalog.js'
 import { runBoundedPool } from '../agents/pool.js'
 import { createSession, saveSession, loadSession } from '../session/store.js'
+import { resolveSessionWorkingDir } from '../session/working-dir.js'
 import { createProviderClient } from '../provider/client.js'
 import { createProvider } from '../provider/factory.js'
 import type { ProviderClient } from '../provider/types.js'
@@ -339,6 +340,7 @@ async function main() {
     let userId = sanitizeUserId(process.env.HARNESS_USER ?? userInfo().username)
     let challengeDesk = new ChallengeDesk(3, 1, join(userPaths(userId, '').missionsDir, 'challenges.json'))
     let session = createSession(profile.name, userId)
+    session.working_dir = resolveSessionWorkingDir(undefined, profile.working_dir)
     // Runtime owns lifecycle beyond this socket; disconnect cleanup is bounded.
     let sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
     addRuntimePeer(session.id, ws)
@@ -408,6 +410,13 @@ async function main() {
     let voiceOutput: VoiceOutput | null = null
     let baseProfile = profile
     let connectionProfile = profile
+    let workingDir = session.working_dir ?? profile.working_dir
+    let skills = loadAllSkills(resolveSkillsDirs(workingDir))
+    let skillIndex = buildSkillIndex(skills)
+    const refreshProjectDiscovery = (): void => {
+      skills = loadAllSkills(resolveSkillsDirs(workingDir))
+      skillIndex = buildSkillIndex(skills)
+    }
     let connectionChannels = channels
     let connectionOpenai = openai
     let connectionProvider: ProviderClient = provider
@@ -493,6 +502,7 @@ async function main() {
       voiceOutput?.cancel(); voiceOutput = null
       removeRuntimePeer(sessionRuntime.session_id, ws)
       session = createSession(connectionProfile.name, userId)
+      session.working_dir = workingDir
       sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
       addRuntimePeer(session.id, ws)
       controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false; activeMissionId = undefined; missionEvidence = []
@@ -586,7 +596,7 @@ async function main() {
         : { auth: 'api_key' as const, status: 'active' as const }
       send({
         type: 'session_ready', sessionId: session.id, profile: connectionProfile.name,
-        model: connectionProfile.model.id, working_dir: connectionProfile.working_dir,
+        model: connectionProfile.model.id, working_dir: session.working_dir ?? workingDir,
         effort: connectionEffort,
         allowed_packages: connectionProfile.executor?.allowed_packages ?? [],
         ...(budget ? { budget: { max_cost_usd: budget.max_cost_usd } } : {}),
@@ -631,7 +641,7 @@ async function main() {
       const context: ToolContext = {
         profile: connectionProfile,
         session,
-        workingDir: connectionProfile.working_dir,
+        workingDir,
         memory,
         skills,
         mcpEntries,
@@ -681,7 +691,7 @@ async function main() {
       if (previewSession.messages.length === 0) {
         previewSession.messages.push({
           role: 'system',
-          content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, previewMemory),
+          content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, previewMemory, workingDir),
         })
       }
       const planEvents: AgentLoopEvents = {
@@ -703,7 +713,7 @@ async function main() {
       try {
         const agentTools = await loadAgentTools(connectionProfile)
         const previewContext: ToolContext = {
-          profile: connectionProfile, session: previewSession, workingDir: connectionProfile.working_dir, memory: previewMemory, skills, mcpEntries,
+          profile: connectionProfile, session: previewSession, workingDir, memory: previewMemory, skills, mcpEntries,
           events: planEvents, openai: connectionOpenai, provider: connectionProvider, signal: abortController.signal, delegateDepth: 0, agentTools,
           maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode, channels: connectionChannels, runId,
           pendingInputs: pendingStore,
@@ -752,7 +762,7 @@ async function main() {
       }
     }
 
-    const sendSkills = () => send({ type: 'skills', proposed: listProposed(connectionProfile), installed: listInstalled() })
+    const sendSkills = () => send({ type: 'skills', proposed: listProposed(connectionProfile), installed: listInstalled(workingDir) })
     const sendPending = () => send({
       type: 'pending',
       pending: pendingStore.list({ user: userId, state: 'open' }).map(({ path: _path, ...record }) => record),
@@ -799,7 +809,7 @@ async function main() {
       const context: ToolContext = parentContext
         ? { ...parentContext, signal: abortController.signal, agentOrigin: 'operator', taintSources: session.taint_sources, agentControllers }
         : {
-            profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
+            profile: connectionProfile, session, workingDir, memory, skills, mcpEntries,
             events: fleetEvents(runId), openai: connectionOpenai, provider: connectionRawProvider, signal: abortController.signal, delegateDepth: 0,
             agentTools: connectionAgentTools, maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode,
             channels: connectionChannels, runId, pendingInputs: pendingStore, budget: operatorBudget,
@@ -891,6 +901,17 @@ async function main() {
         if (session.messages.length === 0) {
           if (msg.user_id !== undefined && (typeof msg.user_id !== 'string' || msg.user_id.length === 0 || msg.user_id.length > 256)) {
             send({ type: 'error', message: 'invalid user scope' }); return
+          }
+          const helloProfile = msg.profile ? profiles.get(msg.profile) : profile
+          try {
+            const nextWorkingDir = resolveSessionWorkingDir(msg.working_dir, helloProfile?.working_dir ?? connectionProfile.working_dir)
+            if (nextWorkingDir !== workingDir) {
+              workingDir = nextWorkingDir
+              session.working_dir = workingDir
+              refreshProjectDiscovery()
+            }
+          } catch {
+            send({ type: 'error', message: 'invalid working directory' }); return
           }
           if (msg.user_id !== undefined) userId = sanitizeUserId(msg.user_id)
           challengeDesk = new ChallengeDesk(3, 1, join(userPaths(userId, '').missionsDir, 'challenges.json'))
@@ -1255,7 +1276,7 @@ async function main() {
       if (msg.type === 'commands_list') {
         // Refresh on request so a command added under .agents/commands appears
         // without restarting the server.
-        send({ type: 'commands', commands: commandSummaries(loadAllCommands(resolveCommandDirs())) })
+        send({ type: 'commands', commands: commandSummaries(loadAllCommands(resolveCommandDirs(workingDir))) })
         return
       }
 
@@ -1460,11 +1481,15 @@ async function main() {
           flushConnectionUsage()
           removeRuntimePeer(sessionRuntime.session_id, ws)
           session = loaded
+          const resumedProfile = profiles.get(loaded.profile) ?? baseProfile
+          workingDir = loaded.working_dir ?? resolveSessionWorkingDir(undefined, resumedProfile.working_dir)
+          session.working_dir = workingDir
+          refreshProjectDiscovery()
           sessionRuntime = sessionRuntimes.getOrCreate(session.id, userId)
           detachedLiveRun = recoverableApprovals.has(session.id, userId)
           addRuntimePeer(session.id, ws)
           controllerId = randomUUID(); controllerLease = sessionRuntime.claim(controllerId).lease; observerOnly = false
-          baseProfile = profiles.get(loaded.profile) ?? baseProfile
+          baseProfile = resumedProfile
           connectionProfile = baseProfile
           connectionModel = connectionProfile.model.id
           connectionEffort = connectionProfile.model.reasoning_effort ?? (connectionProfile.model.auth === 'codex_oauth' ? connectionProfile.model.codex.reasoning_effort ?? null : null)
@@ -1484,7 +1509,7 @@ async function main() {
           // Resume can switch profiles (baseProfile above is re-resolved to the resumed
           // session's own profile), so report the post-resume profile, not whatever the
           // connection was on before this frame.
-          send({ type: 'session_resumed', sessionId: session.id, profile: connectionProfile.name })
+          send({ type: 'session_resumed', sessionId: session.id, profile: connectionProfile.name, working_dir: workingDir })
         } else {
           send({ type: 'error', message: `Session ${msg.sessionId} not found` })
         }
@@ -1545,7 +1570,7 @@ async function main() {
         if (session.messages.length === 0) {
           session.messages.push({
             role: 'system',
-            content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, memory),
+            content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, memory, workingDir),
           })
         }
 
@@ -1626,7 +1651,7 @@ async function main() {
         await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
         const context: ToolContext = {
-          profile: connectionProfile, session, workingDir: connectionProfile.working_dir, memory, skills, mcpEntries,
+          profile: connectionProfile, session, workingDir, memory, skills, mcpEntries,
           events, openai: connectionOpenai, provider: connectionRawProvider, signal: runSignal, delegateDepth: 0,
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,

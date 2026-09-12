@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -48,10 +49,11 @@ type TranscriptLoadedMsg struct {
 
 // Client owns a single reconnecting connection.
 type Client struct {
-	port    string
-	userID  string
-	profile string
-	send    func(tea.Msg) // program.Send, set via Start
+	port       string
+	userID     string
+	profile    string
+	workingDir string
+	send       func(tea.Msg) // program.Send, set via Start
 
 	mu   sync.Mutex
 	conn *websocket.Conn
@@ -65,7 +67,13 @@ func New(port, userID string, profile ...string) *Client {
 	if len(profile) > 0 {
 		selected = profile[0]
 	}
-	return &Client{port: port, userID: userID, profile: selected, stop: make(chan struct{}), done: make(chan struct{})}
+	workingDir, _ := os.Getwd()
+	return NewAtWorkingDir(port, userID, selected, workingDir)
+}
+
+// NewAtWorkingDir keeps the launch directory fixed across every reconnect.
+func NewAtWorkingDir(port, userID, profile, workingDir string) *Client {
+	return &Client{port: port, userID: userID, profile: profile, workingDir: workingDir, stop: make(chan struct{}), done: make(chan struct{})}
 }
 
 // Start begins the connect/read loop. send is program.Send.
@@ -90,7 +98,7 @@ func (c *Client) loop() {
 		}
 		c.mu.Lock()
 		c.conn = conn
-		_ = conn.WriteJSON(protocol.Hello(c.userID, c.profile))
+		_ = conn.WriteJSON(protocol.HelloWithWorkingDir(c.userID, c.profile, c.workingDir))
 		c.mu.Unlock()
 		if c.stopped() {
 			_ = conn.Close()

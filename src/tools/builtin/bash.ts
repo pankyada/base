@@ -25,6 +25,7 @@ export const bashTool: ToolDefinition = {
       let timedOut = false
       let forceKillTimer: NodeJS.Timeout | undefined
       const proc = spawn('bash', ['-c', command], {
+        cwd: context.workingDir,
         env: sanitizeEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',

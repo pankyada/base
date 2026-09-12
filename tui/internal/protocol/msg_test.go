@@ -66,6 +66,16 @@ func TestEncodeClientHelloIncludesProfileOverride(t *testing.T) {
 	}
 }
 
+func TestHelloWithWorkingDirIsAdditive(t *testing.T) {
+	b, err := json.Marshal(HelloWithWorkingDir("alice", "coding", "/work/project"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"type":"hello","user_id":"alice","protocol_version":2,"profile":"coding","working_dir":"/work/project"}` {
+		t.Fatalf("hello with working directory = %s", b)
+	}
+}
+
 func TestEncodeMessage(t *testing.T) {
 	b, _ := json.Marshal(Message("do it"))
 	if string(b) != `{"type":"message","content":"do it"}` {

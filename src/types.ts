@@ -260,7 +260,7 @@ export interface ChallengeWire {
 }
 
 export type ClientMessage =
-  | { type: 'hello'; user_id?: string; protocol_version?: number; profile?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean /** Ignored: approval mode is server-authoritative. */ }
+  | { type: 'hello'; user_id?: string; protocol_version?: number; profile?: string; working_dir?: string; wasm_supported?: boolean; audio_supported?: boolean; yolo?: boolean /** Ignored: approval mode is server-authoritative. */ }
   | { type: 'set_profile'; profile: string }
   | { type: 'audio_start'; codec: 'opus' | 'pcm16'; sample_rate: number }
   | { type: 'audio_end' }
@@ -320,7 +320,7 @@ export type ServerMessage =
   // `profile` is required: the server always resolves a concrete post-resume profile
   // (the resumed session's own profile, falling back to the connection's profile) before
   // this message is ever sent, so there is no emitter that genuinely cannot know it.
-  | { type: 'session_resumed'; agent_id?: string; sessionId: string; profile: string }
+  | { type: 'session_resumed'; agent_id?: string; sessionId: string; profile: string; working_dir?: string }
   | { type: 'stats'; tokens_in: number; tokens_out: number; cost_usd: number; context_window?: number; context_tokens?: number; usage?: UsageMetadataWire; agent_id?: string; run_id?: string }
   | { type: 'error'; message: string; request_id?: string; agent_id?: string; run_id?: string }
   | { type: 'artifacts'; sessionId: string; artifacts: ArtifactWidget[]; agent_id?: string; run_id?: string }
