@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Profile-driven agent runtime with guarded tools, durable runs, multi-profile orchestration, and terminal or web control surfaces.",
@@ -54,7 +54,7 @@
     "typecheck": "tsc --noEmit",
     "dev:web": "pnpm --filter harness-web dev",
     "release": "node scripts/release.mjs",
-    "install:global": "mkdir -p ~/.local/bin && cp bin/harness bin/harness-server bin/harness-tui ~/.local/bin/ && echo 'Installed to ~/.local/bin — ensure ~/.local/bin is in your PATH'"
+    "install:global": "node scripts/install-global.mjs"
   },
   "author": "Pankaj Kumar Yadav",
   "license": "MIT",
