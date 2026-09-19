@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
-import { homedir } from 'os'
 import { join } from 'path'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { atomicWriteJson } from '../shared/atomic-json.js'
+import { harnessStatePath } from '../config/state-paths.js'
 
 export type PendingState = 'open' | 'answered' | 'expired' | 'cancelled'
 export type PendingAnsweredVia = 'channel' | 'rest' | 'ws' | 'cli'
@@ -38,7 +38,7 @@ export type PendingInputCreate = Omit<PendingInput, 'state' | 'answered_at' | 'a
 export type PendingRecord = PendingInput & { path: string }
 
 function defaultRoot(): string {
-  return join(homedir(), '.harness', 'pending')
+  return harnessStatePath('pending')
 }
 
 function copyWithoutPath(record: PendingRecord): PendingInput {

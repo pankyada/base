@@ -1,12 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { homedir, userInfo } from 'os'
+import { userInfo } from 'os'
 import { sanitizeUserId } from '../session/user-paths.js'
+import { harnessStatePath } from '../config/state-paths.js'
 import type { AuditEntry } from './journal.js'
 import { createHash } from 'crypto'
 
 export function listAudit(user = process.env.HARNESS_USER ?? userInfo().username, tool?: string, since?: Date): AuditEntry[] {
-  const dir = join(homedir(), '.harness', 'audit', sanitizeUserId(user))
+  const dir = harnessStatePath('audit', sanitizeUserId(user))
   if (!existsSync(dir)) return []
   return readdirSync(dir).filter(file => file.endsWith('.jsonl')).flatMap(file => readFileSync(join(dir, file), 'utf-8').trim().split('\n').filter(Boolean).flatMap(line => {
     try {

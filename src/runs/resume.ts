@@ -6,6 +6,7 @@ import { runProfileOnce } from '../server/run-profile.js'
 import type { RunStore } from './store.js'
 import type { PendingInput, PendingStore, PendingAnsweredVia } from './pending.js'
 import { isParkSignal } from './park.js'
+import type { RunProfileOptions } from '../server/run-profile.js'
 
 export interface ResumePendingOptions {
   pendingStore: PendingStore
@@ -17,6 +18,8 @@ export interface ResumePendingOptions {
   protocolVersion?: number
   /** Called only after the durable pending record accepts the answer. */
   onAccepted?: (pending: PendingInput) => void
+  /** Rebuild context-bound runtime capabilities for a legitimate continuation. */
+  runProfileOptions?: (pending: PendingInput, profile: Profile) => Partial<Pick<RunProfileOptions, 'runtimeTools' | 'runtimeToolAllowlist' | 'denyMutatingTools' | 'systemPromptAppend'>>
 }
 
 export type ResumePendingResult =
@@ -109,6 +112,7 @@ async function continuePendingRun(
         : undefined,
       appendUser: false,
       protocolVersion: opts.protocolVersion,
+      ...opts.runProfileOptions?.(pending, profile),
     })
     saveSession(result.session)
     const current = opts.runStore.get(run.id)

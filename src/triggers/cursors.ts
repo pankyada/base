@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import { sanitizeUserId } from '../session/user-paths.js'
+import { harnessStatePath } from '../config/state-paths.js'
 
 export interface CursorRecord { value?: string; updated_at: string; consecutive_errors: number }
 
 function safePart(value: string): string { return value.replace(/[^A-Za-z0-9._-]/g, '_') }
 
 function pathFor(user: string, profile: string, name: string): string {
-  return join(homedir(), '.harness', 'cursors', sanitizeUserId(user), `${safePart(profile)}__${safePart(name)}.json`)
+  return harnessStatePath('cursors', sanitizeUserId(user), `${safePart(profile)}__${safePart(name)}.json`)
 }
 
 export class CursorStore {

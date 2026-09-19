@@ -140,6 +140,11 @@ async function executeStage(request: string, stage: Stage, intensity: Intensity,
   const seed = buildStageContext(request, prior, contract, stage === 'recon' ? graphSlice : '')
   const stageId = newStageId()
   const staged = childSession(root, stageId, seed)
+  if (context.stageSystemPromptAppend) {
+    const messages = staged.messages as Array<{ role: string; content?: string }>
+    const stageSystem = messages.find(message => message.role === 'system')
+    if (stageSystem) stageSystem.content = `${stageSystem.content ?? ''}\n\n${context.stageSystemPromptAppend}`
+  }
   const stageBudget = context.budget
     ? context.budget.allocate(context.budget.remainingCost())
     : undefined

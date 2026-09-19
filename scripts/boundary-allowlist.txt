@@ -10,6 +10,7 @@ src/server/run-profile.ts|assistant
 src/tools/builtin/delegate.ts|assistant
 src/workflow/runner.ts|assistant
 src/session/store.ts|assistant
+src/town/runtime.ts|assistant
 src/provider/types.ts|assistant
 src/provider/codex/request.ts|assistant
 # Generic audio transport/extension interfaces (ADR-55); vendor SDKs remain

@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { homedir } from 'os'
+import { harnessStatePath } from '../config/state-paths.js'
 
 export function sanitizeUserId(raw: string): string {
   const slug = raw
@@ -21,12 +21,12 @@ export interface UserPaths {
 export function userPaths(user: string, artifactDir: string): UserPaths {
   const safe = sanitizeUserId(user)
   return {
-    sessionsDir: join(homedir(), '.harness', 'sessions', safe),
+    sessionsDir: harnessStatePath('sessions', safe),
     privateMemDir: join(artifactDir, 'users', safe, 'memory'),
-    usageFile: join(homedir(), '.harness', 'usage', `${safe}.json`),
-    missionsDir: join(homedir(), '.harness', 'missions', safe),
-    evaluationsDir: join(homedir(), '.harness', 'evaluations', safe),
-    artifactsDir: join(homedir(), '.harness', 'artifacts', safe),
+    usageFile: harnessStatePath('usage', `${safe}.json`),
+    missionsDir: harnessStatePath('missions', safe),
+    evaluationsDir: harnessStatePath('evaluations', safe),
+    artifactsDir: harnessStatePath('artifacts', safe),
   }
 }
 
@@ -46,7 +46,7 @@ export function sanitizeProjectId(raw: string): string {
 export function projectPaths(user: string, projectId: string): ProjectPaths {
   const safe = sanitizeUserId(user)
   const safeProject = sanitizeProjectId(projectId)
-  const base = join(homedir(), '.harness', 'projects', safe)
+  const base = harnessStatePath('projects', safe)
   return {
     recordFile: join(base, `${safeProject}.json`),
     memoryDir: join(base, safeProject, 'memory'),

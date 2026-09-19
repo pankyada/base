@@ -53,6 +53,8 @@ import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type EffortCapability, 
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
+import { createTownRuntime } from '../town/runtime.js'
+import { createCodexTownQuotaProvider } from '../town/quota-codex.js'
 import { isParkSignal } from '../runs/park.js'
 import { resumeExpiredInput, resumePendingInput } from '../runs/resume.js'
 import { loadVoiceProviders } from '../voice/loader.js'
@@ -288,8 +290,10 @@ async function main() {
   for (const scheduler of schedulers) scheduler.init()
   for (const owner of profiles.values()) if (owner.triggers?.cron) console.log(`[cron] registered schedule '${owner.triggers.cron}' for profile '${owner.name}'`)
 
-  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore, originPolicy, artifactGenerator: createArtifactGenerator(skills) })
+  const townRuntime = createTownRuntime({ profiles, runStore, pendingStore, abortRegistry, channelsForProfile: item => channelsByProfile.get(item.name) })
+  const restHandler = createRestHandler({ defaultProfile: profile, profiles, apiKey, runStore, abortRegistry, skills, channels, channelsForProfile: item => channelsByProfile.get(item.name), pendingStore, originPolicy, artifactGenerator: createArtifactGenerator(skills), town: { runtime: townRuntime, quotaProvider: createCodexTownQuotaProvider(), rootPolicy: process.env.HARNESS_TOWN_ROOT_POLICY } })
   const httpServer = createServer((req, res) => { void restHandler(req, res) })
+  httpServer.on('close', () => { void restHandler.close() })
   const wss = new WebSocketServer({
     server: httpServer,
     verifyClient: (info, cb) => {
@@ -1767,6 +1771,7 @@ async function main() {
     clearInterval(runtimeCleanupTimer)
     console.log('\nShutting down...')
     await Promise.all(schedulers.map(scheduler => scheduler.stop()))
+    await restHandler.close()
     for (const ws of openSockets) ws.terminate()  // triggers 'close' event → destroyMcpClients fires
     wss.close()
     httpServer.close()

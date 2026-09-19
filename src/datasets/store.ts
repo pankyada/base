@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { join, extname } from 'path'
-import { homedir } from 'os'
 import { sanitizeUserId } from '../session/user-paths.js'
+import { harnessStatePath } from '../config/state-paths.js'
 import type { DatasetPreview, DatasetRecord, DatasetSchema } from './types.js'
 
 const EXTENSIONS = new Set(['.csv', '.tsv', '.json', '.ndjson', '.parquet'])
@@ -60,7 +60,7 @@ function infer(rows: DatasetPreview): DatasetSchema {
 export class DatasetStore {
   readonly maxBytes: number
 
-  constructor(private readonly root = join(homedir(), '.harness', 'datasets'), maxBytes = Number(process.env.HARNESS_DATASET_MAX_BYTES ?? DEFAULT_MAX_BYTES)) {
+  constructor(private readonly root = harnessStatePath('datasets'), maxBytes = Number(process.env.HARNESS_DATASET_MAX_BYTES ?? DEFAULT_MAX_BYTES)) {
     this.maxBytes = Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : DEFAULT_MAX_BYTES
   }
 

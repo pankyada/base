@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
-import { homedir } from 'os'
+import { harnessStatePath } from '../config/state-paths.js'
 import type { ChannelBinding } from './types.js'
 
 export function bindingKey(transport: string, identity: string): string {
@@ -12,7 +12,7 @@ export class BindingStore {
   private pairingNotices = new Set<string>()
   private readonly noticesPath: string
 
-  constructor(private readonly filePath = join(homedir(), '.harness', 'channel-bindings.json')) {
+  constructor(private readonly filePath = harnessStatePath('channel-bindings.json')) {
     this.noticesPath = `${filePath}.pairing-notices`
     this.load()
   }

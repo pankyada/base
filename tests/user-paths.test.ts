@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { sanitizeUserId, userPaths } from '../src/session/user-paths.js'
-import { homedir } from 'os'
 import { join } from 'path'
+import { harnessStatePath } from '../src/config/state-paths.js'
 
 describe('sanitizeUserId', () => {
   it('lowercases input', () => {
@@ -34,7 +34,7 @@ describe('sanitizeUserId', () => {
 describe('userPaths', () => {
   it('returns correct sessionsDir', () => {
     const paths = userPaths('pankaj', '/tmp/artifacts')
-    expect(paths.sessionsDir).toBe(join(homedir(), '.harness', 'sessions', 'pankaj'))
+    expect(paths.sessionsDir).toBe(harnessStatePath('sessions', 'pankaj'))
   })
 
   it('returns correct privateMemDir', () => {
@@ -44,7 +44,7 @@ describe('userPaths', () => {
 
   it('returns correct usageFile', () => {
     const paths = userPaths('pankaj', '/tmp/artifacts')
-    expect(paths.usageFile).toBe(join(homedir(), '.harness', 'usage', 'pankaj.json'))
+    expect(paths.usageFile).toBe(harnessStatePath('usage', 'pankaj.json'))
   })
 
   it('sanitizes user id inside userPaths', () => {

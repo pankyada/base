@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeRunEvent, runStatusLabel, runBoardEmptyLabel, runsUrl } from '../components/ops/RunBoard'
+import { mergeRunEvent, runStatusLabel, runBoardEmptyLabel, runStatusGroup, runInputTitle, runsUrl } from '../components/ops/RunBoard'
 
 describe('run board', () => {
   it('keeps concurrent lanes and distinguishes waiting input', () => {
@@ -30,5 +30,22 @@ describe('run board', () => {
     const rows = mergeRunEvent([], { type: 'session_end', run_id: 'budget-run', status: 'budget_exceeded', reason: 'cost' })
     expect(rows[0].status).toBe('budget_exceeded')
     expect(runStatusLabel(rows[0].status)).toContain('budget')
+    expect(runStatusGroup(rows[0].status)).toBe('finished')
+  })
+
+  it('separates waiting, active, and terminal run states into dispatch lanes', () => {
+    expect(runStatusGroup('waiting_input')).toBe('waiting')
+    expect(runStatusGroup('running')).toBe('running')
+    expect(runStatusGroup('pending')).toBe('running')
+    expect(runStatusGroup('completed')).toBe('finished')
+    expect(runStatusGroup('failed')).toBe('finished')
+    expect(runStatusGroup('cancelled')).toBe('finished')
+  })
+
+  it('uses the run input as a bounded title only when the API supplied it', () => {
+    expect(runInputTitle('  investigate the broken deploy  ')).toBe('investigate the broken deploy')
+    expect(runInputTitle(undefined)).toBeUndefined()
+    expect(runInputTitle({ task: 'ship patch' })).toBe('{"task":"ship patch"}')
+    expect(runInputTitle('x'.repeat(220))).toHaveLength(180)
   })
 })

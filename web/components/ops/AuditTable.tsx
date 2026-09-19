@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { buildScopedUrl, type RequestScope } from '../../lib/scopedRequest'
 import { fetchScopedRemote, type RemoteData } from '../../lib/remoteData'
 import { Unavailable } from '../chrome/Unavailable'
@@ -29,9 +29,13 @@ export function AuditTable({ baseUrl, scope = {}, entries: initialEntries = [] }
       setEntries(result.status === 'ready' ? (result.data.entries ?? []) : [])
     })
   }, [baseUrl, scope.userId, scope.profile, tainted, tool, attempt])
-  return <section className="audit-table"><h2>Audit</h2><div><label>tool <input value={tool} onChange={event => setTool(event.target.value)} /></label><label><input type="checkbox" checked={tainted} onChange={event => setTainted(event.target.checked)} /> tainted only</label></div>
+  return <section className="audit-table"><h2>Audit</h2><div><label>Tool filter <input value={tool} onChange={event => setTool(event.target.value)} /></label><label><input type="checkbox" checked={tainted} onChange={event => setTainted(event.target.checked)} /> Tainted only</label></div>
     {remote.status === 'loading' ? <p role="status">Loading audit…</p> : null}
     {remote.status === 'failed' ? <Unavailable reason={remote.reason} onRetry={() => setAttempt(a => a + 1)} /> : null}
-    {remote.status !== 'loading' && remote.status !== 'failed' ? (entries.length === 0 ? <p>No audit entries.</p> : <div style={{ maxHeight: 420, overflowY: 'auto' }}><table><thead><tr><th>time</th><th>tool</th><th>effect</th><th>decision</th><th>tainted</th><th>ok</th></tr></thead><tbody>{entries.slice(0, 1000).map((entry, index) => { const id = entry.id ?? String(index); return <tr key={id} onClick={() => setExpanded(expanded === id ? undefined : id)}><td>{entry.ts}</td><td>{entry.tool}</td><td>{entry.effect}</td><td>{entry.decision}</td><td>{entry.tainted ? 'yes' : 'no'}</td><td>{entry.ok === false ? 'no' : 'yes'}</td>{expanded === id ? <td colSpan={6}><div>digest: {entry.input_digest ?? 'none'} · undo: {entry.undo ? 'available' : 'none'}{entry.decided_reason ? ` · ${entry.decided_reason}` : ''}</div></td> : null}</tr> })}</tbody></table></div>) : null}
+    {remote.status !== 'loading' && remote.status !== 'failed' ? (entries.length === 0 ? <p>No audit entries.</p> : <div className="ops-audit-scroll"><table><thead><tr><th>Inspect</th><th>Time</th><th>Tool</th><th>Effect</th><th>Decision</th><th>Tainted</th><th>OK</th></tr></thead><tbody>{entries.slice(0, 1000).map((entry, index) => { const id = entry.id ?? String(index); const isExpanded = expanded === id; return <Fragment key={id}>
+      <tr><td><button className="ops-audit-expand" type="button" aria-expanded={isExpanded} aria-controls={`audit-detail-${index}`} onClick={() => setExpanded(isExpanded ? undefined : id)}>{isExpanded ? 'Hide' : 'Inspect'}</button></td>
+        <td>{entry.ts}</td><td>{entry.tool}</td><td>{entry.effect}</td><td>{entry.decision}</td><td>{entry.tainted ? 'yes' : 'no'}</td><td>{entry.ok === false ? 'no' : 'yes'}</td></tr>
+      {isExpanded ? <tr className="ops-audit-detail" id={`audit-detail-${index}`}><td colSpan={7}><strong>Evidence</strong><div>Digest: {entry.input_digest ?? 'none'} · Undo: {entry.undo ? 'available' : 'none'}{entry.decided_reason ? ` · ${entry.decided_reason}` : ''}</div></td></tr> : null}
+    </Fragment> })}</tbody></table></div>) : null}
   </section>
 }

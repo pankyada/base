@@ -1,3 +1,5 @@
+import React from 'react'
+
 export function toolP95(values: number[]): number { if (!values.length) return 0; const sorted = [...values].sort((a, b) => a - b); return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] }
 export function stageFunnel(events: { stage: string; state: string }[]): { stage: string; runs: number; escalations: number }[] { return [...new Set(events.map(event => event.stage))].map(stage => ({ stage, runs: events.filter(event => event.stage === stage).length, escalations: events.filter(event => event.stage === stage && event.state === 'escalated').length })) }
 export function budgetState(budget: { cost: number; limit?: number }): 'running' | 'budget-exceeded' { return budget.limit != null && budget.cost >= budget.limit ? 'budget-exceeded' : 'running' }
@@ -5,4 +7,33 @@ export function budgetLabel(budget?: { cost: number; limit?: number }): string |
 export function observabilityLabel(report: Record<string, unknown>): string { return Object.keys(report).length ? JSON.stringify(report, null, 2) : 'No telemetry yet' }
 type MetricReport = { metrics?: { window?: { events?: number }; tools?: Array<{ name: string; calls: number; ok_rate: number | null; p95_ms: number | null; cost_usd: number }>; models?: Array<{ id: string; calls: number; cost_usd: number }>; stages?: Array<{ stage: string; runs: number; escalations: number; verify_first_try: number | null; cost_usd: number }> }; usage?: { cost_usd?: number } }
 // /metrics and /stats/routing are intentionally aggregate reads (see src/server/read-api.ts — no `user` scoping, /metrics filters by profile only, /stats/routing filters by nothing). Label them so an operator does not mistake server-wide numbers for their own.
-export function Observability({ report = {}, budget }: { report?: Record<string, unknown>; budget?: { cost: number; limit?: number } }) { const metric = report as MetricReport; const metrics = metric.metrics; const hasMetrics = Boolean(metrics && (metrics.tools?.length || metrics.models?.length || metrics.stages?.length || metrics.window?.events)); return <section className="observability"><h2>Observability</h2><p className="muted" data-testid="observability-scope-note">Metrics and routing stats are aggregate across all users (server-wide, not scoped to your identity).</p>{budgetLabel(budget) ? <strong data-testid="budget-state">{budgetLabel(budget)}</strong> : null}{hasMetrics ? <><div className="metric-tiles" aria-label="Telemetry summary"><div><small>Events</small><strong>{metrics?.window?.events ?? 0}</strong></div><div><small>Cost</small><strong>${(metric.usage?.cost_usd ?? metrics?.tools?.reduce((sum, item) => sum + item.cost_usd, 0) ?? 0).toFixed(4)}</strong></div><div><small>Tools</small><strong>{metrics?.tools?.reduce((sum, item) => sum + item.calls, 0) ?? 0}</strong></div><div><small>Models</small><strong>{metrics?.models?.length ?? 0}</strong></div></div><h3>Tool outcomes</h3><table><thead><tr><th>Tool</th><th>Calls</th><th>Success</th><th>P95</th></tr></thead><tbody>{metrics?.tools?.map(item => <tr key={item.name}><td>{item.name}</td><td>{item.calls}</td><td>{item.ok_rate == null ? '—' : `${Math.round(item.ok_rate * 100)}%`}</td><td>{item.p95_ms == null ? '—' : `${item.p95_ms} ms`}</td></tr>)}</tbody></table><h3>Stages</h3><table><thead><tr><th>Stage</th><th>Runs</th><th>Escalations</th><th>First try</th></tr></thead><tbody>{metrics?.stages?.map(item => <tr key={item.stage}><td>{item.stage}</td><td>{item.runs}</td><td>{item.escalations}</td><td>{item.verify_first_try == null ? '—' : `${Math.round(item.verify_first_try * 100)}%`}</td></tr>)}</tbody></table></> : <p role="status">No telemetry yet</p>}<details><summary>Raw telemetry</summary><pre>{observabilityLabel(report)}</pre></details></section> }
+export type TelemetryReadState = 'loading' | 'ready' | 'empty' | 'stale' | 'unavailable'
+export function Observability({ report = {}, budget, state = 'empty' }: { report?: Record<string, unknown>; budget?: { cost: number; limit?: number }; state?: TelemetryReadState }) {
+  const metric = report as MetricReport
+  const metrics = metric.metrics
+  const hasMetrics = Boolean(metrics && (metrics.tools?.length || metrics.models?.length || metrics.stages?.length || metrics.window?.events != null))
+  const toolCalls = metrics?.tools ? metrics.tools.reduce((sum, item) => sum + item.calls, 0) : undefined
+  const cost = metric.usage?.cost_usd ?? (metrics?.tools ? metrics.tools.reduce((sum, item) => sum + item.cost_usd, 0) : undefined)
+  const rawLabel = state === 'unavailable' ? 'Telemetry unavailable'
+    : state === 'loading' ? 'Telemetry loading'
+      : state === 'stale' && !Object.keys(report).length ? 'No prior telemetry snapshot is available'
+        : observabilityLabel(report)
+  return <section className="observability">
+    <h2>Observability</h2>
+    <p className="muted" data-testid="observability-scope-note">Metrics and routing stats are aggregate across all users (server-wide, not scoped to your identity).</p>
+    {budgetLabel(budget) ? <strong data-testid="budget-state">{budgetLabel(budget)}</strong> : null}
+    {hasMetrics ? <>
+      <div className="metric-tiles" aria-label="Telemetry summary">
+        <div><small>Events</small><strong>{metrics?.window?.events ?? '—'}</strong></div>
+        <div><small>Cost</small><strong>{cost == null ? '—' : `$${cost.toFixed(4)}`}</strong></div>
+        <div><small>Tools</small><strong>{toolCalls ?? '—'}</strong></div>
+        <div><small>Models</small><strong>{metrics?.models ? metrics.models.length : '—'}</strong></div>
+      </div>
+      <h3>Tool outcomes</h3>
+      <table><thead><tr><th>Tool</th><th>Calls</th><th>Success</th><th>P95</th></tr></thead><tbody>{metrics?.tools?.map(item => <tr key={item.name}><td>{item.name}</td><td>{item.calls}</td><td>{item.ok_rate == null ? '—' : `${Math.round(item.ok_rate * 100)}%`}</td><td>{item.p95_ms == null ? '—' : `${item.p95_ms} ms`}</td></tr>)}</tbody></table>
+      <h3>Stages</h3>
+      <table><thead><tr><th>Stage</th><th>Runs</th><th>Escalations</th><th>First try</th></tr></thead><tbody>{metrics?.stages?.map(item => <tr key={item.stage}><td>{item.stage}</td><td>{item.runs}</td><td>{item.escalations}</td><td>{item.verify_first_try == null ? '—' : `${Math.round(item.verify_first_try * 100)}%`}</td></tr>)}</tbody></table>
+    </> : state === 'empty' ? <p role="status">No telemetry yet</p> : null}
+    <details><summary>Raw telemetry</summary><pre>{rawLabel}</pre></details>
+  </section>
+}

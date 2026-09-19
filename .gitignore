@@ -2,6 +2,8 @@ node_modules/
 dist/
 .env
 web/.next/
+web/.next-town/
+web/.next-town-build*/
 web/out/
 web/.env.local
 .superpowers/
@@ -17,6 +19,8 @@ tui/harness-tui
 graphify-out/
 .playwright-mcp/
 web/test-results/
+output/
+web/.playwright-cli/
 .harness/
 .agents/skills/graphify/
 .claude/skills/graphify

@@ -89,9 +89,9 @@ Ops supervises runtime health and policy across work. It is not automatically a 
 
 ## 7. Multi Agent Orchestrator — collaborative agent workspace
 
-**New product area, not started as the requested experience.** Existing Core delegation, live sessions, project records, missions and Studio features are candidates for reuse; they do not establish that this product already exists.
+**Implemented v1 with partial acceptance.** Existing Core delegation, live sessions, project records, missions and Studio features were reused where their contracts fit; PT-052 adds the separate durable Town experience and does not make the broader operational and user-acceptance work complete.
 
-User direction: multiple Base harness agents working on different tasks, in the same or different projects, interacting with each other; direct user interaction with individual agents; optional orchestrator agent; game-like visual representation, potentially SimCity-inspired. Detailed concept will be brainstormed separately under PT-020.
+User direction: multiple Base harness agents working on different tasks, in the same or different projects, interacting with each other; direct user interaction with individual agents; optional orchestrator agent; game-like visual representation. [PT-020 discovery](superpowers/specs/2026-09-13-orchestrator-town-discovery.md) captured the Age-of-Empires-like town direction. [PT-052](PRODUCT_STATE.md#tasks-and-open-gaps) implements its approved navigable 3D medieval Town, durable boards, real-runtime orchestration and provider-capacity gate. PT-055 completes local scenery, placement and night-lighting refinements (E-029); PT-056 keeps inactive repositories in outer districts and the default view centered on current work (E-030); PT-057 completes full-canvas controls, active-office identity and the detailed central Town Temple locally (E-031); PT-058 connects the actual localhost page to an isolated Town-capable runtime and verifies its real repository survey (E-032). PT-059 tracks the run-metadata incident from setup. PT-053 retains landscape acceptance and Hall-road connectivity diagnosis; PT-054 retains headless queue wake and account-specific model-catalog work. Roof-off interiors remain optional.
 
 | ID | Primary feature | Proposed capability |
 |---|---|---|
@@ -106,15 +106,15 @@ User direction: multiple Base harness agents working on different tasks, in the 
 
 ### Brainstorm questions — not decisions
 
-- World metaphor: city, workshop, campus, game board, or something else? 2D/isometric/3D remains open.
+- Navigable 3D medieval town and camera direction confirmed. PT-057's full-canvas controls, active-office appearance and detailed temple rendering pass local desktop/mobile browser acceptance (E-031). Roof-off interiors remain optional.
 - Meaning of an agent: persistent teammate, profile instance, or task-bound worker? How long does memory/identity live?
 - Same-project work: isolated worktrees by default, coordinated shared checkout, or user choice? Who resolves conflicts?
 - Collaboration: direct messages, task handoffs, shared rooms, orchestrator routing, or combinations? How are messages/context bounded?
-- Control: which actions can the orchestrator take automatically; which need user approval? How does user steering interrupt or override it?
+- Control: assignment/start given sufficient provider remaining subscription/API quota confirmed. Provider remaining subscription/API quota is the confirmed gate; measurement/reservation/limits, unknown handling and user steering/override behavior need definition.
 - Truthful animation: which runtime events justify each visual state? How are disconnected/unknown states represented without pretending progress?
 - Product placement: extend Studio, add a route, or another client? No choice made yet; first inventory reusable code and validate the desired journey.
 
-No visual metaphor, major layout, route, new dependency, multi-host topology, or implementation plan approved by this taxonomy. Confirm major UX decisions before building.
+Navigable 3D medieval visual/camera direction, conditional assignment/start authority and the PT-057 full-canvas/landmark refinement are implemented and locally browser-accepted. User landscape acceptance, headless recovery wake and account-specific model-catalog reconciliation remain explicitly open.
 
 ## Cross-area task examples
 

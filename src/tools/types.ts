@@ -72,6 +72,13 @@ export interface ToolContext {
   signal?: AbortSignal
   delegateDepth: number
   agentTools?: ToolDefinition[]
+  /** Per-run tools; unlike the process registry these may safely close over one Town run. */
+  runtimeTools?: ToolDefinition[]
+  /** Hard runtime deny layer. These checks run after profile and approval-mode ACLs. */
+  runtimeToolAllowlist?: readonly string[]
+  denyMutatingTools?: boolean
+  /** Narrow trusted runtime context copied into isolated workflow-stage prompts. */
+  stageSystemPromptAppend?: string
   maxDepth?: number
   wasmSupported?: boolean
   approvalMode?: ApprovalMode

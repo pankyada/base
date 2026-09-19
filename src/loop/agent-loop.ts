@@ -7,7 +7,7 @@ import { getAllTools, toOpenAITools } from '../tools/registry.js'
 import { getMcpToolDefinitions } from '../mcp/client.js'
 import { resolveAcl, resolveAclDecisionWithMemory } from '../tools/acl.js'
 import { audit } from '../audit/journal.js'
-import { effectFor, isGatedEffect } from '../tools/effects.js'
+import { effectFor, isGatedEffect, isMutatingEffect } from '../tools/effects.js'
 import { defaultProvenance } from '../safety/provenance.js'
 import { classify } from '../safety/classifier.js'
 import { classifyStatic } from '../safety/rules.js'
@@ -81,11 +81,17 @@ export async function runAgentLoop(
     session.messages.push({ role: 'user', content: userMessage })
   }
 
-  const allTools = [
+  const candidateTools = [
     ...getAllTools(),
+    ...(context.runtimeTools ?? []),
     ...getMcpToolDefinitions(profile, context.mcpEntries ?? []),
     ...(context.agentTools ?? []),
   ]
+  const allTools = context.runtimeToolAllowlist
+    ? candidateTools.filter(tool => context.runtimeToolAllowlist!.includes(tool.name))
+    : context.denyMutatingTools
+      ? candidateTools.filter(tool => !tool.name.includes('__') && !['Bash', 'ExecuteCode'].includes(tool.name) && (['TownRead', 'TownPost', 'TownAsk'].includes(tool.name) || !isMutatingEffect(effectFor(tool.name))))
+      : candidateTools
   const openaiTools = toOpenAITools(allTools)
   let resumeApproval = opts?.resumeApproval
 
@@ -351,6 +357,15 @@ export async function runAgentLoop(
       const serverName = isMcp ? tc.name.split('__', 2)[0] : undefined
       const baseName = isMcp ? tc.name.split('__', 2)[1] : tc.name
       const decision = await resolveAclDecisionWithMemory(baseName, input, profile, context.memory, context.approvalMode ?? 'danger', serverName, stageOverlay)
+      if (context.runtimeToolAllowlist && !context.runtimeToolAllowlist.includes(tc.name)) {
+        decision.value = 'deny'
+        decision.decided_by = 'mode'
+        decision.reason = 'per-run runtime tool allowlist'
+      } else if (context.denyMutatingTools && !(isMcp === false && ['TownRead', 'TownPost', 'TownAsk'].includes(baseName)) && (isMcp || baseName === 'Bash' || baseName === 'ExecuteCode' || isMutatingEffect(effectFor(baseName, isMcp)))) {
+        decision.value = 'deny'
+        decision.decided_by = 'mode'
+        decision.reason = 'read-only runtime ACL overlay'
+      }
       let acl = decision.value
       let risk: 'safe' | 'caution' | 'danger' | undefined
       let reason: string | undefined

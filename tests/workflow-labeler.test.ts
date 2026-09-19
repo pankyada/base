@@ -1,6 +1,6 @@
 import { execFileSync } from 'child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'fs'
-import { homedir, tmpdir } from 'os'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,7 @@ vi.mock('../src/telemetry/logger.js', () => ({ logEvent: vi.fn() }))
 
 import { logEvent } from '../src/telemetry/logger.js'
 import { recordWrittenFiles, sweepDeferredLabels } from '../src/workflow/labeler.js'
+import { harnessStatePath } from '../src/config/state-paths.js'
 
 describe('deferred workflow labels', () => {
   it('scopes writes per user/project so two users never share a churn bucket', async () => {
@@ -26,7 +27,7 @@ describe('deferred workflow labels', () => {
     writeFileSync(file, 'before\nafter\n')
     await sweepDeferredLabels(user, project)
     expect(vi.mocked(logEvent)).toHaveBeenCalledWith(expect.objectContaining({ kind: 'outcome', task_id: taskId, verdict: 'reworked', human_edit_churn: 1 }))
-    const labelPath = join(homedir(), '.harness', 'projects', user, project, 'workflow', 'labels', `${taskId}.json`)
+    const labelPath = harnessStatePath('projects', user, project, 'workflow', 'labels', `${taskId}.json`)
     const label = JSON.parse(readFileSync(labelPath, 'utf8'))
     expect(label.labeled_at).toBeTruthy()
     // The profile-scoped bucket a different user/project would fall back to

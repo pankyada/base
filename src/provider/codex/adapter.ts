@@ -1,7 +1,7 @@
 import { readCodexAuth } from '../auth/store.js'
 import { getValidCodexCredential } from '../auth/manager.js'
 import { extractResidency, type OAuthFetch } from '../auth/oauth.js'
-import { sanitizeError } from '../auth/redact.js'
+import { redact, sanitizeError } from '../auth/redact.js'
 import { abortable, boundedJson, lifetime } from '../auth/async.js'
 import { ProviderError } from '../errors.js'
 import type { EffortCapability } from '../../types.js'
@@ -119,7 +119,7 @@ async function* streamCodex(
         void response.body?.cancel().catch(() => undefined)
         throw new ProviderError('Codex authentication expired', { code: 'unauthorized', status: 401, retryable: false })
       }
-      if (!response.ok) throw await providerResponseError(response, operation.signal, [credential.access_token, credential.refresh_token])
+      if (!response.ok) throw await providerResponseError(response, operation.signal, [credential.access_token, credential.refresh_token, credential.account_id])
       if (!response.body) throw new ProviderError('Codex response body missing', { code: 'unexpected_eof', ambiguous: true })
 
       try {
@@ -182,23 +182,68 @@ async function providerResponseError(response: Response, signal: AbortSignal, se
   const retryAfterHeader = response.headers.get('retry-after')
   const retryAfterMs = retryAfterHeader && Number.isFinite(Number(retryAfterHeader)) ? Number(retryAfterHeader) * 1000 : undefined
   let payload: unknown
+  let rawError: string | undefined
   const reading = lifetime(8000, signal, 'Codex error response')
-  try { payload = await boundedJson(response, reading.signal) }
-  catch { signal.throwIfAborted() }
+  try { payload = await boundedJson(response.clone(), reading.signal) }
+  catch {
+    signal.throwIfAborted()
+    rawError = await boundedErrorText(response, reading.signal).catch(() => undefined)
+  }
   finally { reading.close() }
   const record = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : undefined
   const nested = record?.error && typeof record.error === 'object' && !Array.isArray(record.error) ? record.error as Record<string, unknown> : undefined
   const code = typeof nested?.code === 'string' ? nested.code : typeof record?.code === 'string' ? record.code : undefined
-  const message = typeof nested?.message === 'string' ? nested.message : typeof record?.message === 'string' ? record.message : `Codex inference failed (${response.status})`
+  const message = typeof nested?.message === 'string' ? nested.message
+    : typeof record?.message === 'string' ? record.message
+      : typeof nested?.detail === 'string' ? nested.detail
+        : typeof nested?.details === 'string' ? nested.details
+          : typeof record?.detail === 'string' ? record.detail
+            : typeof record?.details === 'string' ? record.details
+            : typeof record?.error === 'string' ? record.error
+              : rawError || safePayloadSummary(payload, secrets) || `Codex inference failed (${response.status})`
   const quota = code?.toLowerCase().includes('quota') || code === 'usage_limit_reached' || response.status === 402
   const throttle = response.status === 429 || response.status >= 500
-  return new ProviderError(sanitizeError(sanitizeProviderMessage(message), secrets), {
+  const metadata = [
+    code ? `code=${code}` : undefined,
+    typeof nested?.type === 'string' ? `type=${nested.type}` : typeof record?.type === 'string' ? `type=${record.type}` : undefined,
+    requestId ? `request_id=${requestId}` : undefined,
+  ].filter(Boolean).join(' ')
+  const diagnostic = metadata ? `${message} (${metadata})` : message
+  return new ProviderError(sanitizeError(sanitizeProviderMessage(diagnostic), secrets), {
     code: code ? sanitizeError(code, secrets).slice(0, 128) : (quota ? 'quota_exhausted' : throttle ? 'throttled' : 'provider_error'),
     status: response.status,
     requestId: requestId ? sanitizeError(requestId, secrets).slice(0, 256) : undefined,
     retryAfterMs,
     retryable: throttle && !quota,
   })
+}
+
+function safePayloadSummary(payload: unknown, secrets: string[]): string {
+  try {
+    const payloadRecord = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : undefined
+    const source = payloadRecord?.error ?? payload
+    return sanitizeError(JSON.stringify(redact(source)), secrets).slice(0, 2048)
+  } catch { return '' }
+}
+
+async function boundedErrorText(response: Response, signal: AbortSignal, maxBytes = 2048): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (true) {
+      const next = await abortable(reader.read(), signal)
+      if (next.done) break
+      size += next.value.byteLength
+      if (size > maxBytes) return '[non-JSON provider error body exceeded diagnostic limit]'
+      chunks.push(next.value)
+    }
+    return sanitizeError(new TextDecoder().decode(Buffer.concat(chunks)), []).trim().slice(0, maxBytes)
+  } finally {
+    void reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
 }
 
 function sanitizeProviderMessage(message: string): string {

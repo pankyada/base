@@ -6,6 +6,7 @@ export const EFFECTS: Record<string, ToolEffect> = {
   Notify: 'outbound',
   WebFetch: 'outbound', WebSearch: 'outbound',
   Bash: 'destructive', ExecuteCode: 'destructive', MemoryDelete: 'destructive', Delegate: 'destructive', DelegateFanout: 'destructive',
+  TownRead: 'read', TownPost: 'outbound', TownAsk: 'outbound', TownCreateTask: 'write', TownAssign: 'write', TownDispatch: 'outbound',
 }
 
 export function isMutatingEffect(effect: ToolEffect): boolean {

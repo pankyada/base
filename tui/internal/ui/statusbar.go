@@ -22,7 +22,7 @@ func statusBadge(running bool, frame int) string {
 		Render(thinkingSpinChar(frame) + " RUNNING")
 }
 
-func statusBar(running bool, model, approval string, tokensIn, tokensOut int, cost float64, contextTokens, contextWindow, queued, width, frame int, usage ...protocol.Usage) string {
+func statusBar(running bool, model, provider, approval string, tokensIn, tokensOut int, cost float64, contextTokens, contextWindow, queued, width, frame int, usage ...protocol.Usage) string {
 	mode := statusBadge(running, frame)
 	approvalStyle := StDim
 	if approval == "danger" {
@@ -31,6 +31,7 @@ func statusBar(running bool, model, approval string, tokensIn, tokensOut int, co
 	segments := []string{
 		mode,
 		StInfo.Render(model),
+		StDim.Render(provider),
 		approvalStyle.Render("approval:" + approval),
 	}
 	// Before the first turn these are all zero — "in 0 · out 0 · $0.0000 · —"
@@ -58,6 +59,19 @@ func statusBar(running bool, model, approval string, tokensIn, tokensOut int, co
 		segments = segments[:len(segments)-1]
 	}
 	return lipgloss.NewStyle().MaxWidth(maxInt(0, width)).Inline(true).Render(strings.Join(segments, "  "))
+}
+
+func providerLabel(auth, status string) string {
+	if auth == "codex_oauth" {
+		if status == "active" {
+			return "provider: Codex subscription"
+		}
+		return "provider: Codex subscription (" + status + ")"
+	}
+	if auth == "api_key" {
+		return "provider: OpenAI-compatible API"
+	}
+	return "provider: unknown"
 }
 
 func usageLabel(usage protocol.Usage) string {

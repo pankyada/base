@@ -68,6 +68,8 @@ type Model struct {
 	prefs              prefs.Preferences
 	profile            string
 	model              string
+	providerAuth       string
+	providerStatus     string
 	approvalMode       string
 	userID             string
 	sessionID          string
@@ -520,6 +522,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.providerAuth == "codex_oauth" && m.providerStatus != "active" && msg.String() == "l" {
+		m.notices.Add(NoticeWarn, "Codex sign-in started", "complete authentication in your browser", "return here when finished")
+		command, cancel := runLocalCommand("harness auth login openai --method browser", m.workingDir)
+		m.localCancel = cancel
+		m.reflow()
+		return m, command
+	}
 	if m.pendingApproval != nil {
 		return m.updateApproval(msg)
 	}
@@ -2091,6 +2100,13 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if msg.Model != "" {
 			m.model = msg.Model
 		}
+		if msg.ProviderStatus != nil {
+			m.providerAuth = msg.ProviderStatus.Auth
+			m.providerStatus = msg.ProviderStatus.Status
+			if m.providerAuth == "codex_oauth" && m.providerStatus != "active" {
+				m.notices.Add(NoticeWarn, "Codex authentication required", "subscription credential is "+m.providerStatus, "press l to sign in with browser")
+			}
+		}
 		if msg.Profile != "" {
 			m.profile = msg.Profile
 		}
@@ -2511,7 +2527,7 @@ func (m Model) View() string {
 	}
 	parts = append(parts,
 		m.composer.View(),
-		statusBar(m.running, m.model, m.approvalMode, m.tokensIn, m.tokensOut, m.displayCost, m.contextTokens, m.contextWindow, len(m.queue), m.width, m.frame, m.usage),
+		statusBar(m.running, m.model, providerLabel(m.providerAuth, m.providerStatus), m.approvalMode, m.tokensIn, m.tokensOut, m.displayCost, m.contextTokens, m.contextWindow, len(m.queue), m.width, m.frame, m.usage),
 	)
 	background := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	if m.pendingApproval != nil {

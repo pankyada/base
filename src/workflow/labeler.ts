@@ -1,13 +1,13 @@
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
 import { sanitizeProjectId, sanitizeUserId } from '../session/user-paths.js'
 import { logEvent } from '../telemetry/logger.js'
+import { harnessStatePath } from '../config/state-paths.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -80,7 +80,7 @@ export function recordWrittenFiles(profile: Profile, session: Session, task_id: 
 export function recordWrittenFiles(task_id: string, paths: string[]): string
 export function recordWrittenFiles(a: Profile | string, b: Session | string[], c?: string, d?: string[]): string {
   if (typeof a === 'string') {
-    const dir = join(process.env.HARNESS_ARTIFACT_DIR ?? join(homedir(), '.harness'), 'workflow', 'labels')
+    const dir = join(process.env.HARNESS_ARTIFACT_DIR ?? harnessStatePath(), 'workflow', 'labels')
     return writeLabel(dir, a, b as string[], process.cwd())
   }
   const profile = a
@@ -94,7 +94,7 @@ export function recordWrittenFiles(a: Profile | string, b: Session | string[], c
 function labelsDir(profileOrUser: Profile | string, project?: string): { dir: string; profileName: string } {
   if (typeof profileOrUser !== 'string') return { dir: join(profileOrUser.artifact_dir, 'workflow', 'labels'), profileName: profileOrUser.name }
   return {
-    dir: join(homedir(), '.harness', 'projects', sanitizeUserId(profileOrUser), sanitizeProjectId(project ?? 'inbox'), 'workflow', 'labels'),
+    dir: harnessStatePath('projects', sanitizeUserId(profileOrUser), sanitizeProjectId(project ?? 'inbox'), 'workflow', 'labels'),
     profileName: 'workflow',
   }
 }

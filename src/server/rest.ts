@@ -22,6 +22,7 @@ import { RunBudget } from '../runs/budget.js'
 import { resumeCancelledInput, resumePendingInput } from '../runs/resume.js'
 import { checkOrigin, loadOriginPolicy, type OriginPolicy } from './origin.js'
 import { createReadApiHandler, type ReadApiDeps } from './read-api.js'
+import { createTownHttpHandler, type TownHttpDeps } from '../town/http.js'
 import { MissionStore, completeHumanCriterion, createMission, type MissionInput } from '../missions/index.js'
 import { handleReplayRequest } from '../replay/router.js'
 import { handleEvaluationRequest, handleEvaluationExecutionRequest } from '../evaluation/router.js'
@@ -53,6 +54,8 @@ export interface RestDeps {
   pendingStore?: PendingStore
   originPolicy?: OriginPolicy
   readApi?: Partial<Omit<ReadApiDeps, 'defaultProfile' | 'profiles'>>
+  /** Durable Town orchestration surface; omitted capabilities fail closed. */
+  town?: Partial<Omit<TownHttpDeps, 'defaultProfile' | 'profiles'>>
   /** Generator executor built from registered tools and normal ACL/provenance gates. */
   artifactGenerator?: (request: ArtifactExecutionRequest, context: { user: string; profile: Profile; budget?: RunBudget; signal?: AbortSignal; confirmed: boolean }) => Promise<{ payload: unknown }>
 }
@@ -810,9 +813,10 @@ export function createRestHandler(deps: RestDeps) {
   const acpInFlight = new Set<string>()
   const originPolicy = deps.originPolicy ?? loadOriginPolicy()
   const readHandler = createReadApiHandler({ defaultProfile: deps.defaultProfile, profiles: deps.profiles, ...deps.readApi })
+  const townHandler = createTownHttpHandler({ defaultProfile: deps.defaultProfile, profiles: deps.profiles, ...deps.town })
   let rejectedOrigins = 0
 
-  return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const handle = async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = (req.url ?? '/').split('?')[0]
     const method = req.method ?? 'GET'
 
@@ -829,7 +833,7 @@ export function createRestHandler(deps: RestDeps) {
         res.setHeader('access-control-allow-origin', origin)
         res.setHeader('vary', 'Origin')
         res.setHeader('access-control-allow-headers', 'content-type, authorization')
-        res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS')
+        res.setHeader('access-control-allow-methods', 'GET, POST, PATCH, DELETE, OPTIONS')
       }
       if (method === 'OPTIONS') {
         res.writeHead(204)
@@ -849,6 +853,7 @@ export function createRestHandler(deps: RestDeps) {
       }
 
       const scopedUser = sanitizeUserId(new URL(req.url ?? '/', 'http://localhost').searchParams.get('user') ?? process.env.HARNESS_USER ?? 'anonymous')
+      if (await townHandler(req, res)) return
       if (await handleReplayRequest(req, res, { user: scopedUser })) return
       if (await handleEvaluationExecutionRequest(req, res, { user: scopedUser })) return
       if (handleEvaluationRequest(req, res, { user: scopedUser })) return
@@ -977,4 +982,5 @@ export function createRestHandler(deps: RestDeps) {
       throw e
     }
   }
+  return Object.assign(handle, { close: () => townHandler.close() })
 }

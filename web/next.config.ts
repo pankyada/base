@@ -2,6 +2,7 @@ import type { NextConfig } from 'next'
 
 const config: NextConfig = {
   output: 'standalone',
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   webpack(webpackConfig, { isServer, webpack }) {
     if (!isServer) {
       // Pyodide's npm entry uses Node.js built-ins guarded by runtime env checks.

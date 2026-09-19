@@ -1,9 +1,9 @@
 import { readFileSync, readdirSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import type { Run } from './types.js'
 import { sanitizeUserId } from '../session/user-paths.js'
 import { atomicWriteJson, readJson, RevisionConflictError } from '../shared/atomic-json.js'
+import { harnessStatePath } from '../config/state-paths.js'
 
 const RUN_INDEX = 'index.json'
 
@@ -16,13 +16,11 @@ export interface RunStoreDiagnostic { path: string; error: string }
 export interface RunHistoryPage { runs: Run[]; next_cursor?: string }
 interface RunHistoryCursor { version: 1; user: string | null; profile: string | null; status: Run['status'] | null; updated_at: string; id: string }
 
-function runsDir(user: string): string {
-  return join(homedir(), '.harness', 'runs', sanitizeUserId(user))
+function runsDir(user: string, root: string): string {
+  return join(root, sanitizeUserId(user))
 }
 
-function allRunsBase(): string {
-  return join(homedir(), '.harness', 'runs')
-}
+function allRunsBase(root: string): string { return root }
 
 function runIndexPath(dir: string): string {
   return join(dir, RUN_INDEX)
@@ -66,12 +64,14 @@ function ensureRunIndex(dir: string): { valid: boolean; error?: string } {
 export class RunStore {
   private diagnostics: RunStoreDiagnostic[] = []
 
+  constructor(private readonly root = harnessStatePath('runs')) {}
+
   getDiagnostics(): RunStoreDiagnostic[] {
     return [...this.diagnostics]
   }
 
   create(run: Run): void {
-    const dir = runsDir(run.user)
+    const dir = runsDir(run.user, this.root)
     mkdirSync(dir, { recursive: true })
     const date = run.started_at.slice(0, 10)
     run.revision = run.revision ?? 1
@@ -88,14 +88,14 @@ export class RunStore {
     const updated = { ...run, ...patch }
     updated.revision = actual + 1
     updated.updated_at = new Date().toISOString()
-    const dir = runsDir(run.user)
+    const dir = runsDir(run.user, this.root)
     const date = run.started_at.slice(0, 10)
     atomicWriteJson(join(dir, `${date}_${id}.json`), updated)
     rebuildRunIndex(dir)
   }
 
   get(id: string): Run | null {
-    const base = allRunsBase()
+    const base = allRunsBase(this.root)
     if (!existsSync(base)) return null
     for (const userDir of readdirSync(base, { withFileTypes: true })) {
       if (!userDir.isDirectory()) continue
@@ -114,7 +114,7 @@ export class RunStore {
   list(opts: { user?: string; status?: Run['status']; profile?: string; limit?: number } = {}): Run[] {
     const { user, status, profile, limit = 50 } = opts
     this.diagnostics = []
-    const base = allRunsBase()
+    const base = allRunsBase(this.root)
     if (!existsSync(base)) return []
     const userDirs = user
       ? [sanitizeUserId(user)]

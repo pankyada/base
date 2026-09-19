@@ -142,6 +142,7 @@ test('PT-008: channel snapshots refresh without overlapping requests and failed 
   overlap = false
   await expect.poll(() => count, { timeout: 12_000 }).toBeGreaterThan(baseline)
   fail = true
+  await page.getByRole('tab', { name: 'Channels' }).click()
   await expect(page.locator('.unavailable-state')).toContainText('channels: request failed (503)', { timeout: 12_000 })
   fail = false
   const beforeRetry = count

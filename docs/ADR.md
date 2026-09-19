@@ -23,6 +23,7 @@ pointer to what replaced them.
 | ADR | Decision | Status | Area |
 |---|---|---|---|
 | [84](#adr-84) | Interactive session working directory is persisted workspace state | ✅ | sessions |
+| [85](#adr-85) | Automatic Town dispatch requires authoritative provider capacity | ✅ | orchestrator |
 | [79](#adr-79) | Explicit Codex OAuth transport alongside API-key defaults | 🔄 | providers |
 | [80](#adr-80) | Caller scope normalized before Core ownership checks | ✅ | server |
 | [81](#adr-81) | Runtime recovery retains state, never executable authority | 🔄 | runtime |
@@ -1183,3 +1184,34 @@ directories without changing process-global state. The WS fields are additive;
 legacy clients continue using profile defaults, and old sessions without the
 persisted value use the resumed profile's default. Installed-binary/platform
 acceptance remains separate (PT-013).
+
+### ADR-85
+
+**Automatic Town dispatch requires authoritative provider capacity** — ✅
+
+*Context:* The Town orchestrator may start real worker work. Internal model-cost
+estimates and token telemetry are neither a subscription quota nor an API
+account's remaining allowance.
+
+*Decision:* Automatic worker and orchestrator dispatch read capacity from the
+selected provider and account scope, with source and freshness. Every applicable
+provider window must have remaining capacity. Unknown, stale, unsupported,
+exhausted or account-mismatched capacity queues the durable instruction/task.
+Internal RunBudget remains a second runtime guard. v1 serializes automatic starts
+per provider/account and does not claim a remote quota reservation it cannot make.
+
+*Consequences:* A provider adapter needs evidence of its quota contract. Codex
+uses its local app-server `account/rateLimits/read` only after account-scope
+compatibility is proven. There is no guessed token balance or bypass to start
+work while capacity is unknown.
+
+*Addendum (2026-09-14, PT-060):* The automatic gate above remains unchanged. A
+user may explicitly authorize one current-revision manual dispatch request for
+an existing root, read-only Town orchestrator task. The measured quota snapshot
+and status remain truthful and persisted; the request does not claim capacity
+is available or reserved. That authorization may reach only direct child tasks
+created by the live authorized planner through its bound Town tool context.
+The root and children retain dependency, workspace, lease/concurrency, runtime,
+approval, ACL and RunBudget checks. Scheduler retries, restart recovery, REST
+child dispatch, grandchildren, continuations, and unrelated tasks never inherit
+the authorization. The root planner remains read-only with Town-only tools.

@@ -759,16 +759,20 @@ acknowledged preferences, and transport-specific validation. See
 
 ## Explicitly requested product area — Multi Agent Orchestrator
 
-❌ Requested experience not implemented; initial feature taxonomy only. Scope:
+🚧 PT-052 implementation in progress. Scope:
 multiple Base agents on the same or different projects, task assignment and
 agent-to-agent collaboration, direct user interaction, optional orchestrator
 agent, and a game-like live world reflecting actual runtime activity.
 
 Existing #3 delegation and Studio/live-session foundations are candidates for
-reuse, not completion evidence for this experience. Brainstorm separately under
-PT-020; visual metaphor, major layout, workspace/conflict policy and product
-placement remain open. See [ORCH features](FEATURES.md#7-multi-agent-orchestrator--collaborative-agent-workspace)
-and [task tracker](PRODUCT_STATE.md).
+reuse, not completion evidence for this experience. [PT-020 town discovery](superpowers/specs/2026-09-13-orchestrator-town-discovery.md)
+captures the landscape, project buildings and central board. User confirmed a navigable
+simulated 3D medieval town with orbit/pan/tilt/zoom and town/building viewing interactions;
+a single fixed isometric view is rejected and roof-off interiors remain optional.
+Orchestrator assignment/start and provider remaining subscription/API quota
+as the dispatch gate are confirmed. Detailed layout/rendering,
+team lifetime, workspace/merge policy, quota freshness/reservation/limits and product
+placement are now frozen in the [PT-052 build specification](superpowers/specs/2026-09-13-orchestrator-town-spec.md). PT-052 implementation, bounded provider-bridge compatibility and live runtime/browser evidence are recorded; user landscape acceptance remains PT-053 and headless queue wake/account-specific catalog reconciliation remain PT-054. No release or deployment follows this evidence. See [ORCH features](FEATURES.md#7-multi-agent-orchestrator--collaborative-agent-workspace) and [task tracker](PRODUCT_STATE.md).
 
 ## Active implementation track — Core uplift
 

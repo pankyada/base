@@ -142,7 +142,10 @@ export async function resolveCodexModels({
     // Do not print raw provider bodies or credentials.
     const detail = error instanceof Error && /^(HTTP \d{3}|Provider returned)/.test(error.message)
       ? error.message : 'Network request failed or timed out'
-    report(`Codex model discovery unavailable (${detail}): showing bundled models.`)
+    const guidance = detail === 'HTTP 401 Unauthorized'
+      ? 'Codex subscription authentication was rejected (HTTP 401). Run `harness auth status openai`, then `harness auth login openai --method browser` if needed. Showing bundled models.'
+      : `Codex model discovery unavailable (${detail}): showing bundled models.`
+    report(guidance)
     return [...staticModels]
   }
 }

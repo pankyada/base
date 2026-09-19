@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs'
 import { dirname, join } from 'path'
-import { homedir } from 'os'
 import type { RiskLevel } from '../types.js'
+import { harnessStatePath } from '../config/state-paths.js'
 
 export interface CachedVerdict {
   risk: RiskLevel
@@ -28,7 +28,7 @@ export class DangerCache {
   private flushTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(
-    private readonly path = join(homedir(), '.harness', 'danger-cache.json'),
+    private readonly path = harnessStatePath('danger-cache.json'),
     private readonly now = () => Date.now(),
   ) {}
 

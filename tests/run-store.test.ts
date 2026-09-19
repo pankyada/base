@@ -1,6 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { afterAll, afterEach, describe, it, expect } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RunStore } from '../src/runs/store.js'
 import type { Run } from '../src/runs/types.js'
+
+const priorStateDir = process.env.HARNESS_STATE_DIR
+const tempRoots: string[] = []
+const suiteRoot = mkdtempSync(join(tmpdir(), 'harness-run-store-suite-'))
+tempRoots.push(suiteRoot)
+const store = new RunStore(join(suiteRoot, 'runs'))
+
+afterEach(() => {
+  if (priorStateDir === undefined) delete process.env.HARNESS_STATE_DIR
+  else process.env.HARNESS_STATE_DIR = priorStateDir
+})
+
+afterAll(() => { for (const root of tempRoots) rmSync(root, { recursive: true, force: true }) })
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
@@ -16,8 +32,6 @@ function makeRun(overrides: Partial<Run> = {}): Run {
 }
 
 describe('RunStore', () => {
-  const store = new RunStore()
-
   it('creates and retrieves a run by id', () => {
     const run = makeRun()
     store.create(run)
@@ -66,5 +80,25 @@ describe('RunStore', () => {
     store.create(run)
     const running = store.scanRunning()
     expect(running.some(r => r.id === 'scan0001')).toBe(true)
+  })
+
+  it('scopes crash-recovery scans and writes to the configured state root', () => {
+    const sharedRoot = mkdtempSync(join(tmpdir(), 'harness-runs-shared-'))
+    const isolatedRoot = mkdtempSync(join(tmpdir(), 'harness-runs-isolated-'))
+    tempRoots.push(sharedRoot, isolatedRoot)
+    const id = 'same-run-id'
+    const shared = new RunStore(join(sharedRoot, 'runs'))
+    const sharedRun = makeRun({ id, user: 'alice', input: 'shared run' })
+    shared.create(sharedRun)
+
+    process.env.HARNESS_STATE_DIR = isolatedRoot
+    const isolated = new RunStore()
+    expect(isolated.scanRunning()).toEqual([])
+    const isolatedRun = makeRun({ id, user: 'alice', input: 'isolated run' })
+    isolated.create(isolatedRun)
+
+    expect(readFileSync(join(isolatedRoot, 'runs', 'alice', `${isolatedRun.started_at.slice(0, 10)}_${id}.json`), 'utf8')).toContain('isolated run')
+    expect(shared.get(id)?.input).toBe('shared run')
+    expect(shared.scanRunning()).toMatchObject([{ id, status: 'running', input: 'shared run' }])
   })
 })

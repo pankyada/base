@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { harnessStatePath } from '../config/state-paths.js'
 import type { UsageMetadata } from '../provider/types.js'
 
 export interface UsageDelta extends Partial<UsageMetadata> {
@@ -80,7 +80,7 @@ export function mergeUsageDelta(target: UsageDelta, delta: UsageDelta): void {
 }
 
 function usageDir(overrideDir?: string): string {
-  return overrideDir ?? join(homedir(), '.harness', 'usage')
+  return overrideDir ?? harnessStatePath('usage')
 }
 
 function usageFilePath(user: string, overrideDir?: string): string {

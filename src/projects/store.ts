@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
-import { homedir } from 'os'
 import { Project } from './types.js'
 import { projectPaths, sanitizeUserId } from '../session/user-paths.js'
+import { harnessStatePath } from '../config/state-paths.js'
 
 function writeProject(p: Project): void {
   const { recordFile } = projectPaths(p.user, p.id)
@@ -44,7 +44,7 @@ export function ensureInbox(user: string): Project {
 
 export function listProjects(user: string): Project[] {
   const safe = sanitizeUserId(user)
-  const dir = join(homedir(), '.harness', 'projects', safe)
+  const dir = harnessStatePath('projects', safe)
   if (!existsSync(dir)) return []
   return readdirSync(dir)
     .filter(f => f.endsWith('.json'))

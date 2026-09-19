@@ -20,7 +20,7 @@ import type { UsageDelta } from '../usage/ledger.js'
 import { sanitizeUserId } from '../session/user-paths.js'
 import type { Profile } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
-import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
+import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
 import type { ChannelRuntime } from '../channels/runtime.js'
 import type { PendingStore } from '../runs/pending.js'
 import { isParkSignal } from '../runs/park.js'
@@ -62,6 +62,14 @@ export interface RunProfileOptions {
   protocolVersion?: number
   /** Test/runtime seam for an already resolved provider; production builds it from profile. */
   provider?: ProviderClient
+  /** Context-bound tools for isolated runtimes such as the Town orchestrator. */
+  runtimeTools?: ToolDefinition[]
+  /** Hard per-run ACL controls; applied after profile ACL and approval mode. */
+  runtimeToolAllowlist?: readonly string[]
+  denyMutatingTools?: boolean
+  systemPromptAppend?: string
+  /** Town-only context that must also reach isolated adaptive workflow stages. */
+  stageSystemPromptAppend?: string
 }
 
 function usageDeltaFromSession(before: Session['usage'], after: Session['usage']): UsageDelta {
@@ -94,7 +102,7 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       ? new GraphMemoryProvider(profile.artifact_dir, session)
       : new FsMemoryProvider(profile.artifact_dir, session)
     const skills = loadAllSkills(resolveSkillsDirs())
-    const systemPromptBase = readFileSync(profile.system_prompt, 'utf-8')
+    const systemPromptBase = `${readFileSync(profile.system_prompt, 'utf-8')}${opts.systemPromptAppend ? `\n\n${opts.systemPromptAppend}` : ''}`
     const skillIndex = buildSkillIndex(skills)
     if (session.messages.length === 0) {
       session.messages.push({
@@ -120,6 +128,10 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       pendingInputs: opts.pendingInputs, runId: opts.runId, unattended: opts.unattended, budget: opts.budget, taintSources: opts.initialTaintSources,
       agentFrame: opts.agentFrame ?? createRootFrame(profile.name, session.id),
       protocolVersion: opts.protocolVersion,
+      runtimeTools: opts.runtimeTools,
+      runtimeToolAllowlist: opts.runtimeToolAllowlist,
+      denyMutatingTools: opts.denyMutatingTools,
+      stageSystemPromptAppend: opts.stageSystemPromptAppend,
     }
     context.provider = bindRunProvider(provider, context)
 

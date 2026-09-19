@@ -97,6 +97,7 @@ test.describe('PT-041 client acceptance fixture', () => {
       await expect(page.locator('.audit-table tbody')).toContainText(audit.entries[0].ts)
       const usage = await (await usageResponse).json()
       expect(usage.total.input).toBeGreaterThan(0)
+      await page.getByRole('tab', { name: 'Telemetry' }).click()
       await page.locator('.observability summary').click()
       await expect(page.locator('.observability pre')).toContainText('"usage"')
       await page.getByRole('link', { name: 'analyst', exact: true }).click()

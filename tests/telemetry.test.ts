@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { existsSync, unlinkSync, writeFileSync, mkdirSync, readFileSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
-import { logEvent } from '../src/telemetry/logger.js'
+import { dirname } from 'path'
+import { logEvent, telemetryFilePath } from '../src/telemetry/logger.js'
 import { queryEvents } from '../src/telemetry/query.js'
 
-const TELEMETRY_PATH = join(homedir(), '.harness', 'telemetry.jsonl')
+const TELEMETRY_PATH = telemetryFilePath()
 
 describe('telemetry', () => {
   beforeEach(() => {
@@ -41,7 +40,7 @@ describe('telemetry', () => {
 
   it('rotates current file to .1 when size exceeds 5MB', () => {
     // Write >5MB so next logEvent triggers rotation
-    mkdirSync(join(homedir(), '.harness'), { recursive: true })
+    mkdirSync(dirname(TELEMETRY_PATH), { recursive: true })
     writeFileSync(TELEMETRY_PATH, 'x'.repeat(5 * 1024 * 1024 + 1))
     logEvent({ session: 'abc', profile: 'test', kind: 'tool', name: 'Read', ok: true })
     expect(existsSync(`${TELEMETRY_PATH}.1`)).toBe(true)
@@ -52,7 +51,7 @@ describe('telemetry', () => {
   })
 
   it('shifts existing rotated files and deletes oldest beyond .5', () => {
-    mkdirSync(join(homedir(), '.harness'), { recursive: true })
+    mkdirSync(dirname(TELEMETRY_PATH), { recursive: true })
     // Pre-create .1 through .5
     for (let i = 1; i <= 5; i++) {
       writeFileSync(`${TELEMETRY_PATH}.${i}`, `content-${i}`)
@@ -70,7 +69,7 @@ describe('telemetry', () => {
 
   it('queryEvents returns only the last 2000 lines when file has more', () => {
     // Write 2500 JSON lines directly
-    mkdirSync(join(homedir(), '.harness'), { recursive: true })
+    mkdirSync(dirname(TELEMETRY_PATH), { recursive: true })
     const lines = Array.from({ length: 2500 }, (_, i) =>
       JSON.stringify({ ts: new Date().toISOString(), session: 'x', profile: 'test', kind: 'tool' as const, name: `T${i}`, ok: true })
     ).join('\n') + '\n'

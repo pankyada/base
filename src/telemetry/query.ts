@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'fs'
 import { TelemetryEvent } from '../types.js'
-import { TELEMETRY_PATH } from './logger.js'
+import { telemetryFilePath } from './logger.js'
 
 const QUERY_TAIL_LINES = 2000
 
@@ -9,8 +9,9 @@ export function queryEvents(opts: {
   since?: Date
   kind?: TelemetryEvent['kind']
 }): TelemetryEvent[] {
-  if (!existsSync(TELEMETRY_PATH)) return []
-  const allLines = readFileSync(TELEMETRY_PATH, 'utf-8').split('\n').filter(Boolean)
+  const path = telemetryFilePath()
+  if (!existsSync(path)) return []
+  const allLines = readFileSync(path, 'utf-8').split('\n').filter(Boolean)
   const lines = allLines.slice(-QUERY_TAIL_LINES)
   return lines
     .flatMap(l => {

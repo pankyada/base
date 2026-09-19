@@ -1,11 +1,11 @@
 import { existsSync, readdirSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { atomicWriteJson, readJson } from '../shared/atomic-json.js'
 import { sanitizeUserId } from '../session/user-paths.js'
+import { harnessStatePath } from '../config/state-paths.js'
 import { exportJournal, importJournal, type RunJournal } from './index.js'
 
-function replayRoot(user: string): string { return join(homedir(), '.harness', 'replays', sanitizeUserId(user)) }
+function replayRoot(user: string): string { return harnessStatePath('replays', sanitizeUserId(user)) }
 
 /** Durable journal store. Corrupt/untrusted files are skipped by list and surfaced by get. */
 export class ReplayStore {

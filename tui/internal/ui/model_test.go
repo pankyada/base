@@ -71,6 +71,14 @@ func TestToolPromptMarksAwaitingApproval(t *testing.T) {
 	}
 }
 
+func TestExpiredCodexAuthPromptsForBrowserLogin(t *testing.T) {
+	m := NewModel(&recordingSender{}, "devops", "tester", prefs.Preferences{})
+	m.handleServerMessage(protocol.ServerMessage{Type: "session_ready", SessionID: "sess-1", ProviderStatus: &protocol.ProviderStatus{Auth: "codex_oauth", Status: "expired"}})
+	if !hasNoticeContaining(m, "codex authentication required") {
+		t.Fatal("expired Codex credential should prompt for authentication")
+	}
+}
+
 func TestResumedSessionRestoresItsWorkingDirectory(t *testing.T) {
 	m := NewModel(&recordingSender{}, "coding", "tester", prefs.Preferences{})
 	m.handleServerMessage(protocol.ServerMessage{Type: "session_ready", SessionID: "fresh", WorkingDir: "/new/launch"})

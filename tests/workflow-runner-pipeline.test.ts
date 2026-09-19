@@ -75,6 +75,24 @@ describe('workflow pipeline', () => {
     expect(calls).toContain('verify')
   })
 
+  it('copies trusted Town worker environment context into each isolated stage prompt', async () => {
+    const p = profile()
+    const session = createSession(p.name, 'town-context-test')
+    const stageContext = `Town worker environment: host platform is ${process.platform}; exact project root is ${JSON.stringify('/tmp/town-project')}.`
+    const seen: string[] = []
+    const loop = vi.fn(async (_seed: string, _profile: any, staged: any, _ctx: any, _events: any, _openai: any, _signal: any, opts: any) => {
+      const system = staged.messages.find((message: any) => message.role === 'system')?.content ?? ''
+      seen.push(system)
+      const body = opts.stage.stage === 'recon' ? '## Files touched\nnone\n## Prior knowledge\nnone\n## Open questions\nnone' : `## Result\nok`
+      staged.messages.push({ role: 'assistant', content: body })
+    })
+    await runWorkflow('inspect project', p, session, { ...context(p, session), stageSystemPromptAppend: stageContext }, events, openaiFor({ recon: 1, plan: 0, design: 0, build: 0, verify: 0, review: 0 }), new AbortController().signal, { loop })
+    expect(seen.length).toBe(1)
+    expect(seen[0]).toContain('You are one bounded workflow stage')
+    expect(seen[0]).toContain(`host platform is ${process.platform}`)
+    expect(seen[0]).toContain('"/tmp/town-project"')
+  })
+
   it('fails back to named earlier stage and increases its intensity', async () => {
     const p = profile()
     const session = createSession(p.name, 'test')

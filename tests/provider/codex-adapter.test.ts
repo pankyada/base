@@ -115,6 +115,25 @@ describe('Codex Responses adapter', () => {
     expect((error as ProviderError).message).not.toContain('secret-token')
   })
 
+  it('retains bounded non-JSON diagnostics while redacting credential echoes', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-codex-adapter-plain-error-'))
+    await writeCodexCredential({ kind: 'codex_oauth', access_token: 'sensitive-access-token', refresh_token: 'refresh', expires_at: Date.now() + 600_000, account_id: 'acct' }, home)
+    const backendError = async () => new Response('Invalid tool schema; Bearer sensitive-access-token', { status: 400, headers: { 'content-type': 'text/plain' } })
+    const error = await createCodexProvider('gpt-5.4-mini', { home, fetch: backendError }).generate({ model: 'gpt-5.4-mini', messages: [] }).catch(value => value as ProviderError)
+    expect((error as ProviderError).message).toContain('Invalid tool schema')
+    expect((error as ProviderError).message).toContain('Bearer [redacted]')
+    expect((error as ProviderError).message).not.toContain('sensitive-access-token')
+  })
+
+  it('retains unfamiliar bounded JSON provider details with sensitive keys redacted', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-codex-adapter-json-detail-'))
+    await writeCodexCredential({ kind: 'codex_oauth', access_token: 'sensitive-access-token', refresh_token: 'refresh', expires_at: Date.now() + 600_000, account_id: 'acct' }, home)
+    const backendError = async () => new Response(JSON.stringify({ detail: "The 'None' model is not supported", error: { access_token: 'sensitive-access-token' } }), { status: 400 })
+    const error = await createCodexProvider('gpt-5.4-mini', { home, fetch: backendError }).generate({ model: 'gpt-5.4-mini', messages: [] }).catch(value => value as ProviderError)
+    expect((error as ProviderError).message).toContain("The 'None' model is not supported")
+    expect((error as ProviderError).message).not.toContain('sensitive-access-token')
+  })
+
   it('captures opaque reasoning continuation and validates executable schemas', async () => {
     const home = mkdtempSync(join(tmpdir(), 'harness-codex-adapter-continuation-'))
     await writeCodexCredential({ kind: 'codex_oauth', access_token: 'access', refresh_token: 'refresh', expires_at: Date.now() + 600_000, account_id: 'acct' }, home)

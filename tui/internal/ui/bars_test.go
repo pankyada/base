@@ -14,7 +14,7 @@ func TestBarsFitNarrowWidths(t *testing.T) {
 		if got := lipgloss.Width(topBar("devops", "123456789", true, "", time.Now(), width)); got > width {
 			t.Errorf("top bar width = %d, want <= %d", got, width)
 		}
-		if got := lipgloss.Width(statusBar(true, "claude-3-5-sonnet", "danger", 123, 456, 0.0123, 1000, 10000, 1, width, 0)); got > width {
+		if got := lipgloss.Width(statusBar(true, "claude-3-5-sonnet", "provider: OpenAI-compatible API", "danger", 123, 456, 0.0123, 1000, 10000, 1, width, 0)); got > width {
 			t.Errorf("status bar width = %d, want <= %d", got, width)
 		}
 	}

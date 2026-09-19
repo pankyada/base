@@ -1,15 +1,34 @@
-import { describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, readdirSync } from 'fs'
+import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { PendingStore } from '../src/runs/pending.js'
 import { ParkSignal } from '../src/runs/park.js'
+import { randomUUID } from 'node:crypto'
+
+const previousStateDir = process.env.HARNESS_STATE_DIR
+const roots: string[] = []
+
+afterEach(() => {
+  if (previousStateDir === undefined) delete process.env.HARNESS_STATE_DIR
+  else process.env.HARNESS_STATE_DIR = previousStateDir
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 function tempStore(now: () => Date = () => new Date()) {
   return new PendingStore(mkdtempSync(join(tmpdir(), 'harness-pending-')), now)
 }
 
 describe('PendingStore', () => {
+  it('uses the configured state root for the default pending store', () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-pending-root-'))
+    roots.push(root)
+    process.env.HARNESS_STATE_DIR = root
+    const store = new PendingStore()
+    const pending = store.create({ id: randomUUID(), run_id: 'run-isolated', session_id: 'session-isolated', user: 'alice', profile: 'coding', prompt: 'Continue?', kind: 'text', created_at: '2026-08-06T00:00:00.000Z', expires_at: '2099-08-06T00:00:00.000Z' })
+    expect(existsSync(join(root, 'pending', 'alice', `${pending.created_at.slice(0, 10)}_${pending.id}.json`))).toBe(true)
+  })
+
   it('persists pending input and answers it once', () => {
     const store = tempStore(() => new Date('2026-08-06T00:30:00.000Z'))
     const pending = store.create({
