@@ -10,6 +10,8 @@ import { memoryReadTool } from './memory-read.js'
 import { memoryWriteTool } from './memory-write.js'
 import { memoryListTool } from './memory-list.js'
 import { memoryDeleteTool } from './memory-delete.js'
+import { memoryRestoreTool } from './memory-restore.js'
+import { memoryReviewTool } from './memory-review.js'
 import { memoryLinkedTool } from './memory-linked.js'
 import { statsTool } from './stats.js'
 import { delegateTool } from './delegate.js'
@@ -42,6 +44,12 @@ export function registerAll(channels?: ChannelRuntime, profile?: Profile): void 
   registerTool(memoryWriteTool)
   registerTool(memoryListTool)
   registerTool(memoryDeleteTool)
+  // Retention recovery is opt-in so disabled profiles keep the exact legacy
+  // builtin schema set. MemoryRestore remains available to configured runs.
+  if (profile?.decision_layer?.enabled && profile.decision_layer.features.memory_retention && profile.decision_layer.features.memory_retention !== 'disabled') {
+    registerTool(memoryRestoreTool)
+    registerTool(memoryReviewTool)
+  }
   registerTool(memoryLinkedTool)
   registerTool(statsTool)
   registerTool(delegateTool)

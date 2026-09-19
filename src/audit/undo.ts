@@ -44,8 +44,20 @@ export async function undoAuditEntry(entry: AuditEntry, profilePath: string | Pr
     const memory = profile.memory?.provider === 'graph' ? new GraphMemoryProvider(profile.artifact_dir, session) : new FsMemoryProvider(profile.artifact_dir, session)
     const before = payload.before as MemoryRecord | null
     if (!before) { await memory.delete(scope, key); return `undid ${entry.id}: removed ${scope}/${key}` }
-    await memory.write(scope, key, before.content, before.links, before.temporal, { tainted: before.provenance === 'untrusted', source: before.source })
+    if (memory.writeRecord) await memory.writeRecord(scope, key, before)
+    else await memory.write(scope, key, before.content, before.links, before.temporal, { tainted: before.provenance === 'untrusted', source: before.source }, before.claim)
     return `undid ${entry.id}: restored ${scope}/${key}`
+  }
+  if (kind === 'memory_archive') {
+    const scope = payload.scope as MemoryScope
+    const key = payload.key
+    if (!['session', 'profile', 'user', 'project'].includes(scope) || typeof key !== 'string') return `audit entry ${entry.id} has invalid memory archive inverse`
+    const profile = typeof profilePath === 'string' ? loadProfile(profilePath) : profilePath
+    const session = createSession(profile.name, entry.user); session.project = typeof payload.project === 'string' ? payload.project : 'inbox'
+    const memory = profile.memory?.provider === 'graph' ? new GraphMemoryProvider(profile.artifact_dir, session) : new FsMemoryProvider(profile.artifact_dir, session)
+    if (!memory.archive) return `cannot undo ${entry.id}: memory provider does not support archive`
+    await memory.archive(scope, key, { state: 'archived', reason: 'undo restore', decided_at: new Date().toISOString() })
+    return `undid ${entry.id}: archived ${scope}/${key}`
   }
   return `audit entry ${entry.id} has unsupported inverse ${kind}`
 }

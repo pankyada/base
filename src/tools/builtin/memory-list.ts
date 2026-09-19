@@ -18,7 +18,8 @@ export const memoryListTool: ToolDefinition = {
       const linksStr = e.links && e.links.length > 0
         ? ` [links: ${e.links.map(l => `${l.relation ? l.relation + ':' : ''}${l.target}`).join(', ')}]`
         : ''
-      return `- **${e.key}**: ${e.preview}${linksStr}`
+      const retention = e.retention && e.retention.state !== 'active' ? ` [${e.retention.state}]` : ''
+      return `- **${e.key}**${retention}: ${e.preview}${linksStr}`
     }).join('\n')
   },
 }

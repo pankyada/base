@@ -1,0 +1,66 @@
+{
+  "provenance": {
+    "name": "base-synthetic-public-v3",
+    "description": "Synthetic capability and source-grounded memory labels; no private prompts or tool payloads.",
+    "created": "2026-09-19"
+  },
+  "cases": [
+    {
+      "id": "durable-preference",
+      "request": "Remember that I prefer a short email summary after each weekly review.",
+      "candidates": [
+        {"id": "memory-write", "description": "Save a user-requested durable preference with source evidence."},
+        {"id": "memory-read", "description": "Read existing scoped preferences to avoid a duplicate."},
+        {"id": "web-search", "description": "Search public web sources for current information."}
+      ],
+      "expected_applicable": ["memory-write"],
+      "offline_applicable": {"memory-write": 0.91, "memory-read": 0.31, "web-search": 0.08},
+      "memory_candidate": {"text": "User prefers a short email summary after each weekly review.", "source_id": "synthetic-user-1", "source_excerpt": "I prefer a short email summary after each weekly review.", "source_role": "user", "scope": "user", "tainted": false},
+      "expected_memory_promotion": true,
+      "offline_memory": {"support": 0.96, "durable": 0.88, "useful": 0.91}
+    },
+    {
+      "id": "temporary-status",
+      "request": "Read the scoped status record for the staging server; it is offline right now and should be checked again later.",
+      "candidates": [
+        {"id": "memory-read", "description": "Read the existing scoped status record for the staging server."},
+        {"id": "memory-write", "description": "Save a durable memory record."},
+        {"id": "web-search", "description": "Search public web sources for current information."}
+      ],
+      "expected_applicable": ["memory-read"],
+      "offline_applicable": {"memory-read": 0.84, "memory-write": 0.12, "web-search": 0.04},
+      "memory_candidate": {"text": "The staging server is offline right now.", "source_id": "synthetic-observation-1", "source_excerpt": "The staging server is offline right now; check again later.", "source_role": "user", "scope": "project", "tainted": false},
+      "expected_memory_promotion": false,
+      "offline_memory": {"support": 0.94, "durable": 0.18, "useful": 0.42}
+    },
+    {
+      "id": "unsupported-deployment-assertion",
+      "request": "Read the deployment log at /tmp/release.log and run the named release-smoke test before telling me whether the release succeeded.",
+      "candidates": [
+        {"id": "read-release-log", "description": "Read the deployment log at the named path /tmp/release.log."},
+        {"id": "bash-release-smoke", "description": "Run the named release-smoke test through the existing execution gate."},
+        {"id": "memory-write", "description": "Save a durable claim that the release succeeded."}
+      ],
+      "expected_applicable": ["read-release-log", "bash-release-smoke"],
+      "offline_applicable": {"read-release-log": 0.88, "bash-release-smoke": 0.83, "memory-write": 0.17},
+      "memory_candidate": {"text": "The release succeeded.", "source_id": "synthetic-assistant-1", "source_excerpt": "The release succeeded.", "source_role": "assistant", "scope": "project", "tainted": false},
+      "expected_memory_promotion": false,
+      "offline_memory": {"support": 0.22, "durable": 0.73, "useful": 0.62}
+    },
+    {
+      "id": "no-match",
+      "request": "What is 17 + 25?",
+      "candidates": [
+        {"id": "memory-write", "description": "Save a durable user preference."},
+        {"id": "read-release-log", "description": "Read a deployment log at a named path."},
+        {"id": "web-search", "description": "Search the web for the latest documentation."},
+        {"id": "bash-release-smoke", "description": "Run a named release-smoke test."}
+      ],
+      "expected_applicable": [],
+      "offline_applicable": {"memory-write": 0.05, "read-release-log": 0.04, "web-search": 0.06, "bash-release-smoke": 0.03},
+      "memory_candidate": {"text": "No durable fact proposed.", "source_id": "synthetic-none", "source_excerpt": "No durable fact proposed.", "source_role": "user", "scope": "project", "tainted": false},
+      "expected_memory_promotion": false,
+      "offline_memory": {"support": 0.51, "durable": 0.49, "useful": 0.52}
+    }
+  ]
+}

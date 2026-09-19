@@ -26,7 +26,10 @@ export const recallTool: ToolDefinition = {
       text: typeof input.text === 'string' ? input.text : undefined,
       limit: typeof input.limit === 'number' ? input.limit : undefined,
     }
-    const entries = await ctx.memory.query(scope, query)
+    const recall = ctx.memoryRecall ?? ctx.memoryCapture
+    const entries = recall
+      ? await recall.recall(ctx.memory, scope, query)
+      : await ctx.memory.query(scope, query)
     if (!entries.length) return `(no memories match in ${scope} scope)`
     return entries.map(entry => {
       const temporal = entry.temporal

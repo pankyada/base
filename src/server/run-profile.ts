@@ -10,8 +10,8 @@ import { createSession, saveSession } from '../session/store.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
 import { GraphMemoryProvider } from '../memory/graph-memory.js'
 import { loadAllSkills, resolveSkillsDirs } from '../skills/loader.js'
-import { buildSkillIndex } from '../skills/indexer.js'
-import { buildSystemPrompt } from '../context/system-prompt.js'
+import { buildDecisionSkillIndex } from '../context/system-prompt.js'
+import { buildSystemPrompt, refreshMemoryPrompt, restoreBaselineMemoryPrompt } from '../context/system-prompt.js'
 import { loadAgentTools } from '../agents/loader.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import { runWorkflow } from '../workflow/runner.js'
@@ -29,6 +29,10 @@ import type { RunBudget } from '../runs/budget.js'
 import { audit } from '../audit/journal.js'
 import { createRootFrame } from '../agents/frames.js'
 import type { AgentFrame } from '../types.js'
+import { DecisionRuntimeService, applyDecisionTelemetry, createDecisionReservation, createProfileDecisionRuntime, createProfileMemoryCapture, createProfileAdvisories } from '../decisions/runtime.js'
+import type { DecisionRuntime } from '../decisions/runtime.js'
+import { createCompactionDecisionAdvisor } from '../decisions/compaction.js'
+import { MemoryConflictStore } from '../memory/conflicts.js'
 
 export interface RestUsage extends Partial<UsageMetadata> {
   tokens_in: number
@@ -62,6 +66,8 @@ export interface RunProfileOptions {
   protocolVersion?: number
   /** Test/runtime seam for an already resolved provider; production builds it from profile. */
   provider?: ProviderClient
+  /** Test/runtime seam for an already resolved decision service. */
+  decisionRuntime?: DecisionRuntime
   /** Context-bound tools for isolated runtimes such as the Town orchestrator. */
   runtimeTools?: ToolDefinition[]
   /** Hard per-run ACL controls; applied after profile ACL and approval mode. */
@@ -103,16 +109,7 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       : new FsMemoryProvider(profile.artifact_dir, session)
     const skills = loadAllSkills(resolveSkillsDirs())
     const systemPromptBase = `${readFileSync(profile.system_prompt, 'utf-8')}${opts.systemPromptAppend ? `\n\n${opts.systemPromptAppend}` : ''}`
-    const skillIndex = buildSkillIndex(skills)
-    if (session.messages.length === 0) {
-      session.messages.push({
-        role: 'system',
-        content: await buildSystemPrompt({ profile, systemPromptBase, skillIndex, memory, onDiagnostics: diagnostics => {
-          if (process.env.HARNESS_DIAGNOSTICS === '1') console.info(`[diagnostics] prompt assembly ${JSON.stringify(diagnostics)}`)
-        } }),
-      })
-    }
-
+    const skillIndex = buildDecisionSkillIndex(profile, skills)
     if (opts.resume) {
       const hasAnswer = session.messages.some((message: any) =>
         message?.role === 'tool' && message.tool_call_id === opts.resume!.toolCallId)
@@ -122,6 +119,47 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
     }
 
     const agentTools = await loadAgentTools(profile)
+    const decisionRuntime = opts.decisionRuntime ?? createProfileDecisionRuntime(profile, {
+      reservation: createDecisionReservation(opts.budget),
+      onTelemetry: record => applyDecisionTelemetry(session, record),
+    })
+    const memoryCapture = createProfileMemoryCapture(profile, decisionRuntime, signal, 'memory_capture')
+    const memoryRetention = createProfileMemoryCapture(profile, decisionRuntime, signal, 'memory_retention')
+    const memoryRecall = createProfileMemoryCapture(profile, decisionRuntime, signal, 'memory_recall')
+    const compactionDecision = (() => {
+      const config = profile.decision_layer
+      const mode = config?.features.compaction
+      if (!config || (mode !== 'shadow' && mode !== 'enforce') || !(decisionRuntime instanceof DecisionRuntimeService) || !decisionRuntime.provider || !config.model) return undefined
+      return createCompactionDecisionAdvisor({
+        provider: decisionRuntime.provider,
+        model: config.model,
+        signal,
+        mode,
+        evaluateOptions: decisionRuntime.evaluateOptions(signal),
+      })
+    })()
+
+    const refreshRecall = memoryRecall && profile.decision_layer?.features.memory_recall === 'enforce'
+    if (session.messages.length === 0) {
+      const systemContent = await buildSystemPrompt({
+        profile,
+        systemPromptBase,
+        skillIndex,
+        memory,
+        memoryRecall,
+        memoryRecallQuery: userMessage,
+        memoryProject: session.project,
+        onDiagnostics: diagnostics => {
+          if (process.env.HARNESS_DIAGNOSTICS === '1') console.info(`[diagnostics] prompt assembly ${JSON.stringify(diagnostics)}`)
+        },
+      })
+      session.messages.push({ role: 'system', content: systemContent })
+    } else if (refreshRecall) {
+      await refreshMemoryPrompt({ session, memory, memoryRecall, query: userMessage })
+    } else if (profile.decision_layer?.features.memory_recall !== 'enforce') {
+      await restoreBaselineMemoryPrompt({ session, memory })
+    }
+
     const context: ToolContext = {
       profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
       events, openai, provider, attemptBudget, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2, channels,
@@ -132,6 +170,13 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
       runtimeToolAllowlist: opts.runtimeToolAllowlist,
       denyMutatingTools: opts.denyMutatingTools,
       stageSystemPromptAppend: opts.stageSystemPromptAppend,
+      decisionRuntime,
+      memoryCapture,
+      memoryRecall,
+      compactionDecision,
+      memoryRetention,
+      memoryConflicts: new MemoryConflictStore(user),
+      advisories: createProfileAdvisories(profile, decisionRuntime, signal),
     }
     context.provider = bindRunProvider(provider, context)
 

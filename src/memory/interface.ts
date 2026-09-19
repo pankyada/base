@@ -26,6 +26,17 @@ export interface ClaimMeta {
   tainted?: boolean
 }
 
+/** Reversible retention state. Archived records remain readable and restorable. */
+export interface RetentionMeta {
+  state: 'active' | 'archived' | 'review'
+  reason?: string
+  decided_at?: string
+  source_revision?: string
+  /** Explicit user retention and pins are never automatically archived. */
+  explicit?: boolean
+  pinned?: boolean
+}
+
 export interface RecallQuery {
   at?: string
   window?: string
@@ -42,6 +53,9 @@ export interface MemoryRecord {
   provenance?: 'trusted' | 'untrusted'
   source?: string
   claim?: ClaimMeta
+  retention?: RetentionMeta
+  source_evidence?: string[]
+  source_revision?: string
 }
 
 export interface MemoryEntry {
@@ -51,6 +65,11 @@ export interface MemoryEntry {
   links?: MemoryLink[]
   temporal?: TemporalMeta
   claim?: ClaimMeta
+  provenance?: 'trusted' | 'untrusted'
+  source?: string
+  retention?: RetentionMeta
+  source_evidence?: string[]
+  source_revision?: string
 }
 
 export interface MemoryProvider {
@@ -60,4 +79,9 @@ export interface MemoryProvider {
   list(scope: MemoryScope): Promise<MemoryEntry[]>
   query(scope: MemoryScope, query: RecallQuery): Promise<MemoryEntry[]>
   buildSystemPromptSection(): Promise<string>
+  /** Optional metadata-preserving write used by evidence-aware capture. */
+  writeRecord?(scope: MemoryScope, key: string, record: MemoryRecord): Promise<void>
+  /** Optional additive retention operations. Older/third-party providers may omit them. */
+  archive?(scope: MemoryScope, key: string, metadata?: Omit<RetentionMeta, 'state'> & { state?: 'archived' | 'review' }): Promise<void>
+  restore?(scope: MemoryScope, key: string): Promise<void>
 }

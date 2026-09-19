@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { project } from '../src/context/projection.js'
 import { estimateTokens } from '../src/context/estimator.js'
 import { createSession } from '../src/session/store.js'
+import type { CompactionDecisionAdvisor } from '../src/decisions/compaction.js'
+import { CompactionDecisionControlError } from '../src/decisions/compaction.js'
 
 function profile(overrides: Record<string, unknown> = {}): any {
   return {
@@ -19,6 +21,70 @@ function turn(n: number, content = `turn ${n}`): unknown[] {
 }
 
 describe('context projection', () => {
+  it('preserves selected original source groups as supplemental pins under the real projection path', async () => {
+    const session = createSession('test', 'user')
+    session.messages.push(
+      { role: 'system', content: 's' },
+      { role: 'user', content: 'commitment: retain this evidence' },
+      { role: 'assistant', content: null, providerState: { secret: 'hidden' }, tool_calls: [{ id: 'call-source', type: 'function', function: { name: 'Read', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'call-source', content: 'verified source result' },
+      ...turn(2, 'tail '.repeat(1200)),
+    )
+    const before = JSON.stringify(session.messages)
+    const advisor: CompactionDecisionAdvisor = { mode: 'enforce', select: async groups => [groups[0]?.id] }
+    const projected: any[] = await project(session, profile({ max_tokens: 1000 }), openai(), undefined, undefined, undefined, undefined, advisor)
+    expect(session.context?.supplemental_pins).toEqual([expect.objectContaining({ key: expect.stringMatching(/^compaction:turn:1:4:/) })])
+    expect(session.context?.supplemental_pins?.[0]?.text).toContain('call-source')
+    expect(session.context?.supplemental_pins?.[0]?.text).toContain('tool_call_id')
+    expect(session.context?.supplemental_pins?.[0]?.text).not.toContain('providerState')
+    expect(projected[0].content).toContain('source-group turn:1:4')
+    expect(JSON.stringify(session.messages)).toBe(before)
+  })
+
+  it('runs shadow selection with baseline-identical projection and no pins', async () => {
+    const baseline = createSession('test', 'user')
+    baseline.messages.push({ role: 'system', content: 's' }, ...turn(1, 'old '.repeat(300)), ...turn(2, 'tail'))
+    const shadowSession = JSON.parse(JSON.stringify(baseline))
+    const advisor: CompactionDecisionAdvisor = { mode: 'shadow', select: async groups => groups.map(group => group.id) }
+    const base = await project(baseline, profile({ max_tokens: 180 }), openai())
+    const shadow = await project(shadowSession, profile({ max_tokens: 180 }), openai(), undefined, undefined, undefined, undefined, advisor)
+    expect(shadow).toEqual(base)
+    expect(shadowSession.context?.pins).toEqual([])
+  })
+
+  it('does not pin incomplete tool groups and propagates cancellation', async () => {
+    const session = createSession('test', 'user')
+    session.messages.push({ role: 'system', content: 's' }, { role: 'user', content: 'old '.repeat(1000) }, { role: 'assistant', content: null, tool_calls: [{ id: 'unclosed', type: 'function', function: { name: 'Read', arguments: '{}' } }] }, ...turn(2, 'tail'))
+    const advisor: CompactionDecisionAdvisor = { mode: 'enforce', select: async () => ['turn:1:3'] }
+    await project(session, profile({ max_tokens: 180 }), openai(), undefined, undefined, undefined, undefined, advisor)
+    expect(session.context?.pins).toEqual([])
+    const complete = createSession('test', 'user')
+    complete.messages.push({ role: 'system', content: 's' }, ...turn(1, 'old '.repeat(1000)), ...turn(2, 'tail'))
+    const cancelled: CompactionDecisionAdvisor = { mode: 'enforce', select: async () => { throw new CompactionDecisionControlError('cancelled') } }
+    await expect(project(complete, profile({ max_tokens: 180 }), openai(), undefined, undefined, undefined, undefined, cancelled)).rejects.toBeInstanceOf(CompactionDecisionControlError)
+  })
+
+  it('discards a late selection when the source ledger changes before pinning', async () => {
+    const session = createSession('test', 'user')
+    session.messages.push({ role: 'system', content: 's' }, ...turn(1, 'old '.repeat(1000)), ...turn(2, 'tail'))
+    const advisor: CompactionDecisionAdvisor = { mode: 'enforce', select: async groups => {
+      session.messages[1] = { role: 'user', content: 'changed after selection' }
+      return [groups[0]?.id]
+    } }
+    await project(session, profile({ max_tokens: 180 }), openai(), undefined, undefined, undefined, undefined, advisor)
+    expect(session.context?.supplemental_pins).toEqual([])
+  })
+
+  it('removes persisted semantic pins when compaction is disabled later', async () => {
+    const session = createSession('test', 'user')
+    session.messages.push({ role: 'system', content: 's' }, { role: 'user', content: 'retain this' }, { role: 'assistant', content: 'verified evidence' }, ...turn(2, 'tail '.repeat(1200)))
+    const advisor: CompactionDecisionAdvisor = { mode: 'enforce', select: async groups => [groups[0]?.id] }
+    await project(session, profile({ max_tokens: 1000 }), openai(), undefined, undefined, undefined, undefined, advisor)
+    expect(session.context?.supplemental_pins?.length).toBe(1)
+    await project(session, profile({ max_tokens: 1000 }), openai())
+    expect(session.context?.supplemental_pins).toEqual([])
+  })
+
   it('orders system, digest, then live ledger messages', async () => {
     const session = createSession('test', 'user')
     session.messages.push({ role: 'system', content: 'system' }, ...turn(1), { role: 'user', content: 'live' })

@@ -68,6 +68,9 @@ import { SessionApprovalGrants } from './session-approvals.js'
 import { RunBudget, BudgetExceeded } from '../runs/budget.js'
 import { sessionEndFromError, type SessionEndStatus } from './session-status.js'
 import { createRootFrame } from '../agents/frames.js'
+import { applyDecisionTelemetry, createDecisionReservation, createProfileDecisionRuntime, createProfileMemoryCapture, createProfileAdvisories } from '../decisions/runtime.js'
+import { buildDecisionSkillIndex, refreshMemoryPrompt, restoreBaselineMemoryPrompt } from '../context/system-prompt.js'
+import { MemoryConflictStore } from '../memory/conflicts.js'
 import { delegateTool } from '../tools/builtin/delegate.js'
 import { Bulletin } from '../agents/bulletin.js'
 import { postBoardMessage } from './board-handler.js'
@@ -648,6 +651,9 @@ async function main() {
       if (!activeContext && abortController.signal.aborted) abortController = new AbortController()
       const operationController = new AbortController()
       maintenanceControllers.add(operationController)
+      const decisionRuntime = createProfileDecisionRuntime(connectionProfile, {
+        onTelemetry: record => applyDecisionTelemetry(session, record),
+      })
       const context: ToolContext = {
         profile: connectionProfile,
         session,
@@ -658,6 +664,12 @@ async function main() {
         events: fleetEvents(runId),
         openai: connectionOpenai,
         provider: connectionRawProvider,
+        decisionRuntime,
+        memoryCapture: createProfileMemoryCapture(connectionProfile, decisionRuntime, operationController.signal),
+        memoryRecall: createProfileMemoryCapture(connectionProfile, decisionRuntime, operationController.signal, 'memory_recall'),
+        memoryRetention: createProfileMemoryCapture(connectionProfile, decisionRuntime, operationController.signal, 'memory_retention'),
+        memoryConflicts: new MemoryConflictStore(userId),
+        advisories: createProfileAdvisories(connectionProfile, decisionRuntime, operationController.signal),
         signal: AbortSignal.any([abortController.signal, operationController.signal]),
         deadline: Date.now() + (connectionProfile.model.auth === 'codex_oauth'
           ? connectionProfile.model.codex.request_timeout_ms
@@ -698,12 +710,6 @@ async function main() {
       const previewMemory = connectionProfile.memory?.provider === 'graph'
         ? new GraphMemoryProvider(connectionProfile.artifact_dir, previewSession)
         : new FsMemoryProvider(connectionProfile.artifact_dir, previewSession)
-      if (previewSession.messages.length === 0) {
-        previewSession.messages.push({
-          role: 'system',
-          content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, previewMemory, workingDir),
-        })
-      }
       const planEvents: AgentLoopEvents = {
         onToken: () => {},
         onToolStart: (id, n, i, agentId) => sendForRun({ type: 'tool_start', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
@@ -722,9 +728,18 @@ async function main() {
       }
       try {
         const agentTools = await loadAgentTools(connectionProfile)
+        const decisionRuntime = createProfileDecisionRuntime(connectionProfile, {
+          onTelemetry: record => applyDecisionTelemetry(previewSession, record),
+        })
         const previewContext: ToolContext = {
           profile: connectionProfile, session: previewSession, workingDir, memory: previewMemory, skills, mcpEntries,
           events: planEvents, openai: connectionOpenai, provider: connectionProvider, signal: abortController.signal, delegateDepth: 0, agentTools,
+          decisionRuntime,
+          memoryCapture: createProfileMemoryCapture(connectionProfile, decisionRuntime, abortController.signal),
+          memoryRecall: createProfileMemoryCapture(connectionProfile, decisionRuntime, abortController.signal, 'memory_recall'),
+          memoryRetention: createProfileMemoryCapture(connectionProfile, decisionRuntime, abortController.signal, 'memory_retention'),
+          memoryConflicts: new MemoryConflictStore(userId),
+          advisories: createProfileAdvisories(connectionProfile, decisionRuntime, abortController.signal),
           maxDepth: connectionProfile.max_depth ?? 2, wasmSupported, approvalMode, channels: connectionChannels, runId,
           pendingInputs: pendingStore,
           agentFrame: createRootFrame(connectionProfile.name, previewSession.id),
@@ -732,6 +747,14 @@ async function main() {
           agentControllers,
         }
         previewContext.provider = bindRunProvider(connectionRawProvider, previewContext)
+        if (previewSession.messages.length === 0) {
+          const prompt = await buildInteractiveSystemPrompt(connectionProfile, audioSupported, buildDecisionSkillIndex(connectionProfile, skills), previewMemory, workingDir, previewContext.memoryRecall, request, previewSession.project)
+          previewSession.messages.push({ role: 'system', content: prompt })
+        } else if (previewContext.memoryRecall && connectionProfile.decision_layer?.features.memory_recall === 'enforce') {
+          await refreshMemoryPrompt({ session: previewSession, memory: previewMemory, memoryRecall: previewContext.memoryRecall, query: request })
+        } else if (connectionProfile.decision_layer?.features.memory_recall !== 'enforce') {
+          await restoreBaselineMemoryPrompt({ session: previewSession, memory: previewMemory })
+        }
         const previewUsageBefore = { ...previewSession.usage }
         let preview!: Awaited<ReturnType<typeof runPlanPreview>>
         try {
@@ -1575,14 +1598,6 @@ async function main() {
         const effects = new Map<string, EffectReceipt>()
         const persistJournal = (): void => { try { replayStore.save(runJournal) } catch (error: any) { console.warn(`[replay] journal save failed: ${error.message}`) } }
         recordEvent(runJournal, 'result', { input: msg.content }, 'turn_start'); markCheckpoint(runJournal, 'turn_start'); persistJournal()
-        // Build system prompt with memory on first turn
-        if (session.messages.length === 0) {
-          session.messages.push({
-            role: 'system',
-            content: await buildInteractiveSystemPrompt(connectionProfile, audioSupported, skillIndex, memory, workingDir),
-          })
-        }
-
         const configuredTts = audioSupported && connectionProfile.voice?.tts
           ? resolveVoiceProvider(connectionProfile.voice.tts.provider)?.tts
           : undefined
@@ -1659,9 +1674,19 @@ async function main() {
         }
         await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
+        const decisionRuntime = createProfileDecisionRuntime(connectionProfile, {
+          reservation: createDecisionReservation(budget),
+          onTelemetry: record => applyDecisionTelemetry(session, record),
+        })
         const context: ToolContext = {
           profile: connectionProfile, session, workingDir, memory, skills, mcpEntries,
           events, openai: connectionOpenai, provider: connectionRawProvider, signal: runSignal, delegateDepth: 0,
+          decisionRuntime,
+          memoryCapture: createProfileMemoryCapture(connectionProfile, decisionRuntime, runSignal),
+          memoryRecall: createProfileMemoryCapture(connectionProfile, decisionRuntime, runSignal, 'memory_recall'),
+          memoryRetention: createProfileMemoryCapture(connectionProfile, decisionRuntime, runSignal, 'memory_retention'),
+          memoryConflicts: new MemoryConflictStore(userId),
+          advisories: createProfileAdvisories(connectionProfile, decisionRuntime, runSignal),
           agentTools,
           maxDepth: connectionProfile.max_depth ?? 2,
           wasmSupported,
@@ -1676,6 +1701,14 @@ async function main() {
           bulletin,
         }
         context.provider = bindRunProvider(connectionRawProvider, context)
+        if (session.messages.length === 0) {
+          const prompt = await buildInteractiveSystemPrompt(connectionProfile, audioSupported, buildDecisionSkillIndex(connectionProfile, skills), memory, workingDir, context.memoryRecall, msg.content, session.project)
+          session.messages.push({ role: 'system', content: prompt })
+        } else if (context.memoryRecall && connectionProfile.decision_layer?.features.memory_recall === 'enforce') {
+          await refreshMemoryPrompt({ session, memory, memoryRecall: context.memoryRecall, query: msg.content })
+        } else if (connectionProfile.decision_layer?.features.memory_recall !== 'enforce') {
+          await restoreBaselineMemoryPrompt({ session, memory })
+        }
         activeContext = context
 
         try {

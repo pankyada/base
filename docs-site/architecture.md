@@ -31,6 +31,8 @@ flowchart LR
   S --> L["Agent loop"]
   L --> P["OpenAI-compatible provider"]
   L --> X["Context projection"]
+  L -. "profile opt-in" .-> D["Bounded semantic decisions · Jev adapter"]
+  D -. "selection / advice" .-> X
   L --> G["ACL · budget · provenance gate · audit"]
   G --> E["Built-ins · custom tools · MCP · sub-agents"]
   E --> M["Memory · artifacts · channels"]
@@ -60,6 +62,27 @@ flowchart LR
 
 One process is a convenience boundary, not crash isolation. Run separate server
 processes when a profile needs a separate failure domain.
+
+## Optional semantic decisions
+
+An optional profile-owned decision service evaluates bounded task and candidate
+state through a separate Jev adapter. It can advise capability exposure, memory
+capture/recall/retention, workflow routing, compaction and result/failure handling.
+It is off by default; each feature supports disabled, shadow and enforce modes.
+Shadow is the recommended starting point while thresholds remain uncalibrated.
+
+This service changes context selection, not execution authority. The loop keeps
+its full permitted execution registry for normal gates and pending-call resume.
+Explicit skills, required controls, discovery recovery and explicit pins retain
+priority. Memory candidates still pass structural scope/time filters; no vector
+store or transcript retrieval is added. Retention is reversible, and semantic
+advice never authorizes deletion or upgrades source trust.
+
+Remote use requires explicit outbound-state consent and a credential environment
+variable. Calls remain bounded by request, time and cost limits; telemetry avoids
+raw content. See the [operator guide](https://github.com/pankyada/base/blob/main/docs/jev-decision-layer.md)
+for YAML, recovery behavior and offline/live evaluation. Current implementation
+and calibration acceptance are tracked separately in PT-068 and PT-069.
 
 ## Main features
 

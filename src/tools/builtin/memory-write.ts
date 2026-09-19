@@ -1,4 +1,5 @@
 import { ToolDefinition, ToolContext } from '../types.js'
+import { MemoryDecisionControlError, type MemoryCaptureService } from '../../decisions/memory.js'
 
 export const memoryWriteTool: ToolDefinition = {
   name: 'MemoryWrite',
@@ -41,10 +42,24 @@ export const memoryWriteTool: ToolDefinition = {
     const scope = ((input as any).scope ?? 'user') as 'session' | 'profile' | 'user' | 'project'
     const temporal = { valid_from, valid_until, recur, timezone, entity, confidence, supersedes }
     const before = typeof ctx.memory.read === 'function' ? await ctx.memory.read(scope, key) : null
-    await ctx.memory.write(scope, key, content, links, Object.values(temporal).some(value => value !== undefined) ? temporal : undefined, {
-      tainted: (ctx.taintSources?.length ?? 0) > 0,
-      source: ctx.taintSources?.[0],
-    }, claim)
+    const capture = (ctx as ToolContext & { memoryCapture?: MemoryCaptureService }).memoryCapture
+    const provenance = { tainted: (ctx.taintSources?.length ?? 0) > 0, source: ctx.taintSources?.[0] }
+    if (capture) {
+      await capture.writeExplicit(ctx.memory, { scope, key, content, links, temporal: Object.values(temporal).some(value => value !== undefined) ? temporal : undefined, provenance: provenance.tainted ? 'untrusted' : 'trusted', source: provenance.source, claim })
+    } else {
+      await ctx.memory.write(scope, key, content, links, Object.values(temporal).some(value => value !== undefined) ? temporal : undefined, provenance, claim)
+    }
+    if (capture && ctx.memoryConflicts && claim && !ctx.signal?.aborted) {
+      try {
+        await capture.detectSemanticConflicts(ctx.memory, scope, ctx.memoryConflicts)
+      } catch (error) {
+        // The write is already durable. Preserve its truthful result and undo
+        // receipt when inspection is merely unavailable; control outcomes
+        // still propagate unless cancellation happened after the write.
+        if (error instanceof MemoryDecisionControlError && !ctx.signal?.aborted) throw error
+        if (!(error instanceof MemoryDecisionControlError)) ctx.events?.onNotice?.('warn', 'memory conflict inspection unavailable', error instanceof Error ? error.message : String(error))
+      }
+    }
     return {
       content: `Memory written: ${scope}/${key}${links?.length ? ` (with ${links.length} links)` : ''}`,
       undo: { kind: 'memory_restore', payload: { scope, key, before, project: ctx.session?.project } },

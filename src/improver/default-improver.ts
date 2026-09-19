@@ -11,12 +11,14 @@ import { aggregateRouting } from '../analysis/routing.js'
 import { parseRoutingPolicy, updateRoutingPolicy } from '../workflow/adaptive.js'
 import type { ProviderClient } from '../provider/types.js'
 import { isProviderControlFailure } from '../provider/errors.js'
+import type { MemoryCaptureService } from '../decisions/memory.js'
 
 export class DefaultImprover implements Improver {
   constructor(
     private readonly profile: Profile,
     private readonly openai?: OpenAI,
     private readonly provider?: ProviderClient,
+    private readonly capture?: MemoryCaptureService,
   ) {}
 
   private get modelId(): string {
@@ -62,7 +64,25 @@ export class DefaultImprover implements Improver {
     }
 
     for (const m of memories) {
-      if (m.key && m.content) await memory.write('user', m.key, m.content, undefined, m.temporal)
+      if (m.key && m.content) {
+        if (this.capture) {
+          const evidenceSpans = (session.messages as any[]).map((message, messageIndex) => ({
+            id: `session:${session.id}:message:${messageIndex}`,
+            text: `${message.role ?? 'message'}: ${typeof message.content === 'string' ? message.content : JSON.stringify(message.content)}`.slice(0, 2_000),
+            provenance: message.provenance as 'trusted' | 'untrusted' | undefined,
+            source: typeof message.source === 'string' ? message.source : undefined,
+          }))
+          await this.capture.captureAutomatic(memory, {
+            scope: 'user',
+            key: m.key,
+            content: m.content,
+            temporal: m.temporal,
+            evidence: { ids: evidenceSpans.map(span => span.id), spans: evidenceSpans, revision: `${session.id}:${session.revision}` },
+          })
+        } else {
+          await memory.write('user', m.key, m.content, undefined, m.temporal)
+        }
+      }
     }
 
     if (memories.length > 0) {

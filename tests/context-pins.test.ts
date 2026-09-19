@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { pin, renderPins } from '../src/context/pins.js'
+import { addSupplementalPin, pin, renderPins } from '../src/context/pins.js'
 import { createSession } from '../src/session/store.js'
 import { skillTool } from '../src/tools/builtin/skill.js'
 
@@ -32,6 +32,16 @@ describe('context pins', () => {
     const session = createSession('test', 'user')
     pin(session, profile, 'skill-a', 'body')
     expect(renderPins(session)).toBe(renderPins(session))
+  })
+
+  it('lets a future explicit pin evict supplemental pins while preserving explicit order', () => {
+    const session = createSession('test', 'user')
+    for (let index = 0; index < 4; index++) expect(addSupplementalPin(session, profile, { key: `semantic-${index}`, text: 'evidence '.repeat(20), source_revision: `r${index}` })).toBe('ok')
+    expect(session.context?.supplemental_pins).toHaveLength(4)
+    expect(pin(session, profile, 'explicit-skill', 'skill '.repeat(100))).toBe('ok')
+    expect(session.context?.pins).toEqual([{ key: 'explicit-skill', text: 'skill '.repeat(100) }])
+    expect((session.context?.supplemental_pins?.length ?? 0)).toBeLessThan(4)
+    expect(renderPins(session).indexOf('[explicit-skill]')).toBeLessThan(renderPins(session).indexOf('[semantic-'))
   })
 
   it('Skill pins the body it returns using the skill name', async () => {

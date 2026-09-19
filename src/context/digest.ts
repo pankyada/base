@@ -5,6 +5,7 @@ import type { MemoryProvider } from '../memory/interface.js'
 import type { ProviderClient, ProviderMessage } from '../provider/types.js'
 import { createApiKeyProvider } from '../provider/api-key.js'
 import { isProviderControlFailure } from '../provider/errors.js'
+import type { MemoryCaptureService } from '../decisions/memory.js'
 
 export interface Fact {
   text: string
@@ -27,6 +28,7 @@ export async function buildDigest(
   upto: number,
   memory?: MemoryProvider,
   provider?: ProviderClient,
+  capture?: MemoryCaptureService,
 ): Promise<{ text: string; facts: Fact[] } | null> {
   const ledger = (session.messages as unknown[]).slice(1, Math.max(1, upto)).map(stripProviderState)
   if (ledger.length === 0) return null
@@ -71,7 +73,21 @@ export async function buildDigest(
   if (!text.trim()) return null
   if (memory) {
     for (const [index, fact] of facts.entries()) {
-      await memory.write('project', `context-fact-${upto}-${index}`, fact.text)
+      const key = `context-fact-${upto}-${index}`
+      if (capture) {
+        const evidenceSpans = ledger.map((message, messageIndex) => {
+          const candidate = message as ProviderMessage & { provenance?: 'trusted' | 'untrusted'; source?: string }
+          return { id: `session:${session.id}:message:${messageIndex + 1}`, text: JSON.stringify(stripProviderState(message)).slice(0, 2_000), provenance: candidate.provenance, source: candidate.source }
+        })
+        await capture.captureAutomatic(memory, {
+          scope: 'project',
+          key,
+          content: fact.text,
+          evidence: { ids: evidenceSpans.map(span => span.id), spans: evidenceSpans, revision: `${session.id}:${upto}` },
+        })
+      } else {
+        await memory.write('project', key, fact.text)
+      }
     }
   }
   return { text, facts }

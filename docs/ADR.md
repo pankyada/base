@@ -24,6 +24,7 @@ pointer to what replaced them.
 |---|---|---|---|
 | [84](#adr-84) | Interactive session working directory is persisted workspace state | ✅ | sessions |
 | [85](#adr-85) | Automatic Town dispatch requires authoritative provider capacity | ✅ | orchestrator |
+| [86](#adr-86) | Optional semantic decisions advise context and memory within existing authority | ✅ | decisions |
 | [79](#adr-79) | Explicit Codex OAuth transport alongside API-key defaults | 🔄 | providers |
 | [80](#adr-80) | Caller scope normalized before Core ownership checks | ✅ | server |
 | [81](#adr-81) | Runtime recovery retains state, never executable authority | 🔄 | runtime |
@@ -288,6 +289,13 @@ graph at stage close; no vector store, no embedding retrieval over history.
 *Consequences:* Facts survive compaction and are human-readable and editable.
 Relevance comes from structure, not ranking — the same stance
 [ADR-36](#adr-36) extends with time.
+
+*Addendum (2026-09-19, PT-067/PT-068):* An explicitly enabled decision layer may
+rank or select the bounded candidates already returned by structural scope,
+link/entity/relation and temporal rules. This narrow exception does not add
+embeddings, vector storage or retrieval over the transcript/history. Temporal
+validity, imminent material and ADR-19 explicit pins remain authoritative.
+See [ADR-86](#adr-86); production calibration is tracked separately in PT-069.
 
 ### ADR-19
 **Explicit pins replace the anchor heuristic** — ✅
@@ -1215,3 +1223,45 @@ The root and children retain dependency, workspace, lease/concurrency, runtime,
 approval, ACL and RunBudget checks. Scheduler retries, restart recovery, REST
 child dispatch, grandchildren, continuations, and unrelated tasks never inherit
 the authorization. The root planner remains read-only with Town-only tools.
+
+
+### ADR-86
+
+**Optional semantic decisions advise context and memory within existing authority** — ✅
+
+*Context:* Optional skill/tool schemas and memory can consume context without
+helping the current task. Focused typed judgments can inform selection, but
+semantic relevance is neither execution authority nor evidence of truth.
+
+*Decision:* Add a generic profile-owned decision interface with a Jev adapter.
+Default configuration is disabled. Explicit outbound-state permission and a
+credential environment-variable name are required for enabled remote inference.
+Per-feature shadow mode preserves baseline behavior; enforce mode applies only
+the configured bounded policy. Start operational rollout in shadow while
+thresholds remain provisional. Main models still generate text; code validates
+question/answer shapes, source identities, candidate scope and effects.
+
+Maintain the full permitted tool registry independently from the selected
+provider schemas, preserving explicit requests, controls, discovery recovery and
+pending-call resume. Apply memory judgments only after scope/time filtering,
+retain source provenance and taint, and preserve supported explicit user saves
+through semantic outages. Retention may archive through reversible metadata or
+record unresolved conflicts; it must never delete based on salience or invent a
+supersession winner. Compaction supplements rather than displaces explicit pins.
+Result/failure guidance cannot change executor evidence or replay denied, parked,
+cancelled or effectful actions.
+
+Bound outbound state, calls, bytes, tokens, time and cost. Missing required cost
+pricing is unknown, not zero. Cancellation and policy/budget control failures
+retain their normal force; ordinary inference failures use conservative
+feature-specific fallbacks. Decision telemetry excludes raw state and secrets.
+Existing ACLs, human decisions, provenance gates and provider-capacity admission
+remain unchanged. No new authentication or UI authority is introduced.
+
+*Consequences:* This is an additive exception to ADR-18, not a replacement for
+structural retrieval, ADR-19 pins or durable history. Profile controls can disable
+the service without deleting retained data. PT-068 tracks implementation and
+automated/runtime acceptance; PT-069 tracks live calibration. The four synthetic
+live cases on 2026-09-19 do not establish production quality or deployment.
+See the [operator guide](jev-decision-layer.md) and
+[acceptance specification](superpowers/specs/2026-09-19-jev-decision-layer-spec.md).

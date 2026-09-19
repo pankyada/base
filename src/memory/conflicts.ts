@@ -14,10 +14,25 @@ export interface MemoryConflict {
   claim_key: string
   claim_a: { key: string; value?: string; source?: string }
   claim_b: { key: string; value?: string; source?: string }
+  /** Stable source IDs and rationale are advisory; both claims remain unresolved. */
+  evidence?: string[]
+  rationale?: string
+  candidate_revision?: string
   dependent_missions: string[]
   state: 'open' | 'superseded' | 'ambiguous'
   resolution?: { by: string; at: string; chosen_key?: string; reason?: string }
   revision: number
+}
+
+export function recordUnresolvedConflict(store: MemoryConflictStore, input: Omit<MemoryConflict, 'version' | 'id' | 'revision' | 'state'> & { id?: string; evidence?: string[]; rationale?: string; candidate_revision?: string }): MemoryConflict {
+  const conflict: MemoryConflict = {
+    ...input,
+    version: 1,
+    id: input.id ?? randomUUID(),
+    state: 'open',
+    revision: 1,
+  }
+  return store.save(conflict)
 }
 function claimOf(entry: MemoryEntry | MemoryRecord): ClaimMeta | undefined { return entry.claim }
 function claimKey(entry: MemoryEntry | MemoryRecord): string | undefined { const claim = claimOf(entry); return claim ? `${claim.entity}\u0000${claim.predicate}` : undefined }
@@ -27,6 +42,7 @@ export function resolveConflict(conflict: MemoryConflict, input: { user: string;
 /** Durable per-user conflict records. Conflict files never cross user roots. */
 export class MemoryConflictStore {
   constructor(private readonly user: string) {}
+  get owner(): string { return this.user }
   private root(): string { return join(userPaths(this.user, '').privateMemDir, '.conflicts') }
   private path(id: string): string { return join(this.root(), `${id}.json`) }
   save(conflict: MemoryConflict): MemoryConflict {

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta, ClaimMeta } from './interface.js'
+import { MemoryProvider, MemoryEntry, MemoryLink, MemoryRecord, MemoryScope, RecallQuery, TemporalMeta, ClaimMeta, RetentionMeta } from './interface.js'
 import { Session } from '../session/types.js'
 import { userPaths, projectPaths } from '../session/user-paths.js'
 import { imminentEntries, queryEntries } from './query.js'
@@ -14,6 +14,9 @@ interface GraphNode {
   provenance?: 'trusted' | 'untrusted'
   source?: string
   claim?: ClaimMeta
+  retention?: RetentionMeta
+  source_evidence?: string[]
+  source_revision?: string
 }
 
 interface GraphData {
@@ -73,7 +76,7 @@ export class GraphMemoryProvider implements MemoryProvider {
       if (!val) return null
       try {
         const parsed = JSON.parse(val)
-        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source, claim: parsed.claim }
+        return { content: parsed.content, links: parsed.links, temporal: parsed.temporal, provenance: parsed.provenance, source: parsed.source, claim: parsed.claim, retention: parsed.retention, source_evidence: parsed.source_evidence, source_revision: parsed.source_revision }
       } catch {
         return { content: val }
       }
@@ -81,17 +84,30 @@ export class GraphMemoryProvider implements MemoryProvider {
     const graph = this.loadGraph(scope)
     const node = graph.nodes[key]
     if (!node) return null
-    return { content: node.content, links: node.links, temporal: node.temporal, provenance: node.provenance, source: node.source, claim: node.claim }
+    return { content: node.content, links: node.links, temporal: node.temporal, provenance: node.provenance, source: node.source, claim: node.claim, retention: node.retention, source_evidence: node.source_evidence, source_revision: node.source_revision }
   }
 
   async write(scope: MemoryScope, key: string, content: string, links?: MemoryLink[], temporal?: TemporalMeta, provenance?: { tainted: boolean; source?: string }, claim?: ClaimMeta): Promise<void> {
     validateTemporal(temporal)
     if (scope === 'session') {
-      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim })
+      const existing = await this.read(scope, key)
+      this.session.session_memory[key] = JSON.stringify({ content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim, retention: existing?.retention, source_evidence: existing?.source_evidence, source_revision: existing?.source_revision })
       return
     }
     const graph = this.loadGraph(scope)
-    graph.nodes[key] = { key, content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim }
+    graph.nodes[key] = { key, content, links, temporal, provenance: provenance?.tainted ? 'untrusted' : 'trusted', source: provenance?.source, claim, retention: graph.nodes[key]?.retention, source_evidence: graph.nodes[key]?.source_evidence, source_revision: graph.nodes[key]?.source_revision }
+    this.saveGraph(scope, graph)
+    await this.rebuildIndex(scope)
+  }
+
+  async writeRecord(scope: MemoryScope, key: string, record: MemoryRecord): Promise<void> {
+    validateTemporal(record.temporal)
+    if (scope === 'session') {
+      this.session.session_memory[key] = JSON.stringify({ content: record.content, links: record.links, temporal: record.temporal, provenance: record.provenance ?? 'trusted', source: record.source, claim: record.claim, retention: record.retention, source_evidence: record.source_evidence, source_revision: record.source_revision })
+      return
+    }
+    const graph = this.loadGraph(scope)
+    graph.nodes[key] = { key, content: record.content, links: record.links, temporal: record.temporal, provenance: record.provenance ?? 'trusted', source: record.source, claim: record.claim, retention: record.retention, source_evidence: record.source_evidence, source_revision: record.source_revision }
     this.saveGraph(scope, graph)
     await this.rebuildIndex(scope)
   }
@@ -109,6 +125,37 @@ export class GraphMemoryProvider implements MemoryProvider {
     }
   }
 
+  async archive(scope: MemoryScope, key: string, metadata: Omit<RetentionMeta, 'state'> & { state?: 'archived' | 'review' } = {}): Promise<void> {
+    const current = await this.read(scope, key)
+    if (!current) throw new Error(`memory entry not found: ${scope}/${key}`)
+    const retention: RetentionMeta = { ...current.retention, ...metadata, state: metadata.state ?? 'archived', decided_at: metadata.decided_at ?? new Date().toISOString() }
+    if (scope === 'session') {
+      this.session.session_memory[key] = JSON.stringify({ ...current, retention })
+      return
+    }
+    const graph = this.loadGraph(scope)
+    if (!graph.nodes[key]) throw new Error(`memory entry not found: ${scope}/${key}`)
+    graph.nodes[key].retention = retention
+    this.saveGraph(scope, graph)
+    await this.rebuildIndex(scope)
+  }
+
+  async restore(scope: MemoryScope, key: string): Promise<void> {
+    const current = await this.read(scope, key)
+    if (!current) throw new Error(`memory entry not found: ${scope}/${key}`)
+    const retention = current.retention ? { ...current.retention, state: 'active' as const, decided_at: new Date().toISOString() } : undefined
+    if (scope === 'session') {
+      this.session.session_memory[key] = JSON.stringify({ ...current, retention })
+      return
+    }
+    const graph = this.loadGraph(scope)
+    if (!graph.nodes[key]) throw new Error(`memory entry not found: ${scope}/${key}`)
+    if (retention) graph.nodes[key].retention = retention
+    else delete graph.nodes[key].retention
+    this.saveGraph(scope, graph)
+    await this.rebuildIndex(scope)
+  }
+
   async list(scope: MemoryScope): Promise<MemoryEntry[]> {
     if (scope === 'session') {
       return Object.entries(this.session.session_memory).map(([key, val]) => {
@@ -118,7 +165,7 @@ export class GraphMemoryProvider implements MemoryProvider {
           const parsed = JSON.parse(val)
           preview = (parsed.content as string).slice(0, 100)
           links = parsed.links
-          return { key, preview, content: parsed.content, links, temporal: parsed.temporal, claim: parsed.claim }
+          return { key, preview, content: parsed.content, links, temporal: parsed.temporal, claim: parsed.claim, provenance: parsed.provenance, source: parsed.source, retention: parsed.retention, source_evidence: parsed.source_evidence, source_revision: parsed.source_revision }
         } catch { /* ignore */ }
         return { key, preview, content: preview, links }
       })
@@ -129,12 +176,12 @@ export class GraphMemoryProvider implements MemoryProvider {
       preview: node.content.slice(0, 100),
       content: node.content,
       links: node.links,
-      temporal: node.temporal, claim: node.claim,
+      temporal: node.temporal, claim: node.claim, provenance: node.provenance, source: node.source, retention: node.retention, source_evidence: node.source_evidence, source_revision: node.source_revision,
     }))
   }
 
   async query(scope: MemoryScope, query: RecallQuery): Promise<MemoryEntry[]> {
-    return queryEntries(await this.list(scope), query)
+    return queryEntries((await this.list(scope)).filter(entry => entry.retention?.state !== 'archived'), query)
   }
 
   async buildSystemPromptSection(): Promise<string> {
@@ -147,9 +194,9 @@ export class GraphMemoryProvider implements MemoryProvider {
     const personal = await this.query('user', { at })
     const project = (this.session.project ?? 'inbox') === 'inbox' ? [] : await this.query('project', { at })
     const imminent = [
-      ...imminentEntries(await this.list('profile'), now),
-      ...imminentEntries(await this.list('user'), now),
-      ...((this.session.project ?? 'inbox') === 'inbox' ? [] : imminentEntries(await this.list('project'), now)),
+      ...imminentEntries((await this.list('profile')).filter(entry => entry.retention?.state !== 'archived'), now),
+      ...imminentEntries((await this.list('user')).filter(entry => entry.retention?.state !== 'archived'), now),
+      ...((this.session.project ?? 'inbox') === 'inbox' ? [] : imminentEntries((await this.list('project')).filter(entry => entry.retention?.state !== 'archived'), now)),
     ]
     if (shared.length) parts.push(`## Memory (shared)\n${render(shared)}`)
     if (personal.length) parts.push(`## Memory (yours)\n${render(personal)}`)

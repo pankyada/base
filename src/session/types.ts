@@ -9,6 +9,8 @@ export interface SessionToolCall {
 
 export interface ContextState {
   pins: Array<{ key: string; text: string }>
+  /** Jev-selected source groups; explicit pins remain in `pins` and always render first. */
+  supplemental_pins?: Array<{ key: string; text: string; source_revision: string; created_at: string }>
   digest?: { upto: number; text: string }
   calib: { ratio: number; samples: number }
 }

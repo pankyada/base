@@ -13,6 +13,11 @@ import type { ChannelRuntime } from '../channels/runtime.js'
 import type { PendingStore } from '../runs/pending.js'
 import type { RunBudget } from '../runs/budget.js'
 import type { Bulletin, BulletinPost } from '../agents/bulletin.js'
+import type { DecisionRuntime } from '../decisions/runtime.js'
+import type { MemoryCaptureService } from '../decisions/memory.js'
+import type { CompactionDecisionAdvisor } from '../decisions/compaction.js'
+import type { MemoryConflictStore } from '../memory/conflicts.js'
+import type { DecisionAdvisoryService } from '../decisions/advisories.js'
 
 export type ToolEffect = 'read' | 'write' | 'outbound' | 'destructive'
 export type ToolProvenance = 'trusted' | 'untrusted'
@@ -64,6 +69,16 @@ export interface ToolContext {
   /** Legacy API client seam; Codex profiles leave this unset. */
   openai?: OpenAI
   provider?: ProviderClient
+  /** Optional per-run Jev decision layer. It can narrow attached schemas only. */
+  decisionRuntime?: DecisionRuntime
+  /** Evidence-aware automatic memory path; explicit MemoryWrite stays separate. */
+  memoryCapture?: MemoryCaptureService
+  /** Scoped recall/ranking path; independent from automatic capture. */
+  memoryRecall?: MemoryCaptureService
+  compactionDecision?: CompactionDecisionAdvisor
+  memoryRetention?: MemoryCaptureService
+  memoryConflicts?: MemoryConflictStore
+  advisories?: DecisionAdvisoryService
   credentialGeneration?: string
   deadline?: number
   usageSink?: import('../provider/types.js').ModelUsageSink

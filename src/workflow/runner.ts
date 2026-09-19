@@ -20,6 +20,8 @@ import { maybeShadow } from './shadow.js'
 import type { ProviderClient, UsageMetadata } from '../provider/types.js'
 import { bindRunProvider } from '../provider/invocation.js'
 import { mergeUsageDelta, usageDeltaFromSession } from '../usage/ledger.js'
+import { createWorkflowDecisionAdvisor, type WorkflowDecisionAdvisor } from '../decisions/workflow.js'
+import { DecisionRuntimeService } from '../decisions/runtime.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
@@ -37,6 +39,12 @@ function triageIsFixed(profile: Profile): boolean {
   const min = profile.workflow?.min_intensity ?? {}
   const max = profile.workflow?.max_intensity ?? {}
   return STAGES.every(stage => min[stage] !== undefined && max[stage] !== undefined && min[stage] === max[stage])
+}
+
+function workflowAdvisor(profile: Profile, context: ToolContext, signal: AbortSignal): WorkflowDecisionAdvisor | undefined {
+  const config = profile.decision_layer
+  if (!config || config.features.workflow_routing === 'disabled' || !(context.decisionRuntime instanceof DecisionRuntimeService) || !context.decisionRuntime.provider || !config.model) return undefined
+  return createWorkflowDecisionAdvisor({ provider: context.decisionRuntime.provider, model: config.model, signal, mode: config.features.workflow_routing, evaluateOptions: context.decisionRuntime.evaluateOptions(signal) })
 }
 
 // A sentence-scoped negation check on the failure vocabulary — "no errors
@@ -193,10 +201,11 @@ export async function runPlanPreview(request: string, profile: Profile, session:
   if (context.provider) previewContext.provider = bindRunProvider(context.provider, previewContext)
   const usageBefore = { ...previewSession.usage }
   try {
+    const decision = workflowAdvisor(profile, previewContext, signal)
     const fixedTriage = triageIsFixed(profile)
     const triage = fixedTriage
       ? { task_class: playbook.task_classes[0] ?? 'general', recon_intensity: Math.max(1, profile.workflow?.min_intensity.recon ?? 1) as Intensity }
-      : await triageA(request, playbook, openai, profile, previewContext.provider)
+      : await triageA(request, playbook, openai, profile, previewContext.provider, decision)
     const graphSlice = await queryProjectGraph(previewContext.memory, request).catch(() => 'no prior project knowledge')
     const reconPlan: TaskPlan = {
       task_class: triage.task_class,
@@ -212,7 +221,7 @@ export async function runPlanPreview(request: string, profile: Profile, session:
     prior.push({ stage: 'recon', body: recon.body })
     const plan = fixedTriage
       ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
-      : await triageB(request, recon.body, playbook, openai, profile, triage.task_class, previewContext.provider)
+      : await triageB(request, recon.body, playbook, openai, profile, triage.task_class, previewContext.provider, decision)
     const intensity = Math.max(1, plan.intensity.plan) as Intensity
     const routing = resolveTier(profile, 'plan', plan.task_class, undefined, playbook.name)
     const result = await executeStage(request, 'plan', intensity, routing.tier, 1, taskId, plan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
@@ -226,6 +235,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   const taskId = options.taskId ?? newTaskId()
   const playbook = loadPlaybook(profile.workflow?.playbook ?? 'generic')
   const loop = options.loop ?? runAgentLoop
+  const decision = workflowAdvisor(profile, context, signal)
   const maxRetries = profile.workflow?.budget.max_stage_retries ?? 2
   const maxCost = profile.workflow?.budget.max_usd_per_task ?? 2
   const startedAt = Date.now()
@@ -239,7 +249,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   const fixedTriage = triageIsFixed(profile)
   const triage = fixedTriage
     ? { task_class: playbook.task_classes[0] ?? 'general', recon_intensity: Math.max(1, profile.workflow?.min_intensity.recon ?? 1) as Intensity }
-    : await triageA(request, playbook, openai, profile, context.provider)
+    : await triageA(request, playbook, openai, profile, context.provider, decision)
   const graphSlice = await queryProjectGraph(context.memory, request).catch(() => 'no prior project knowledge')
   const reconPlan: TaskPlan = {
     task_class: triage.task_class,
@@ -323,7 +333,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
       }
       plan = fixedTriage
         ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
-        : await triageB(request, result.body, playbook, openai, profile, triage.task_class, context.provider)
+        : await triageB(request, result.body, playbook, openai, profile, triage.task_class, context.provider, decision)
       pointer++
       continue
     }

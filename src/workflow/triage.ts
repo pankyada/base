@@ -7,6 +7,8 @@ import { STAGES } from './types.js'
 import { logEvent } from '../telemetry/logger.js'
 import type { ProviderClient } from '../provider/types.js'
 import { isProviderControlFailure } from '../provider/errors.js'
+import { WorkflowDecisionControlError } from '../decisions/workflow.js'
+import type { WorkflowDecisionAdvisor } from '../decisions/workflow.js'
 
 const TRIAGE_A_TTL_MS = 5 * 60_000
 const triageACache = new Map<string, { expires: number; value: { task_class: string; recon_intensity: Intensity } }>()
@@ -36,12 +38,25 @@ function requestFingerprint(request: string): string {
 
 export function clearTriageCache(): void { triageACache.clear() }
 
-export async function triageA(request: string, playbook: Playbook, openai: OpenAI | undefined, profile: Profile, provider?: ProviderClient): Promise<{ task_class: string; recon_intensity: Intensity }> {
+export async function triageA(request: string, playbook: Playbook, openai: OpenAI | undefined, profile: Profile, provider?: ProviderClient, decision?: WorkflowDecisionAdvisor): Promise<{ task_class: string; recon_intensity: Intensity }> {
   const fallbackClass = playbook.task_classes.includes('general') ? 'general' : playbook.task_classes[0] ?? 'general'
   const cacheKey = `${playbook.name}:${requestFingerprint(request)}`
   const cached = triageACache.get(cacheKey)
   if (cached && cached.expires > Date.now()) return cached.value
   if (cached) triageACache.delete(cacheKey)
+  if (decision) {
+    try {
+      const selected = await decision.chooseTriage(request, playbook)
+      if (decision.mode !== 'shadow' && selected && playbook.task_classes.includes(selected.task_class)) {
+        const value = { task_class: selected.task_class, recon_intensity: Math.max(1, Math.min(3, selected.recon_intensity)) as Intensity }
+        triageACache.set(cacheKey, { expires: Date.now() + TRIAGE_A_TTL_MS, value })
+        return value
+      }
+    } catch (error) {
+      if (error instanceof WorkflowDecisionControlError) throw error
+      // Ordinary Jev failures use the existing provider triage below.
+    }
+  }
   try {
     const prompt = `Classify request for playbook ${playbook.name}. Return ONLY JSON {"task_class":"...","recon_intensity":1|2|3}. Classes: ${playbook.task_classes.join(', ')}. Request: ${request}`
     const content = await helperText(provider, openai, resolveRole(profile, 'cheap'), prompt, 120)
@@ -58,8 +73,21 @@ export async function triageA(request: string, playbook: Playbook, openai: OpenA
   }
 }
 
-export async function triageB(request: string, reconArtifact: string, playbook: Playbook, openai: OpenAI | undefined, profile: Profile, taskClass?: string, provider?: ProviderClient): Promise<TaskPlan> {
+export async function triageB(request: string, reconArtifact: string, playbook: Playbook, openai: OpenAI | undefined, profile: Profile, taskClass?: string, provider?: ProviderClient, decision?: WorkflowDecisionAdvisor): Promise<TaskPlan> {
   const fallback = defaultsFor(playbook, taskClass ?? playbook.task_classes[0] ?? 'general')
+  if (decision?.choosePlan) {
+    try {
+      const selected = await decision.choosePlan(request, reconArtifact, playbook, taskClass ?? fallback.task_class)
+      if (decision.mode !== 'shadow' && selected) {
+        const chosenClass = selected.task_class && playbook.task_classes.includes(selected.task_class) ? selected.task_class : fallback.task_class
+        const plan = { ...fallback, task_class: chosenClass, intensity: { ...fallback.intensity, ...(selected.intensity ?? {}) } }
+        return clampIntensity(plan, profile.workflow)
+      }
+    } catch (error) {
+      if (error instanceof WorkflowDecisionControlError) throw error
+      // Ordinary Jev failures use the existing provider triage below.
+    }
+  }
   try {
     const prompt = `Return ONLY JSON matching this schema: {"task_class":"string","blast_radius":"single-file|module|cross-module|systemic","reversibility":"easy|hard|irreversible","intensity":{"recon":1,"plan":0,"design":0,"build":1,"verify":0,"review":0},"confidence":0.0,"why":"string"}. Playbook: ${playbook.name}. Request: ${request}. Recon artifact:\n${reconArtifact}`
     const content = await helperText(provider, openai, resolveRole(profile, 'cheap'), prompt, 240)

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import type { Tier, Intensity } from '../workflow/types.js'
+import { DecisionLayerSchema } from '../decisions/types.js'
+import type { DecisionLayerConfig } from '../decisions/types.js'
 
 export const AclValue = z.enum(['allow', 'prompt', 'deny'])
 const PredicateSchema = z.object({
@@ -39,6 +41,8 @@ const BuiltinToolsSchema = z.object({
   Skill: AclEntry.default('allow'),
   MemoryRead: AclEntry.default('allow'),
   MemoryWrite: AclEntry.default('allow'),
+  MemoryRestore: AclEntry.default('allow'),
+  MemoryReview: AclEntry.default('allow'),
   MemoryList: AclEntry.default('allow'),
   MemoryDelete: AclEntry.default('allow'),
   Recall: AclEntry.default('allow'),
@@ -335,6 +339,7 @@ export const ProfileSchema = z.object({
     model_id: z.string().optional(),
   }).optional(),
   context: ContextSchema.optional(),
+  decision_layer: DecisionLayerSchema.optional(),
   memory: z.preprocess(
     (val) => val ?? {},
     z.object({
@@ -402,6 +407,7 @@ export type Profile = Omit<ParsedProfile, 'safety' | 'context' | 'lists' | 'mode
   model: z.infer<typeof CodexModelSchema> | (Omit<z.infer<typeof ApiModelSchema>, 'auth'> & { auth?: 'api_key' })
   safety?: SafetyConfig
   context?: ContextConfig
+  decision_layer?: DecisionLayerConfig
   lists?: Record<string, unknown[] | string>
   /** Absolute source path, added by loadProfile for profile-local references. */
   profile_path?: string

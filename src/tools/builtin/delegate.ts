@@ -15,6 +15,7 @@ import { MemoryProvider } from '../../memory/interface.js'
 import { loadAllSkills, resolveSkillsDirs } from '../../skills/loader.js'
 import { buildSkillIndex } from '../../skills/indexer.js'
 import { runAgentLoop } from '../../loop/agent-loop.js'
+import { createProfileMemoryCapture, createScopedDecisionRuntime } from '../../decisions/runtime.js'
 import { createAgentFrame } from '../../agents/frames.js'
 import { tagEvents } from '../../agents/events.js'
 
@@ -84,11 +85,15 @@ export const delegateTool: ToolDefinition = {
           ? new GraphMemoryProvider(subProfile.artifact_dir, subSession)
           : new FsMemoryProvider(subProfile.artifact_dir, subSession)
         const subSkills = loadAllSkills(resolveSkillsDirs())
+        const subDecisionRuntime = createScopedDecisionRuntime(subProfile, context.decisionRuntime)
+        const subMemoryRecall = createProfileMemoryCapture(subProfile, subDecisionRuntime, context.signal, 'memory_recall')
 
         // Build system prompt for sub-agent
         const systemPromptBase = readFileSync(subProfile.system_prompt, 'utf-8')
         const skillIndex = buildSkillIndex(subSkills)
-        const memSection = await subMemory.buildSystemPromptSection()
+        const memSection = subMemoryRecall
+          ? await subMemoryRecall.buildPromptSection(subMemory, task, subSession.project)
+          : await subMemory.buildSystemPromptSection()
         subSession.messages.push({
           role: 'system',
           content: systemPromptBase + skillIndex + memSection,
@@ -104,6 +109,8 @@ export const delegateTool: ToolDefinition = {
           events: subEvents,
           openai: subOpenai,
           provider: subProvider,
+          decisionRuntime: subDecisionRuntime,
+          memoryRecall: subMemoryRecall,
           attemptBudget: context.attemptBudget,
           deadline: context.deadline,
           usageSink: context.usageSink,

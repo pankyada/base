@@ -14,7 +14,7 @@ import { classifyStatic } from '../safety/rules.js'
 import { logEvent } from '../telemetry/logger.js'
 import { runHooks } from '../hooks/runner.js'
 import { project, projectionTelemetry } from '../context/projection.js'
-import { calibrate, estimateTokens, rawTokens } from '../context/estimator.js'
+import { calibrate, contextWindowFor, estimateTokens, rawTokens } from '../context/estimator.js'
 import { estimateCost, requiresReasoningEffortNone } from '../models/registry.js'
 import type { StageTag } from '../workflow/types.js'
 import { stageAcl } from '../workflow/stage-acl.js'
@@ -23,8 +23,30 @@ import { bindRunProvider } from '../provider/invocation.js'
 import { createApiKeyProvider } from '../provider/api-key.js'
 import type { ProviderClient, ProviderMessage, ProviderRequest } from '../provider/types.js'
 import { ProviderError } from '../provider/errors.js'
+import { toolCapabilities } from '../decisions/runtime.js'
+import { refreshMemoryPrompt, restoreBaselineMemoryPrompt } from '../context/system-prompt.js'
 
 export { estimateCost }
+
+function fitSelectedSkillSection(projected: unknown[], skills: readonly import('../tools/types.js').Skill[], names: readonly string[], session: Session, profile: Profile): string {
+  const selected = skills.filter(skill => names.includes(skill.name))
+  if (selected.length === 0) return ''
+  const maxTokens = contextWindowFor(profile)
+  const systemIndex = projected.findIndex(message => (message as { role?: unknown } | null)?.role === 'system')
+  if (systemIndex < 0) return ''
+  let section = '\n\n## Selected skills'
+  let fitted = ''
+  for (const skill of selected) {
+    const candidate = `${section}\n\n### ${skill.name}\n${skill.content}`
+    const messages = projected.map((message, index) => index === systemIndex
+      ? { ...(message as Record<string, unknown>), content: `${String((message as Record<string, unknown>).content ?? '')}${candidate}` }
+      : message)
+    if (estimateTokens(messages, session) > maxTokens) break
+    fitted = candidate
+    section = candidate
+  }
+  return fitted
+}
 
 function parseToolArguments(value: string, toolName: string): Record<string, unknown> {
   let parsed: unknown
@@ -52,6 +74,7 @@ interface ToolResult {
   isMcp: boolean
   provenance: 'trusted' | 'untrusted'
   source?: string
+  advisory?: string
 }
 
 export async function runAgentLoop(
@@ -82,17 +105,76 @@ export async function runAgentLoop(
   }
 
   const candidateTools = [
-    ...getAllTools(),
+    // The process registry is shared by server connections. Conditional
+    // retention tools may have been registered by an earlier enabled profile,
+    // so apply their profile gate again at the request boundary.
+    ...getAllTools().filter(tool => {
+      if (tool.name !== 'MemoryRestore' && tool.name !== 'MemoryReview') return true
+      return profile.decision_layer?.enabled === true && profile.decision_layer.features.memory_retention !== 'disabled'
+    }),
     ...(context.runtimeTools ?? []),
     ...getMcpToolDefinitions(profile, context.mcpEntries ?? []),
     ...(context.agentTools ?? []),
   ]
-  const allTools = context.runtimeToolAllowlist
+  let allTools = context.runtimeToolAllowlist
     ? candidateTools.filter(tool => context.runtimeToolAllowlist!.includes(tool.name))
     : context.denyMutatingTools
       ? candidateTools.filter(tool => !tool.name.includes('__') && !['Bash', 'ExecuteCode'].includes(tool.name) && (['TownRead', 'TownPost', 'TownAsk'].includes(tool.name) || !isMutatingEffect(effectFor(tool.name))))
       : candidateTools
-  const openaiTools = toOpenAITools(allTools)
+  // Jev can narrow the schemas attached to this request, but it never owns
+  // the executor registry. Existing approval/resume calls therefore continue
+  // to resolve against `allTools` even when a later turn selects less.
+  let attachedTools = allTools
+  let selectedSkillNames: string[] = []
+  let selectionEnforced = false
+  let selectionRequest = userMessage
+  const makeDiscoveryTool = () => ({
+      name: 'CapabilityDiscovery',
+      description: 'List permitted capabilities and request fresh semantic selection for omitted tools.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      execute: async (input: Record<string, unknown>) => {
+        selectionRequest = `${userMessage}\nCapability rediscovery request: ${String(input.query ?? '').slice(0, 1_000)}`
+        return JSON.stringify(selectionVisibleTools().filter(tool => tool.name !== 'CapabilityDiscovery').map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })))
+      },
+    })
+  const selectionVisibleTools = () => allTools.filter(tool => {
+    const isMcp = tool.name.includes('__')
+    const serverName = isMcp ? tool.name.split('__', 2)[0] : undefined
+    const baseName = isMcp ? tool.name.split('__', 2)[1] : tool.name
+    return resolveAcl(baseName, profile, 'danger', serverName, stageOverlay) !== 'deny'
+  })
+  const applySelection = async () => {
+    attachedTools = allTools
+    selectedSkillNames = []
+    selectionEnforced = false
+    if (!context.decisionRuntime) return
+    const visibleTools = selectionVisibleTools()
+    const selection = await context.decisionRuntime.selectCapabilities({
+      request: selectionRequest,
+      profile,
+      skills: context.skills,
+      tools: toolCapabilities(visibleTools).map(capability => capability.name === 'CapabilityDiscovery' ? { ...capability, mandatory: true } : capability),
+      mcpEntries: context.mcpEntries ?? [],
+      taskKey: `${context.runId ?? session.id}:${session.messages.length}`,
+      signal: signal ?? context.signal,
+    })
+    if (selection.mode === 'enforce' && selection.discovery && !allTools.some(tool => tool.name === selection.discovery!.name)) {
+      allTools = [...allTools, makeDiscoveryTool()]
+    }
+    if (selection.mode === 'enforce' && selection.fallback === 'none') {
+      selectionEnforced = true
+      const selected = new Set(selection.selectedToolNames)
+      const attachedVisibleNames = new Set(selectionVisibleTools().map(tool => tool.name))
+      selectedSkillNames = [...new Set([
+        ...selection.selectedSkillNames,
+        ...context.skills.filter(skill => selectionRequest.toLocaleLowerCase().includes(skill.name.toLocaleLowerCase())).map(skill => skill.name),
+      ])]
+      // Mandatory control tools remain available. They are still subject to
+      // the existing profile/runtime ACL at execution time.
+      const mandatory = new Set(['Skill', 'MemoryRead', 'MemoryWrite', 'ContextRestore', 'Notify', 'AskUser', 'CapabilityDiscovery'])
+      attachedTools = allTools.filter(tool => attachedVisibleNames.has(tool.name) && (selected.has(tool.name) || mandatory.has(tool.name)))
+    }
+  }
   let resumeApproval = opts?.resumeApproval
 
   const executeOneTool = async (
@@ -154,12 +236,26 @@ export async function runAgentLoop(
     // Evidence is emitted here, after the real executor returned. Model-supplied
     // ids and prose never reach this callback.
     events.onEvidence?.(tc.id, tc.name, input, result, ok, provenance, source)
+    if (context.advisories) {
+      const advisoryNotes: string[] = []
+      const assessment = await context.advisories.assessResult({ tool_call_id: tc.id, tool_name: tc.name, subgoal: userMessage, executor_result: result.slice(0, 8_000), ok, effect, tainted: provenance === 'untrusted', signal: signal ?? context.signal })
+      if (assessment.kind === 'control') throw new ProviderError(`decision advisory control: ${assessment.reason}`, { code: 'provider_control' })
+      if (assessment.kind === 'advisory' && assessment.mode === 'enforce') advisoryNotes.push(`[Decision advisory ${tc.id}: ${assessment.label}]`)
+      if (!ok) {
+        const guidance = await context.advisories.classifyFailure({ tool_call_id: tc.id, tool_name: tc.name, error: result.slice(0, 4_000), failure_kind: 'tool_error', effect, tainted: provenance === 'untrusted', signal: signal ?? context.signal })
+        if (guidance.kind === 'control') throw new ProviderError(`decision advisory control: ${guidance.reason}`, { code: 'provider_control' })
+        if (guidance.kind === 'advisory' && guidance.mode === 'enforce') advisoryNotes.push(`[Decision guidance ${tc.id}: ${guidance.label}]`)
+      }
+      return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp, provenance, source, advisory: advisoryNotes.length ? advisoryNotes.join(' ') : undefined }
+    }
 
     return { tool_call_id: tc.id, content: result, name: tc.name, input, ok, isMcp, provenance, source }
   }
 
   while (true) {
     if (signal?.aborted) return
+    await applySelection()
+    const openaiTools = toOpenAITools(attachedTools)
     context.budget?.checkModel(session.usage.cost_usd, modelId)
 
     if (resumeApproval) {
@@ -178,6 +274,11 @@ export async function runAgentLoop(
       }
     }
 
+    if (context.memoryRecall) {
+      await refreshMemoryPrompt({ session, memory: context.memory, memoryRecall: context.memoryRecall, query: userMessage })
+    } else {
+      await restoreBaselineMemoryPrompt({ session, memory: context.memory })
+    }
     const projectedMessages = await project(
       session,
       profile,
@@ -185,9 +286,19 @@ export async function runAgentLoop(
       context.memory,
       (message, detail) => events.onNotice?.('warn', message, detail),
       provider,
+      context.memoryCapture,
+      context.compactionDecision,
     )
-    const sentRaw = rawTokens(projectedMessages)
-    const contextTokensEst = estimateTokens(projectedMessages, session)
+    const selectedSkillSection = selectedSkillNames.length > 0
+      ? fitSelectedSkillSection(projectedMessages, context.skills, selectedSkillNames, session, profile)
+      : ''
+    const requestMessages: ProviderMessage[] = selectionEnforced
+      ? (projectedMessages as ProviderMessage[]).map((message, index) => index === 0 && message.role === 'system'
+        ? { ...message, content: `${String(message.content ?? '')}${selectedSkillSection}` }
+        : message)
+      : projectedMessages as ProviderMessage[]
+    const sentRaw = rawTokens(requestMessages)
+    const contextTokensEst = estimateTokens(requestMessages, session)
 
     let assistantContent = ''
     const toolCallMap = new Map<number, { id: string; name: string; args: string }>()
@@ -199,8 +310,8 @@ export async function runAgentLoop(
     try {
       const request: ProviderRequest = {
         model: modelId,
-        messages: projectedMessages as ProviderMessage[],
-        tools: allTools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        messages: requestMessages,
+        tools: openaiTools.map(tool => ({ name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters })),
         stream: true,
         reasoningEffort: profile.model.auth === 'codex_oauth' ? (profile.model.reasoning_effort ?? profile.model.codex.reasoning_effort) : undefined,
         signal,
@@ -463,7 +574,7 @@ export async function runAgentLoop(
         ? r.content.slice(0, MAX_TOOL_RESULT_CHARS) + `\n[truncated ${r.content.length - MAX_TOOL_RESULT_CHARS} chars]`
         : r.content
       session.messages.push({
-        role: 'tool', tool_call_id: r.tool_call_id, content,
+        role: 'tool', tool_call_id: r.tool_call_id, content: r.advisory ? `${content}\n${r.advisory}` : content,
       } as any)
       session.tool_calls.push({
         id: r.tool_call_id,

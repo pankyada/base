@@ -5,8 +5,11 @@ import { ensureContextState, type Session } from '../session/types.js'
 import type { MemoryProvider } from '../memory/interface.js'
 import { buildDigest } from './digest.js'
 import { contextWindowFor, estimateTokens } from './estimator.js'
-import { renderPins } from './pins.js'
 import { applyCacheBreakpoints } from './cache.js'
+import type { MemoryCaptureService } from '../decisions/memory.js'
+import { CompactionDecisionControlError, type CompactionDecisionAdvisor, type CompactionSourceGroup } from '../decisions/compaction.js'
+import { addSupplementalPin, clearSupplementalPins, renderPins } from './pins.js'
+import { createHash } from 'node:crypto'
 
 const DEFAULTS = {
   high_water: 0.80,
@@ -88,6 +91,15 @@ function cloneMessage(message: unknown, contentOverride?: string): any {
   return cloned
 }
 
+function publicSourceMessage(message: any): Record<string, unknown> {
+  const result: Record<string, unknown> = { role: message?.role }
+  if (message?.content !== undefined) result.content = message.content
+  if (Array.isArray(message?.tool_calls)) result.tool_calls = message.tool_calls.map((call: any) => ({ id: call?.id, type: call?.type, function: call?.function ? { name: call.function.name, arguments: call.function.arguments } : undefined }))
+  if (message?.tool_call_id !== undefined) result.tool_call_id = message.tool_call_id
+  if (message?.name !== undefined) result.name = message.name
+  return result
+}
+
 function digestMessage(text: string): any {
   return { role: 'user', content: `[Earlier session digest: ${text}]` }
 }
@@ -105,6 +117,45 @@ function makeProjection(session: Session, liveStart: number, digestText: string 
     return cloneMessage(message, elided.has(index) ? elisionText(message) : undefined)
   })
   return [systemProjection(session), ...(digestText ? [digestMessage(digestText)] : []), ...live]
+}
+
+function sourceGroups(messages: any[], turns: Turn[], liveStart: number, protectedFrom: number): CompactionSourceGroup[] {
+  return turns
+    .filter(turn => turn.start >= liveStart && turn.end <= protectedFrom)
+    .map(turn => {
+      const group = messages.slice(turn.start, turn.end)
+      const calls = group.flatMap(message => message.role === 'assistant' && Array.isArray(message.tool_calls) ? message.tool_calls.map((call: any) => call?.id).filter(Boolean) : [])
+      const results = new Set(group.filter(message => message.role === 'tool' && message.tool_call_id).map(message => message.tool_call_id))
+      const publicMessages = group.map(publicSourceMessage)
+      const sourceRevision = createHash('sha256').update(JSON.stringify(publicMessages)).digest('hex').slice(0, 16)
+      return { id: `turn:${turn.start}:${turn.end}:${sourceRevision}`, start: turn.start, end: turn.end, messages: publicMessages, containsToolPair: calls.every((id: string) => results.has(id)), sourceRevision }
+    })
+}
+
+function sourceGroupText(group: CompactionSourceGroup): string {
+  return `[source-group ${group.id}]\n${group.messages.map(message => JSON.stringify(publicSourceMessage(message))).join('\n')}`
+}
+
+async function nominateSupplementalPins(session: Session, profile: Profile, groups: CompactionSourceGroup[], advisor: CompactionDecisionAdvisor, onNotice?: (message: string, detail?: string) => void, sourceStillCurrent?: () => boolean): Promise<void> {
+  if (groups.length === 0) return
+  const maxGroups = Math.max(1, Math.min(groups.length, 16))
+  const maxBytes = Math.max(1, Math.floor(contextWindowFor(profile) * (profile.context?.pin_budget ?? 0.25) * 4))
+  let selected: string[] | undefined
+  try {
+    selected = await advisor.select(groups, { maxGroups, maxBytes })
+  } catch (error) {
+    if (error instanceof CompactionDecisionControlError) throw error
+    onNotice?.('semantic compaction selection unavailable', 'existing projection backstops were preserved')
+    return
+  }
+  if (sourceStillCurrent && !sourceStillCurrent()) return
+  if (advisor.mode === 'shadow' || !selected?.length) return
+  const byId = new Map(groups.map(group => [group.id, group]))
+  for (const id of [...new Set(selected)]) {
+    const group = byId.get(id)
+    if (!group || !group.containsToolPair) continue
+    addSupplementalPin(session, profile, { key: `compaction:${id}`, text: sourceGroupText(group), source_revision: group.sourceRevision })
+  }
 }
 
 function dropOldestTurn(indices: Set<number>, turns: Turn[]): boolean {
@@ -141,8 +192,13 @@ export async function project(
   memory?: MemoryProvider,
   onNotice?: (message: string, detail?: string) => void,
   provider?: ProviderClient,
+  capture?: MemoryCaptureService,
+  compaction?: CompactionDecisionAdvisor,
 ): Promise<unknown[]> {
   const state = ensureContextState(session)
+  // Supplemental semantic pins are request-scoped and must not survive a
+  // disabled/shadow decision mode or a fresh re-evaluation.
+  clearSupplementalPins(session)
   const metrics: ProjectionTelemetry = { elided_count: 0, elided_bytes: 0, digest_calls: 0 }
   const finalize = (messages: unknown[]): unknown[] => {
     const result = applyCacheBreakpoints(messages, profile.context?.cache === true)
@@ -166,6 +222,20 @@ export async function project(
 
   if (estimateTokens(projection, session) <= highTarget) return finalize(projection)
 
+  const initialTurns = completeTurns(messages).turns
+  if (compaction) {
+    const groups = sourceGroups(messages, initialTurns, liveStart, protectedFrom)
+    const sourceRevision = createHash('sha256').update(JSON.stringify(groups.map(group => ({ id: group.id, sourceRevision: group.sourceRevision })))).digest('hex')
+    await nominateSupplementalPins(session, profile, groups, compaction, onNotice, () => {
+      const current = sourceGroups(messages, completeTurns(messages).turns, liveStart, protectedFrom)
+      return JSON.stringify(current.map(group => ({ id: group.id, sourceRevision: group.sourceRevision }))) === JSON.stringify(groups.map(group => ({ id: group.id, sourceRevision: group.sourceRevision })))
+    })
+    const currentGroups = sourceGroups(messages, completeTurns(messages).turns, liveStart, protectedFrom)
+    const currentRevision = createHash('sha256').update(JSON.stringify(currentGroups.map(group => ({ id: group.id, sourceRevision: group.sourceRevision })))).digest('hex')
+    if (sourceRevision !== currentRevision) clearSupplementalPins(session)
+    projection = makeProjection(session, liveStart, digestText, elided)
+  }
+
   const candidates = messages
     .map((message, index) => ({ message, index }))
     .filter(({ message, index }) => index >= liveStart && index < protectedFrom && messageRole(message) === 'tool' && typeof message.content === 'string' && message.content.length > 0)
@@ -184,7 +254,7 @@ export async function project(
   if (foldable.length > 0) {
     const upto = foldable[foldable.length - 1].end
     metrics.digest_calls += 1
-    const digest = await buildDigest(session, profile, openai, upto, memory, provider)
+    const digest = await buildDigest(session, profile, openai, upto, memory, provider, capture)
     if (digest) {
       state.digest = { upto, text: digest.text }
       liveStart = upto
