@@ -151,6 +151,17 @@ func sleepOrStop(stop <-chan struct{}, delay time.Duration) bool {
 	}
 }
 
+// SetProfile records the operator's current profile so the next reconnect's
+// hello carries it instead of replaying the profile the process launched
+// with. A cross-profile resume (PT-033) can move the connection to a
+// different profile than hello originally requested; without this, a
+// transport drop after that switch would reconnect under the stale one.
+func (c *Client) SetProfile(profile string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.profile = profile
+}
+
 // Send writes a client frame if connected. It reports failure instead of
 // dropping the frame silently, so the caller can put the operator's input
 // back rather than let it look sent.

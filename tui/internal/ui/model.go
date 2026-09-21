@@ -34,6 +34,15 @@ type TranscriptLoader interface {
 	LoadTranscript(sessionID, userID, profile string) tea.Cmd
 }
 
+// ProfileSetter is optional, mirroring TranscriptLoader. The production WS
+// client remembers the operator's current profile so a later reconnect's
+// hello carries it, instead of replaying whatever profile the process was
+// launched with (stale once a cross-profile resume, PT-033, has moved the
+// operator elsewhere).
+type ProfileSetter interface {
+	SetProfile(profile string)
+}
+
 type invocableKind uint8
 
 const (
@@ -1979,6 +1988,17 @@ func (m *Model) persistApprovalMode() {
 	_ = m.prefs.Save("")
 }
 
+// setProfile updates the operator's current profile and, if the sender
+// remembers a profile across reconnects (the production WS client), tells it
+// too — otherwise a later reconnect's hello would replay the launch profile
+// instead of the one the operator is actually on.
+func (m *Model) setProfile(profile string) {
+	m.profile = profile
+	if setter, ok := m.sender.(ProfileSetter); ok {
+		setter.SetProfile(profile)
+	}
+}
+
 func (m *Model) send(message protocol.ClientMessage) error {
 	if m.sender == nil {
 		return errNoSender
@@ -2108,7 +2128,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			}
 		}
 		if msg.Profile != "" {
-			m.profile = msg.Profile
+			m.setProfile(msg.Profile)
 		}
 		if msg.WorkingDir != "" {
 			m.workingDir = msg.WorkingDir
@@ -2116,7 +2136,11 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		if msg.Yolo {
 			m.approvalMode = "yolo"
 		}
-		if remembered := m.prefs.ApprovalModeByProfile[m.profile]; remembered != "" && remembered != m.approvalMode && !msg.Yolo {
+		// Every session_ready means the server rebuilt connection state from
+		// the profile default (danger), so re-assert the remembered mode even
+		// when the local field already shows it — comparing against our own
+		// stale value let a reconnect silently downgrade to danger (PT-003).
+		if remembered := m.prefs.ApprovalModeByProfile[m.profile]; remembered != "" && !msg.Yolo {
 			if remembered == "strict" || remembered == "bash" || remembered == "danger" || remembered == "yolo" {
 				m.approvalMode = remembered
 				_ = m.send(protocol.SetApprovalMode(remembered)) // best-effort restore of a remembered approval mode on reconnect; operator can still change it explicitly
@@ -2188,7 +2212,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		// Resume can switch the connection's profile server-side (PT-033);
 		// adopt it so the TUI stops showing the pre-resume profile.
 		if msg.Profile != "" {
-			m.profile = msg.Profile
+			m.setProfile(msg.Profile)
 		}
 		if msg.WorkingDir != "" {
 			m.workingDir = msg.WorkingDir

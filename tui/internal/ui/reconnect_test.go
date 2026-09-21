@@ -92,6 +92,46 @@ func TestReconnectRestoresSessionAndProfile(t *testing.T) {
 	}
 }
 
+// profileRecordingSender implements both MessageSender and ProfileSetter so
+// tests can assert the model tells the sender about a profile change instead
+// of only updating its own m.profile field.
+type profileRecordingSender struct {
+	failingSender
+	profiles []string
+}
+
+func (s *profileRecordingSender) SetProfile(profile string) {
+	s.profiles = append(s.profiles, profile)
+}
+
+// TestReconnectProfileChangePropagatesToSender covers PT-003(c): when the
+// server moves the connection to a different profile (session_ready or a
+// cross-profile session_resumed), the model must tell a sender that
+// remembers a profile across reconnects (ProfileSetter) about the change —
+// not just update its own display field — so a later transport drop
+// reconnects under the operator's current profile rather than the one the
+// process launched with.
+func TestReconnectProfileChangePropagatesToSender(t *testing.T) {
+	sender := &profileRecordingSender{}
+	m := NewModel(sender, "devops", "tester", prefs.Preferences{})
+
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_ready", SessionID: "sess-1", Profile: "devops"}}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_resumed", SessionID: "sess-q", Profile: "research"}}))
+
+	if m.profile != "research" {
+		t.Fatalf("expected model profile to follow session_resumed, got %q", m.profile)
+	}
+	found := false
+	for _, p := range sender.profiles {
+		if p == "research" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected sender.SetProfile(\"research\") to be called, got %+v", sender.profiles)
+	}
+}
+
 func attemptsContainType(attempts []protocol.ClientMessage, want string) bool {
 	for _, attempt := range attempts {
 		raw, err := json.Marshal(attempt)
@@ -197,5 +237,37 @@ func TestReconnectRecoveryFailureReportsVisibly(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected the failure notice to carry the server's reason")
+	}
+}
+
+// TestReconnectReassertsRememberedApprovalMode covers the live PTY finding
+// behind PT-003/PT-007: every hello rebuilds server-side connection state
+// from the profile default ("danger") and the server then announces it via
+// approval_mode_changed. If the model only re-sent the remembered mode when
+// it differed from its own local field, a reconnect silently downgraded the
+// operator to danger while the prefs still said "bash".
+func TestReconnectReassertsRememberedApprovalMode(t *testing.T) {
+	sender := &failingSender{}
+	m := NewModel(sender, "connecting", "tester", prefs.Preferences{ApprovalModeByProfile: map[string]string{"fixture-p": "bash"}})
+
+	m = asModel(m.Update(ws.ConnectedMsg{}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_ready", SessionID: "sess-1", Profile: "fixture-p"}}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "approval_mode_changed", Mode: "bash"}}))
+	if m.approvalMode != "bash" {
+		t.Fatalf("setup: expected remembered bash mode applied, got %q", m.approvalMode)
+	}
+
+	// Transport drops and comes back; the server's fresh hello state is danger.
+	m = asModel(m.Update(ws.DisconnectedMsg{}))
+	sender.attempts = nil
+	m = asModel(m.Update(ws.ConnectedMsg{}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "session_ready", SessionID: "sess-2", Profile: "fixture-p"}}))
+	if !attemptsContainType(sender.attempts, "set_approval_mode") {
+		t.Fatalf("expected the remembered approval mode to be re-sent on reconnect, attempts: %+v", sender.attempts)
+	}
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "approval_mode_changed", Mode: "danger"}}))
+	m = asModel(m.Update(ws.ServerMsg{Msg: protocol.ServerMessage{Type: "approval_mode_changed", Mode: "bash"}}))
+	if m.approvalMode != "bash" {
+		t.Fatalf("expected bash mode restored after reconnect, got %q", m.approvalMode)
 	}
 }

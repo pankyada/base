@@ -122,6 +122,62 @@ func TestClientSendsCapturedWorkingDirOnEveryReconnect(t *testing.T) {
 	}
 }
 
+// TestClientReconnectHelloUsesUpdatedProfile covers PT-003(c): a cross-profile
+// resume (PT-033) moves the connection to a different profile than the one
+// hello launched with. If the transport then drops and reconnects, the next
+// hello must carry the operator's current profile, not the launch-time one —
+// otherwise a fresh session created before the follow-up resume settles (or
+// one created because the resume then fails) would silently land back on the
+// stale profile.
+func TestClientReconnectHelloUsesUpdatedProfile(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	var connCount int
+	hellos := make(chan map[string]any, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connCount++
+		_, raw, err := conn.ReadMessage()
+		if err == nil {
+			var hello map[string]any
+			if json.Unmarshal(raw, &hello) == nil {
+				hellos <- hello
+			}
+		}
+		_ = conn.Close()
+	}))
+	defer server.Close()
+	port := strings.TrimPrefix(server.URL[strings.LastIndex(server.URL, ":"):], ":")
+	c := New(port, "tester", "devops")
+	defer c.Close()
+	c.Start(func(tea.Msg) {})
+
+	select {
+	case hello := <-hellos:
+		if hello["profile"] != "devops" {
+			t.Fatalf("initial hello profile = %v, want devops", hello["profile"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for initial hello")
+	}
+
+	// The server-side connection switched the operator to a different
+	// profile (e.g. resuming a session created under it); the model tells
+	// the client so the next reconnect reflects it.
+	c.SetProfile("research")
+
+	select {
+	case hello := <-hellos:
+		if hello["profile"] != "research" {
+			t.Fatalf("reconnect hello profile = %v, want research (the updated profile)", hello["profile"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for reconnect hello")
+	}
+}
+
 func TestReconnectDeliversRecoveredRuntimePrompt(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	var connections int
