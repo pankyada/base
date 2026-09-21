@@ -1,11 +1,35 @@
 import { execFileSync } from 'child_process'
-import { mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it } from 'vitest'
-import { grepTool } from '../src/tools/builtin/grep.js'
+import { grepArgs, grepTool } from '../src/tools/builtin/grep.js'
 
 describe('Grep tool', () => {
+  it('skips dependency, VCS and build directories and binary files on recursive searches by default', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'grep-tool-'))
+    mkdirSync(join(dir, 'node_modules', 'dep'), { recursive: true })
+    mkdirSync(join(dir, '.next'), { recursive: true })
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'dep', 'index.js'), 'needle\n')
+    writeFileSync(join(dir, '.next', 'chunk.js'), 'needle\n')
+    writeFileSync(join(dir, 'src', 'app.ts'), 'needle\n')
+    writeFileSync(join(dir, 'src', 'blob.bin'), Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from('needle\n')]))
+
+    const result = await grepTool.execute({ pattern: 'needle', path: dir }, {} as any)
+    expect(result).toContain('src/app.ts')
+    expect(result).not.toContain('node_modules')
+    expect(result).not.toContain('.next')
+    expect(result).not.toContain('blob.bin')
+  })
+
+  it('lets explicit include/exclude and binary flags override the defaults', () => {
+    expect(grepArgs('x', '.', ['-r', '--include', '*.ts'])).not.toEqual(expect.arrayContaining([expect.stringMatching(/^--exclude-dir=/)]))
+    expect(grepArgs('x', '.', ['-r', '--exclude-dir=only'])).toEqual(['-I', '-r', '--exclude-dir=only', '--', 'x', '.'])
+    expect(grepArgs('x', '.', '-rna')).not.toContain('-I')
+    expect(grepArgs('x', 'file.txt', '-n')).toEqual(['-I', '-n', '--', 'x', 'file.txt'])
+  })
+
   it('returns no matches without treating grep exit 1 as a tool failure', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'grep-tool-'))
     const file = join(dir, 'sample.txt')
