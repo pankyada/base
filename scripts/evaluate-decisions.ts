@@ -78,6 +78,8 @@ function aggregate(rows: Array<{ expected: Set<string>; selected: Set<string>; e
 
 async function main() {
   if (live && !process.env[keyEnv]) throw new Error(`--live requires ${keyEnv} in the environment; the key value is never printed`)
+  // Offline mode never leaves the process: the injected fetch answers every call, so a placeholder satisfies the provider's credential gate without reading a real key.
+  if (!live && !process.env[keyEnv]) process.env[keyEnv] = 'offline-synthetic-placeholder'
   const telemetry: Array<{ input_tokens?: number; output_tokens?: number; cost_usd?: number; duration_ms: number }> = []
   const casesById = new Map(corpus.cases.map(testCase => [testCase.id, testCase]))
   const provider = createJevProvider(config(), {
