@@ -1265,3 +1265,27 @@ automated/runtime acceptance; PT-069 tracks live calibration. The four synthetic
 live cases on 2026-09-19 do not establish production quality or deployment.
 See the [operator guide](jev-decision-layer.md) and
 [acceptance specification](superpowers/specs/2026-09-19-jev-decision-layer-spec.md).
+
+### ADR-87
+
+**Profiles are configuration under `$HOME`; only mutable state follows `HARNESS_STATE_DIR`** — ✅
+
+*Context:* `HARNESS_STATE_DIR` isolates mutable runtime state (runs, sessions,
+projects, replays, usage, servers) for tests and side-by-side runtimes. Profile
+lookup fallbacks (`~/.harness/profiles/<name>.yaml`) exist in delegate, REST run,
+restart requeue and audit undo, while `profile-startup.ts` resolves the same
+directory from `$HOME`. Routing only the fallbacks through the state root would
+split-brain profile discovery: an isolated server would start from `$HOME`
+profiles yet fail restart requeue with `profile not found on restart`, which is
+the PT-059 failure mode.
+
+*Decision:* Profile directories remain `$HOME`-relative configuration
+(`~/.harness/profiles`, `profiles_dir`, explicit `--profiles`) and are never
+resolved through `harnessStatePath`. Everything the runtime writes resolves via
+`harnessStatePath`, including the server process registry. The root vitest
+suite sets a fresh temporary `HARNESS_STATE_DIR` in a setup file unless one is
+already set, so the suite must leave `~/.harness` untouched.
+
+*Consequences:* Tests that seed or assert on state paths build them from
+`harnessStatePath`, not `homedir()`/`HOME`. PT-071 records the isolation and the
+zero-leak check; PT-059's lost run-record preimages remain unrecoverable.

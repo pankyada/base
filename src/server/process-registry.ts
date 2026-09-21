@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync, renameSync } from 'fs'
-import { homedir } from 'os'
 import { join } from 'path'
+import { harnessStatePath } from '../config/state-paths.js'
 
 export interface ServerRecord {
   pid: number
@@ -16,7 +16,7 @@ export interface ListedServer extends ServerRecord {
 }
 
 export function serverRegistryDir(): string {
-  return process.env.HARNESS_SERVER_REGISTRY_DIR ?? join(homedir(), '.harness', 'servers')
+  return process.env.HARNESS_SERVER_REGISTRY_DIR ?? harnessStatePath('servers')
 }
 
 function statePath(port: number, directory: string): string {

@@ -10,26 +10,27 @@ vi.mock('fs', async importOriginal => {
 })
 
 import { undoNotice, resetAppliedUndoEntries } from '../src/server/undo-handlers.js'
+import { harnessStatePath } from '../src/config/state-paths.js'
 
 function fixture(id: string, user: string, sessionId: string, path: string): AuditEntry {
   return { id, ts: new Date().toISOString(), session_id: sessionId, user, profile: 'coding', tool: 'Write', input_digest: 'x', effect: 'write', decision: 'allow', decided_by: 'default', decided_reason: 'test', tainted: false, ok: true, undo: { kind: 'file_restore', payload: { path, existed: false } } }
 }
 
 describe('undo error handling', () => {
-  const originalHome = process.env.HOME
+  const originalStateDir = process.env.HARNESS_STATE_DIR
 
   afterEach(() => {
     resetAppliedUndoEntries()
-    if (originalHome === undefined) delete process.env.HOME
-    else process.env.HOME = originalHome
+    if (originalStateDir === undefined) delete process.env.HARNESS_STATE_DIR
+    else process.env.HARNESS_STATE_DIR = originalStateDir
   })
 
   it('turns a forced unlink failure into a warning notice', async () => {
     const home = mkdtempSync(join(tmpdir(), 'undo-error-'))
-    process.env.HOME = home
+    process.env.HARNESS_STATE_DIR = join(home, '.harness')
     const user = 'alice'
     const sessionId = 'session-1'
-    const auditDir = join(home, '.harness', 'audit', user)
+    const auditDir = harnessStatePath('audit', user)
     mkdirSync(auditDir, { recursive: true })
     const target = join(home, 'created.txt')
     writeFileSync(target, 'new')

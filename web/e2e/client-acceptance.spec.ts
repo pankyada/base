@@ -130,7 +130,7 @@ test.describe('PT-041 client acceptance fixture', () => {
     })
     await installSocketProbe(page)
     await page.goto('/ops')
-    await expect(page.getByRole('heading', { name: 'Audit' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Audit' })).toBeVisible()
     await expect.poll(() => live.size).toBe(1)
     const beforeNavigation = created
     await page.getByRole('link', { name: 'assistant', exact: true }).click()
@@ -161,7 +161,7 @@ test.describe('PT-041 client acceptance fixture', () => {
     await page.route('**/usage?*', route => failUsage ? route.abort('failed') : route.continue())
     await page.goto('/ops')
     await expect(page.locator('.unavailable-state')).toContainText('usage:', { timeout: 15_000 })
-    await expect(page.getByRole('heading', { name: 'Audit' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Audit' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible()
     failUsage = false
     await page.getByRole('button', { name: 'Retry' }).click()

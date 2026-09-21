@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vites
 import { createServer, Server } from 'http'
 import type { AddressInfo } from 'net'
 import { rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { createRestHandler } from '../src/server/rest.js'
 import { runProfileOnce } from '../src/server/run-profile.js'
 import { RunStore } from '../src/runs/store.js'
 import type { Skill } from '../src/tools/types.js'
 import { ReplayStore } from '../src/replay/store.js'
+import { harnessStatePath } from '../src/config/state-paths.js'
 import pkg from '../package.json' with { type: 'json' }
 
 const FAKE_SKILLS: Skill[] = [
@@ -91,7 +91,7 @@ describe('REST /health and /run (no auth)', () => {
     const replay = await fetch(`${base}/replay/${journals[0].id}/playback?user=${user}`, { method: 'POST' })
     expect(replay.status).toBe(200)
     expect((await replay.json()).events.length).toBeGreaterThanOrEqual(1)
-    rmSync(join(process.env.HOME ?? '', '.harness', 'replays', user), { recursive: true, force: true })
+    rmSync(harnessStatePath('replays', user), { recursive: true, force: true })
   })
 
   it('selects a registered profile from the request body and reports all profiles in health', async () => {

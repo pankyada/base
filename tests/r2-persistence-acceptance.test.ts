@@ -18,6 +18,7 @@ import {
 import { userPaths, sanitizeUserId } from '../src/session/user-paths.js'
 import type { Session } from '../src/session/types.js'
 import { RunStore } from '../src/runs/store.js'
+import { harnessStatePath } from '../src/config/state-paths.js'
 import type { Run } from '../src/runs/types.js'
 
 const ownedPaths: string[] = []
@@ -25,7 +26,7 @@ const ownedPaths: string[] = []
 function uniqueUser(): string {
   const user = `r2-acceptance-${randomUUID()}`
   ownedPaths.push(userPaths(user, '').sessionsDir)
-  ownedPaths.push(join(process.env.HOME ?? '', '.harness', 'runs', sanitizeUserId(user)))
+  ownedPaths.push(harnessStatePath('runs', sanitizeUserId(user)))
   return user
 }
 
@@ -110,7 +111,7 @@ describe('R2 persistence acceptance', () => {
 
     const store = new RunStore()
     store.create(runFixture('healthy-run', user, '2026-01-01T00:00:00.000Z'))
-    const runDir = join(process.env.HOME ?? '', '.harness', 'runs', sanitizeUserId(user))
+    const runDir = harnessStatePath('runs', sanitizeUserId(user))
     writeFileSync(join(runDir, 'corrupt.json'), '{broken', 'utf8')
     expect(store.list({ user }).map(item => item.id)).toEqual(['healthy-run'])
     expect(store.getDiagnostics().some(item => item.path.endsWith('corrupt.json'))).toBe(true)
@@ -135,7 +136,7 @@ describe('R2 persistence acceptance', () => {
 
     const store = new RunStore()
     store.create(runFixture('index-run', user, '2026-01-01T00:00:00.000Z'))
-    const runIndex = join(process.env.HOME ?? '', '.harness', 'runs', sanitizeUserId(user), 'index.json')
+    const runIndex = harnessStatePath('runs', sanitizeUserId(user), 'index.json')
     expect(existsSync(runIndex)).toBe(true)
     writeFileSync(runIndex, '{broken', 'utf8')
     expect(store.list({ user }).map(item => item.id)).toContain('index-run')

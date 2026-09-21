@@ -421,15 +421,16 @@ describe('Core S5-S7 mounted lifecycle contracts', () => {
     const project = foreign.projects.find(item => item.id !== 'inbox') ?? (await (await fetch(`${base}/projects`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: 'rest-alice', name: 'foreign' }),
     })).json() as Wire).project
-    const previousHome = process.env.HOME
+    const previousStateDir = process.env.HARNESS_STATE_DIR
     const seeded = (() => {
       try {
-        process.env.HOME = root
+        process.env.HARNESS_STATE_DIR = join(root, '.harness')
         const session = createSession('alpha', 'rest-bob')
         saveSession(session)
         return session
       } finally {
-        process.env.HOME = previousHome
+        if (previousStateDir === undefined) delete process.env.HARNESS_STATE_DIR
+        else process.env.HARNESS_STATE_DIR = previousStateDir
       }
     })()
     const assignment = await fetch(`${base}/sessions/${seeded.id}`, {
