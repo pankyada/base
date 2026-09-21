@@ -505,4 +505,87 @@ describe('Town REST surface', () => {
     await vi.waitFor(() => expect(runtime.start).toHaveBeenCalledOnce(), { timeout: 3000, interval: 20 })
     expect(store.getTask(task.id)).toMatchObject({ state: 'running', run_id: 'run-resumed', session_id: 'session-resumed' })
   })
+
+  it('wakes a persisted queued_dependency task on server restart with no HTTP traffic for that user', async () => {
+    const baseDirectory = mkdtempSync(join(tmpdir(), 'town-store-headless-dep-'))
+    const rootPolicy = mkdtempSync(join(tmpdir(), 'town-root-headless-dep-'))
+    owned.push(baseDirectory, rootPolicy)
+    const user = `town-headless-dep-${randomUUID()}`
+    // Build the durable state directly, as if written by a prior process, then
+    // start a brand-new handler that never sees an HTTP request for this user.
+    const store = new TownStore(user, { baseDirectory, recovery: 'none' })
+    const project = fixtureProject(store)
+    const depDraft = store.createTask({ project_id: project.id, title: 'Dependency', prompt: 'finish first', workspace_mode: 'read_only' })
+    const depReady = store.transitionTask(depDraft.id, depDraft.revision, 'ready')
+    const depDispatching = store.transitionTask(depReady.id, depReady.revision, 'dispatching')
+    const depRunning = store.transitionTask(depDispatching.id, depDispatching.revision, 'running', { session_id: 'dep-session', run_id: 'dep-run' })
+    store.transitionTask(depRunning.id, depRunning.revision, 'completed')
+    const draft = store.createTask({ project_id: project.id, title: 'Depends on it', prompt: 'run after', workspace_mode: 'read_only', depends_on: [depDraft.id] })
+    const ready = store.transitionTask(draft.id, draft.revision, 'ready')
+    store.transitionTask(ready.id, ready.revision, 'queued_dependency', { block_reason: 'dependency' })
+
+    const runtime = { start: vi.fn(async () => ({ session_id: 'session-woken', run_id: 'run-woken' })) }
+    const base = await start({ baseDirectory, rootPolicy, queuePollMs: 20, quotaProvider: quota([{ used_percent: 10 }]), runtime })
+    await vi.waitFor(() => expect(runtime.start).toHaveBeenCalledOnce(), { timeout: 3000, interval: 20 })
+    expect(store.getTask(draft.id)).toMatchObject({ state: 'running', session_id: 'session-woken', run_id: 'run-woken' })
+    void base
+  })
+
+  it('wakes a persisted queued answer continuation on server restart with no HTTP traffic for that user', async () => {
+    const baseDirectory = mkdtempSync(join(tmpdir(), 'town-store-headless-answer-'))
+    const rootPolicy = mkdtempSync(join(tmpdir(), 'town-root-headless-answer-'))
+    owned.push(baseDirectory, rootPolicy)
+    const user = `town-headless-answer-${randomUUID()}`
+    const store = new TownStore(user, { baseDirectory, recovery: 'none' })
+    const project = fixtureProject(store)
+    const draft = store.createTask({ project_id: project.id, title: 'Question', prompt: 'ask', workspace_mode: 'read_only' })
+    const ready = store.transitionTask(draft.id, draft.revision, 'ready')
+    const dispatching = store.transitionTask(draft.id, ready.revision, 'dispatching')
+    const running = store.transitionTask(draft.id, dispatching.revision, 'running', { session_id: 'session-1', run_id: 'run-1' })
+    const waiting = store.transitionTask(draft.id, running.revision, 'waiting_user')
+    store.transitionTask(draft.id, waiting.revision, 'queued_quota', { block_reason: 'quota' })
+    const question = store.createMessage({ project_id: project.id, task_id: draft.id, thread_id: 'session-1', from: 'worker', to: 'user', kind: 'question', body: 'Choose?', continuation_id: 'pending-headless' })
+    const accepted = store.recordAnswer(question.id, question.revision, 'yes', 'headless-answer-key')
+    store.recordAnswerOutcome(accepted.message.id, { resumed: false, state: 'queued_quota', error: 'answer saved; resume held because Codex capacity is unsupported' })
+
+    // Restart recovery marks a parked queued-answer continuation 'interrupted'
+    // unless the runtime validates it recoverable (see TownStore.recoverInterruptedWorkLocked) —
+    // supply that validator so the wake test exercises the scheduler path, not the reject path.
+    const runtime = {
+      canRecoverContinuation: () => true,
+      answer: vi.fn(async ({ store: targetStore, question: targetQuestion }: any) => {
+        const task = targetStore.getTask(targetQuestion.task_id)!
+        targetStore.transitionTask(task.id, task.revision, 'running', { session_id: task.session_id, run_id: task.run_id })
+        return { resumed: true, state: 'running' }
+      }),
+    }
+    const base = await start({ baseDirectory, rootPolicy, queuePollMs: 20, quotaProvider: quota([{ used_percent: 10 }]), runtime })
+    await vi.waitFor(() => expect(runtime.answer).toHaveBeenCalledOnce(), { timeout: 3000, interval: 20 })
+    expect(store.getTask(draft.id)?.state).toBe('running')
+    void base
+  })
+
+  it('ignores garbage sibling directories and stray files in the store base directory on wake', async () => {
+    const baseDirectory = mkdtempSync(join(tmpdir(), 'town-store-headless-garbage-'))
+    const rootPolicy = mkdtempSync(join(tmpdir(), 'town-root-headless-garbage-'))
+    owned.push(baseDirectory, rootPolicy)
+    // A directory name sanitizeUserId would never produce (uppercase/space/punctuation),
+    // and a directory with no state.json, and a stray non-directory file.
+    mkdirSync(join(baseDirectory, 'Not A Valid User!!'), { recursive: true })
+    mkdirSync(join(baseDirectory, 'empty-user-dir'), { recursive: true })
+    writeFileSync(join(baseDirectory, 'stray-note.txt'), 'not a store')
+
+    const user = `town-headless-garbage-${randomUUID()}`
+    const store = new TownStore(user, { baseDirectory, recovery: 'none' })
+    const project = fixtureProject(store)
+    const draft = store.createTask({ project_id: project.id, title: 'Real work', prompt: 'run', workspace_mode: 'read_only' })
+    const ready = store.transitionTask(draft.id, draft.revision, 'ready')
+    store.transitionTask(ready.id, ready.revision, 'queued_quota', { block_reason: 'quota' })
+
+    const runtime = { start: vi.fn(async () => ({ session_id: 'session-real', run_id: 'run-real' })) }
+    const base = await start({ baseDirectory, rootPolicy, queuePollMs: 20, quotaProvider: quota([{ used_percent: 10 }]), runtime })
+    await vi.waitFor(() => expect(runtime.start).toHaveBeenCalledOnce(), { timeout: 3000, interval: 20 })
+    expect(store.getTask(draft.id)?.state).toBe('running')
+    void base
+  })
 })

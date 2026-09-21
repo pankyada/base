@@ -1,11 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
+import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Profile } from '../profiles/schema.js'
 import { normalizeUserScope, ScopeError } from '../server/scope.js'
 import { RevisionConflictError } from '../shared/atomic-json.js'
+import { harnessStatePath } from '../config/state-paths.js'
 import { defaultTownRoot, TownStore, type NewTownMessage } from './store.js'
 import { discoverTownProjects } from './discovery.js'
 import type { QuotaSnapshot, TownMessage, TownProject, TownTask, TownTaskState } from './types.js'
@@ -161,6 +163,29 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
     }
     return store
   }
+  // Headless wake: durable queued_* tasks/answers for a user survive a server
+  // restart, but `stores` is only populated lazily on HTTP traffic for that
+  // user. Pre-populate it from persisted directories so the scheduler tick
+  // below can find and dispatch work with no client ever reconnecting.
+  // Single readdir, no recursion — bounded by the number of users on disk.
+  const preloadPersistedStores = () => {
+    const base = deps.baseDirectory ?? harnessStatePath('orchestrator')
+    let entries
+    try { entries = readdirSync(base, { withFileTypes: true }) }
+    catch { return } // base directory missing or unreadable: nothing to wake
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      // Directory name must equal sanitizeUserId's own output exactly — this is
+      // the same alphabet TownStore/townStoreDirectory produce; anything else
+      // is not a store this handler could have created and is skipped rather
+      // than reverse-sanitized (guessing could collide two directories).
+      if (!/^[a-z0-9_-]{1,64}$/.test(entry.name)) continue
+      if (!existsSync(join(base, entry.name, 'state.json'))) continue
+      try { storeFor(entry.name) }
+      catch { /* one corrupt/unreadable state.json must not block other users' wake */ }
+    }
+  }
+  preloadPersistedStores()
   const now = deps.now ?? (() => new Date())
   const quotaFor = async (store: TownStore, user: string, profile: Profile): Promise<QuotaSnapshot> => {
     // Admission always probes the selected credential now; auth type alone is

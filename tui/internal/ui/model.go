@@ -1659,6 +1659,19 @@ func matches(msg tea.KeyMsg, binding interface {
 }
 
 func (m *Model) submit() tea.Cmd {
+	// While a reconnect-driven resume is outstanding, hello has already
+	// re-attached the connection to a brand-new server-side session (see
+	// ws.ConnectedMsg handling) ahead of the resume/session_resumed contract
+	// settling. Sending now would silently land the operator's message in
+	// that throwaway session, and session_resumed's transcript reset would
+	// then erase it from view with no explanation (PT-072). Refuse instead
+	// of queuing — queuing would still race the eventual resumed session —
+	// and keep the composer text untouched so nothing is lost.
+	if m.reconnectPending && (strings.TrimSpace(m.composer.Value()) != "" || len(m.attachments) > 0) {
+		m.notices.Add(NoticeWarn, "session restoring", "message not sent", "retry in a moment")
+		m.reflow()
+		return nil
+	}
 	content := m.composer.Submit()
 	m.clearCompletion()
 	// Attachments alone are a valid message — dropping a file and pressing
