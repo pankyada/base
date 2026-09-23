@@ -683,9 +683,10 @@ invariants. Shadow before enforce at every phase.
 **Phases:** PT-076 groundwork · PT-077 fan-out + policy (shadow) · PT-078 enforce
 route + ask-user + session route + multi-domain · PT-079 edge checks + re-route ·
 PT-080 claim-check · PT-081 learning loop · PT-082 live acceptance. PT-084 freezes
-the separate truthful client-map contract; PT-085 implements and locally accepts
-the bounded Core/Web/TUI views without changing execution or routing policy.
-The live Jev quality gate and PT-082 shadow observation period remain open.
+the separate truthful client-map contract; PT-085 implements and locally accepts the bounded Core/Web/TUI views;
+v1.2.0 ships and locally deploys them. Runner observation hooks were added
+while execution and routing policy remained unchanged. The live Jev quality gate and
+PT-082 shadow observation period remain open.
 
 **Spec:** [`2026-09-23-request-routing-graph-spec.md`](superpowers/specs/2026-09-23-request-routing-graph-spec.md)
 and [`2026-09-23-workflow-map-spec.md`](superpowers/specs/2026-09-23-workflow-map-spec.md).
