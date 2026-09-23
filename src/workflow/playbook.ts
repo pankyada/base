@@ -1,5 +1,5 @@
 import matter from 'gray-matter'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync } from 'fs'
 import { execSync } from 'child_process'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
@@ -115,4 +115,37 @@ export function loadPlaybook(name = 'generic'): Playbook {
   const playbook = resolvePlaybook(name)
   playbookCache.set(name, playbook)
   return playbook
+}
+
+/**
+ * Every playbook discoverable across `resolvePlaybookDirs()`, plus the
+ * builtin `generic` fallback, deduped by name. Each name is resolved through
+ * `loadPlaybook` so precedence (most-specific dir wins — see `resolvePlaybook`,
+ * which checks `resolvePlaybookDirs()` reversed, i.e. CWD, then the parent
+ * dir, then the git repo root, then the user's home) and caching behave
+ * identically to a direct `loadPlaybook(name)` call. Order is deterministic
+ * (sorted by name) so callers (e.g. router candidate listings) don't depend
+ * on directory-walk order.
+ */
+export function listPlaybooks(): Playbook[] {
+  const names = new Set<string>(['generic'])
+  for (const dir of resolvePlaybookDirs()) {
+    let entries: string[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+    } catch {
+      continue
+    }
+    for (const name of entries) {
+      if (existsSync(join(dir, name, 'PLAYBOOK.md'))) names.add(name)
+    }
+  }
+  // A malformed PLAYBOOK.md resolves to the generic fallback; drop it here so
+  // router candidates never contain a second 'generic' under another name.
+  return [...names].sort().flatMap(name => {
+    const playbook = loadPlaybook(name)
+    return name !== 'generic' && playbook.name === 'generic' ? [] : [playbook]
+  })
 }

@@ -247,6 +247,18 @@ const WorkflowSchema = z.object({
     graph: z.boolean().default(false),
     generalization_probe: z.boolean().default(true),
   }).default({ graph: false, generalization_probe: true }),
+  // Absent by default (no `.default()` on the block itself): the request
+  // routing graph (roadmap #31) only activates when a profile author opts in
+  // by writing `workflow.router:` explicitly. See
+  // docs/superpowers/specs/2026-09-23-request-routing-graph-spec.md §3.
+  router: z.object({
+    candidates: z.array(z.string()).optional(),
+    domain_threshold: z.number().min(0).max(1).default(0.5),
+    ask_threshold: z.number().min(0).max(1).default(0.6),
+    max_reroutes: z.number().int().min(0).default(1),
+    max_clarifications: z.number().int().min(0).default(1),
+    scale_presets: z.partialRecord(z.enum(['trivial', 'small', 'medium', 'large']), z.partialRecord(z.enum(['recon', 'plan', 'design', 'build', 'verify', 'review']), IntensityValue)).optional(),
+  }).optional(),
 })
 export { RoleModelsSchema, WorkflowSchema }
 

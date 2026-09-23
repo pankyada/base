@@ -41,6 +41,13 @@ export interface Session {
   todos: TodoItem[]
   /** Monotonic within a turn. Reset only when a genuine human message starts one. */
   taint_sources?: string[]
+  /**
+   * Last workflow route this session took, written on Deliver (roadmap #31
+   * phase 3+). Optional and additive: legacy sessions omit it, and phase 1
+   * writes nothing here yet — see
+   * docs/superpowers/specs/2026-09-23-request-routing-graph-spec.md §5.5.
+   */
+  workflow_route?: { playbook: string; scale: 'trivial' | 'small' | 'medium' | 'large'; task_id: string; at: string }
 }
 
 export function ensureContextState(session: Session): ContextState {

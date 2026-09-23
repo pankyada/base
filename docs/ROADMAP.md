@@ -666,6 +666,28 @@ switchable.
 
 ---
 
+### 🔄 31. Request routing graph (Jev fan-out · policy · edge checks)
+
+**In progress — phase 1 groundwork done (PT-076); next PT-077.** Route each workflow request by typed Jev
+judgments instead of a profile-fixed playbook: a parallel fan-out (domain Noul
+per playbook, scale Score, existing-work, ambiguity, follow-up) feeds a pure
+policy function that picks playbook(s), an intensity floor, or a single
+clarifying question. Jev then judges each stage edge (continue / promote /
+re-route / stuck / done), a claim-check gates delivery, and telemetry tunes
+thresholds and proposes new playbooks.
+
+Built on the #15 runner, not a new engine: Jev judges edges, LLMs work at nodes,
+policy stays in code. Recon gate, default parity, and Jev-failure fallback are
+invariants. Shadow before enforce at every phase.
+
+**Phases:** PT-076 groundwork · PT-077 fan-out + policy (shadow) · PT-078 enforce
+route + ask-user + session route + multi-domain · PT-079 edge checks + re-route ·
+PT-080 claim-check · PT-081 learning loop · PT-082 live acceptance.
+
+**Spec:** [`2026-09-23-request-routing-graph-spec.md`](superpowers/specs/2026-09-23-request-routing-graph-spec.md)
+
+---
+
 ## Suggested sequencing
 
 ```

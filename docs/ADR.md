@@ -1289,3 +1289,27 @@ already set, so the suite must leave `~/.harness` untouched.
 *Consequences:* Tests that seed or assert on state paths build them from
 `harnessStatePath`, not `homedir()`/`HOME`. PT-071 records the isolation and the
 zero-leak check; PT-059's lost run-record preimages remain unrecoverable.
+
+### ADR-88
+
+**Request routing is Jev judgments over the existing workflow runner, not a new graph engine** — 🔄
+
+*Context:* A sketch proposed a Jev router over eight request categories feeding
+six separate loops. Base already has a stage state machine (`runWorkflow`:
+pointer, fail-back, tier promotion), per-domain playbooks, and a Jev
+`WorkflowDecisionAdvisor` for in-playbook triage. The eight categories mixed two
+axes (domain vs size), size is not knowable before recon, and a one-shot tree
+has no path for drift, mixed domains, or clarification.
+
+*Decision:* Split routing into independent typed judgments (domain Noul per
+playbook, scale Score, existing-work, ambiguity, follow-up) composed by a pure
+policy function; Jev also judges stage edges and delivery claims. LLMs do all
+stage work; Jev never generates output. Planner/spec/analyser "loops" are
+intensity presets of one runner, not separate loops. Recon stays a hard gate;
+every Jev path falls back to today's behavior; each phase ships shadow first.
+
+*Consequences:* New config is additive (`workflow.router`,
+`decision_layer.features.{request_routing,edge_checks,claim_check}`).
+Multi-domain runs sequentially in v1. Enforce mode is not recommended until live
+evidence (PT-082). Spec: `superpowers/specs/2026-09-23-request-routing-graph-spec.md`.
+

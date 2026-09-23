@@ -69,6 +69,12 @@ export const DecisionLayerSchema = z.object({
     compaction: DecisionFeatureModeSchema.optional(),
     result_verification: DecisionFeatureModeSchema.optional(),
     failure_guidance: DecisionFeatureModeSchema.optional(),
+    // Request routing graph (roadmap #31, phases 2/4/5). Optional and absent
+    // by default; the existing `allow_remote_state` superRefine below already
+    // covers these because it checks `Object.values(value.features)`.
+    request_routing: DecisionFeatureModeSchema.optional(),
+    edge_checks: DecisionFeatureModeSchema.optional(),
+    claim_check: DecisionFeatureModeSchema.optional(),
   }).strict().default({}),
   limits: DecisionLimitsSchema.prefault({}),
   price: DecisionPriceSchema.optional(),

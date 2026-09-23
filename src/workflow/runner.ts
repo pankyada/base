@@ -12,7 +12,7 @@ import { defaultTaskPlan, triageA, triageB } from './triage.js'
 import { emitTaskOutcome, recordWrittenFiles } from './labeler.js'
 import { extractKnowledge, generalizationFromReview, persistKnowledge, queryProjectGraph } from './knowledge.js'
 import { newStageId, newTaskId, STAGES } from './types.js'
-import type { Stage, StageResult, TaskPlan, Tier, Intensity } from './types.js'
+import type { Playbook, Stage, StageResult, TaskPlan, Tier, Intensity } from './types.js'
 import { chooseExploration, promoteTier, resolveTier } from './policy.js'
 import { parseRoutingPolicy } from './adaptive.js'
 import type { RoutingPolicyDoc } from './adaptive.js'
@@ -142,9 +142,13 @@ async function shadowCompletion(openai: OpenAI | undefined, provider: ProviderCl
   return String(response.choices?.[0]?.message?.content ?? '')
 }
 
-async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true): Promise<StageResult> {
+// Exported (beyond runner.ts's internal callers) so PT-076's playbook-threading
+// refactor — executeStage uses the `playbook` argument instead of re-resolving
+// it from `profile.workflow?.playbook` — can be unit-tested directly with a
+// playbook that differs from the profile's configured one.
+export async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, playbook: Playbook, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true): Promise<StageResult> {
   const modelId = tier === 'critic' ? (profile.models?.roles.critic ?? profile.model.id) : (profile.models?.roles?.[tier] ?? profile.model.id)
-  const contract = loadPlaybook(profile.workflow?.playbook ?? 'generic').contract(stage, intensity)
+  const contract = playbook.contract(stage, intensity)
   const seed = buildStageContext(request, prior, contract, stage === 'recon' ? graphSlice : '')
   const stageId = newStageId()
   const staged = childSession(root, stageId, seed)
@@ -165,9 +169,9 @@ async function executeStage(request: string, stage: Stage, intensity: Intensity,
   if (context.provider) stageContext.provider = bindRunProvider(context.provider, stageContext)
   const started = Date.now()
   events.onStage?.(stage, intensity, tier, modelId, 'start')
-  logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: profile.workflow?.playbook ?? 'generic', attempt, model: modelId, state: 'start' })
+  logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: playbook.name, attempt, model: modelId, state: 'start' })
   try {
-    await loop(seed, profile, staged, stageContext, stageContext.events, openai, signal, { modelId, stage: { task_id: taskId, stage_id: stageId, stage, attempt, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, playbook: profile.workflow?.playbook ?? 'generic', explore } })
+    await loop(seed, profile, staged, stageContext, stageContext.events, openai, signal, { modelId, stage: { task_id: taskId, stage_id: stageId, stage, attempt, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, playbook: playbook.name, explore } })
   } finally {
     root.tool_calls.push(...staged.tool_calls)
     mergeStageUsage(root, staged)
@@ -183,7 +187,7 @@ async function executeStage(request: string, stage: Stage, intensity: Intensity,
   }
   const result: StageResult = { stage, intensity, tier, modelId, attempt, body, contract_ok: validation.ok, missing: validation.missing, confidence: plan.confidence, high_findings: stage === 'review' && /\bhigh\b/i.test(body) ? 1 : 0 }
   const escalation = shouldEscalate(result)
-  logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: profile.workflow?.playbook ?? 'generic', attempt, model: modelId, state: escalation.escalate ? 'escalated' : 'done', contract_ok: validation.ok, cost_usd: staged.usage.cost_usd, duration_ms: Date.now() - started, escalated_from: escalation.escalate ? tier : undefined, failed_back_to: failBackTarget(result) ?? undefined, explore })
+  logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: playbook.name, attempt, model: modelId, state: escalation.escalate ? 'escalated' : 'done', contract_ok: validation.ok, cost_usd: staged.usage.cost_usd, duration_ms: Date.now() - started, escalated_from: escalation.escalate ? tier : undefined, failed_back_to: failBackTarget(result) ?? undefined, explore })
   events.onStage?.(stage, intensity, tier, modelId, escalation.escalate ? 'escalated' : 'done', staged.usage.cost_usd)
   return result
 }
@@ -217,14 +221,14 @@ export async function runPlanPreview(request: string, profile: Profile, session:
     }
     const prior: Array<{ stage: Stage; body: string }> = []
     const reconRouting = resolveTier(profile, 'recon', reconPlan.task_class, undefined, playbook.name)
-    const recon = await executeStage(request, 'recon', Math.max(1, reconPlan.intensity.recon) as Intensity, reconRouting.tier, 1, taskId, reconPlan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
+    const recon = await executeStage(request, 'recon', Math.max(1, reconPlan.intensity.recon) as Intensity, reconRouting.tier, 1, taskId, reconPlan, profile, playbook, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
     prior.push({ stage: 'recon', body: recon.body })
     const plan = fixedTriage
       ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
       : await triageB(request, recon.body, playbook, openai, profile, triage.task_class, previewContext.provider, decision)
     const intensity = Math.max(1, plan.intensity.plan) as Intensity
     const routing = resolveTier(profile, 'plan', plan.task_class, undefined, playbook.name)
-    const result = await executeStage(request, 'plan', intensity, routing.tier, 1, taskId, plan, profile, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
+    const result = await executeStage(request, 'plan', intensity, routing.tier, 1, taskId, plan, profile, playbook, previewSession, previewContext, events, openai, signal, prior, graphSlice, loop, false, false)
     return { taskId, body: result.body, intensity, tier: routing.tier, model: result.modelId, contract_ok: result.contract_ok, attempt: result.attempt }
   } finally {
     mergeUsageDelta(session.usage, usageDeltaFromSession(usageBefore, previewSession.usage))
@@ -298,7 +302,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
 
     const attempt = (stage === 'recon' ? reconAttempts : 0) + 1
     if (stage === 'recon') reconAttempts++
-    const result = await executeStage(request, stage, intensity, exploration.tier, attempt, taskId, activePlan, profile, session, context, events, openai, signal, artifacts, graphSlice, loop, exploration.explore)
+    const result = await executeStage(request, stage, intensity, exploration.tier, attempt, taskId, activePlan, profile, playbook, session, context, events, openai, signal, artifacts, graphSlice, loop, exploration.explore)
     finalResult = result
     artifacts.push({ stage, body: result.body })
 
