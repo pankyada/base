@@ -537,14 +537,25 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case localResultMsg:
 		m.localCancel = nil
+		successfulCodexLogin := msg.Command == "harness auth login openai --method browser" && msg.Code == 0
+		if successfulCodexLogin {
+			m.providerStatus = "active"
+		}
 		result := msg
 		m.lastLocal = &result
 		command := msg.Command
 		m.lastAction = actionResult("local", "!"+command, msg.Output, msg.Code == 0)
-		m.lastAction.RetryFunc = func(model *Model) tea.Cmd {
-			cmd, cancel := runLocalCommand(command, model.workingDir)
-			model.localCancel = cancel
-			return cmd
+		if successfulCodexLogin {
+			m.lastAction = nil
+		} else {
+			m.lastAction.RetryFunc = func(model *Model) tea.Cmd {
+				if command == "harness auth login openai --method browser" && model.localCancel != nil {
+					return nil
+				}
+				cmd, cancel := runLocalCommand(command, model.workingDir)
+				model.localCancel = cancel
+				return cmd
+			}
 		}
 		m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "local", Text: localView(msg), Time: time.Now().Format("15:04")})
 		m.reflow()
@@ -557,13 +568,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.providerAuth == "codex_oauth" && m.providerStatus != "active" && msg.String() == "l" {
-		m.notices.Add(NoticeWarn, "Codex sign-in started", "complete authentication in your browser", "return here when finished")
-		command, cancel := runLocalCommand("harness auth login openai --method browser", m.workingDir)
-		m.localCancel = cancel
-		m.reflow()
-		return m, command
-	}
 	if m.pendingApproval != nil {
 		return m.updateApproval(msg)
 	}
@@ -687,6 +691,19 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.reflow()
 			return m, nil
 		}
+	}
+	if m.providerAuth == "codex_oauth" && msg.String() == "ctrl+l" {
+		if m.providerStatus == "active" {
+			return m, nil
+		}
+		if m.running || m.localCancel != nil {
+			return m, nil
+		}
+		m.notices.Add(NoticeWarn, "Codex sign-in started", "complete authentication in your browser", "return here when finished")
+		command, cancel := runLocalCommand("harness auth login openai --method browser", m.workingDir)
+		m.localCancel = cancel
+		m.reflow()
+		return m, command
 	}
 	switch {
 	case matches(msg, m.keys.Quit):
@@ -2248,7 +2265,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			m.providerAuth = msg.ProviderStatus.Auth
 			m.providerStatus = msg.ProviderStatus.Status
 			if m.providerAuth == "codex_oauth" && m.providerStatus != "active" {
-				m.notices.Add(NoticeWarn, "Codex authentication required", "subscription credential is "+m.providerStatus, "press l to sign in with browser")
+				m.notices.Add(NoticeWarn, "Codex authentication required", "subscription credential is "+m.providerStatus, "press ctrl+l to sign in with browser")
 			}
 		}
 		if msg.Profile != "" {
