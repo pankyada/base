@@ -668,7 +668,7 @@ switchable.
 
 ### 🔄 31. Request routing graph (Jev fan-out · policy · edge checks)
 
-**In progress — phases 1–2 done (PT-076, PT-077: route computed and logged, not applied); next PT-078.** Route each workflow request by typed Jev
+**In progress — phases 1–3 done (PT-076–PT-078: enforce mode applies routes, asks, remembers, chains); next PT-079.** Route each workflow request by typed Jev
 judgments instead of a profile-fixed playbook: a parallel fan-out (domain Noul
 per playbook, scale Score, existing-work, ambiguity, follow-up) feeds a pure
 policy function that picks playbook(s), an intensity floor, or a single

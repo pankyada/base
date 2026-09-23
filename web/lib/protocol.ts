@@ -116,7 +116,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify'
   name?: string
   server?: string
   model?: string
@@ -174,6 +174,13 @@ export interface TelemetryEvent {
   route_playbooks?: string[]
   route_scale?: string
   route_fallback?: string
+  // Phase 3 (roadmap #31 / PT-078). `route_applied` distinguishes a logged
+  // decision (shadow, or enforce-but-not-applied-yet e.g. an `ask`) from one
+  // actually driving this run's playbook/floor selection. `parent_task_id`
+  // links a multi-domain secondary pass's stage/outcome telemetry (spec
+  // §5.3) back to the primary pass's task_id.
+  route_applied?: boolean
+  parent_task_id?: string
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {

@@ -24,6 +24,8 @@ export interface TaskOutcome {
   verdict: 'accepted' | 'reworked' | 'abandoned'
   reason?: string
   project?: string
+  /** Roadmap #31 phase 3 (spec §5.3): set on a multi-domain secondary pass's outcome, linking it to the primary pass's task_id. */
+  parent_task_id?: string
 }
 
 interface LabelRecord {
