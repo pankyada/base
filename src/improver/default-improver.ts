@@ -1,17 +1,23 @@
 import OpenAI from 'openai'
+import matter from 'gray-matter'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { Session } from '../session/types.js'
 import { MemoryProvider, TemporalMeta } from '../memory/interface.js'
-import { Improver, ProposedSkill } from './interface.js'
+import { Improver, ProposedPlaybook, ProposedSkill } from './interface.js'
 import { queryEvents } from '../telemetry/query.js'
 import { Profile } from '../profiles/schema.js'
 import { saveSession } from '../session/store.js'
 import { aggregateRouting } from '../analysis/routing.js'
 import { parseRoutingPolicy, updateRoutingPolicy } from '../workflow/adaptive.js'
+import { STAGES } from '../workflow/types.js'
 import type { ProviderClient } from '../provider/types.js'
 import { isProviderControlFailure } from '../provider/errors.js'
 import type { MemoryCaptureService } from '../decisions/memory.js'
+import { clearRoutingMisses, readRoutingMisses } from '../workflow/routing-misses.js'
+
+
+const PLAYBOOK_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/
 
 export class DefaultImprover implements Improver {
   constructor(
@@ -150,5 +156,76 @@ export class DefaultImprover implements Improver {
     }
 
     return skills
+  }
+
+  /**
+   * Roadmap #31 phase 6 (PT-081), spec §6 item 4. Reads the opt-in local
+   * `routing-misses` project-memory store, and when at least
+   * `workflow.router.mining.min_cluster` misses have accumulated, asks the
+   * improver's model to group them and propose at most one new playbook —
+   * written as a draft `PLAYBOOK.md` under `<artifact_dir>/playbooks/_proposed/`,
+   * never into a discovered playbook root, and never auto-installed. Misses
+   * are cleared only after a successful, validated proposal is written.
+   * Returns `null` whenever there is nothing to propose (mining disabled,
+   * not enough data, no coherent cluster, or a malformed model response) —
+   * this is advisory and must never throw except on a provider control
+   * failure (mirrors `mineSkills`'s error handling).
+   */
+  async minePlaybooks(): Promise<ProposedPlaybook | null> {
+    if (!this.profile.improvement?.enabled) return null
+    const mining = this.profile.workflow?.router?.mining
+    if (!mining?.enabled) return null
+
+    const misses = readRoutingMisses(this.profile)
+    if (misses.length < mining.min_cluster) return null
+
+    let raw: string
+    try {
+      const excerptList = misses.map((miss, index) => `${index + 1}. ${miss.excerpt}`).join('\n')
+      raw = await this.complete(
+        `These are ${misses.length} user requests that could not be confidently routed to any existing workflow playbook (excerpts, possibly truncated):\n${excerptList}\n\n` +
+        'If they share a common theme that would justify a new dedicated playbook, output ONLY a single Markdown file in this exact format (gray-matter frontmatter, then stage sections, same shape as the existing playbooks under .agents/playbooks/*/PLAYBOOK.md):\n\n' +
+        '---\nname: slug-name\ndescription: one line description\nstages: [recon, plan, build, verify]\ntask_classes: [general]\ndefaults:\n  general: { recon: 1, plan: 1, design: 0, build: 2, verify: 1, review: 0 }\n---\n\n' +
+        '## recon\n### L1\nRequired artifact sections: `Files touched`, `Prior knowledge`, `Open questions`.\nExit criteria: current state inspected before planning.\n\n' +
+        '## plan\n### L1\nRequired artifact sections: `Plan`, `Risks`.\nExit criteria: a sequence and risks are explicit.\n\n' +
+        '## build\n### L1\nRequired artifact sections: `Result`.\nExit criteria: the requested artifact is produced.\n\n' +
+        '## verify\n### L1\nRequired artifact sections: `Verification`.\nExit criteria: artifact is checked against reality.\n\n' +
+        'Output NOTHING else — no prose, no code fences. If there is no coherent common theme, output exactly: NONE',
+        'improvement-playbook-mining',
+      )
+    } catch (error) {
+      if (isProviderControlFailure(error)) throw error
+      return null
+    }
+
+    const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim()
+    if (!cleaned || cleaned.toUpperCase() === 'NONE') return null
+
+    let name: string
+    try {
+      const { data, content } = matter(cleaned)
+      if (typeof data.name !== 'string' || !data.name.trim()) return null
+      if (typeof data.description !== 'string' || !data.description.trim()) return null
+      if (!Array.isArray(data.stages) || data.stages.length === 0 || !data.stages.every((s: unknown) => typeof s === 'string' && (STAGES as readonly string[]).includes(s as string))) return null
+      if (!content.trim()) return null
+      name = data.name.trim()
+      if (!PLAYBOOK_NAME.test(name)) return null
+    } catch {
+      return null
+    }
+
+    const proposedDir = join(this.profile.artifact_dir, 'playbooks', '_proposed', name)
+    mkdirSync(proposedDir, { recursive: true })
+    const path = join(proposedDir, 'PLAYBOOK.md')
+    writeFileSync(path, cleaned, 'utf-8')
+
+    try {
+      clearRoutingMisses(this.profile)
+    } catch {
+      // Best-effort: the proposal already landed; a failed clear just means
+      // the next mining pass sees the same misses again (idempotent, not harmful).
+    }
+
+    return { name, path }
   }
 }

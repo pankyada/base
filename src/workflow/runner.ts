@@ -23,10 +23,11 @@ import { bindRunProvider } from '../provider/invocation.js'
 import { mergeUsageDelta, usageDeltaFromSession } from '../usage/ledger.js'
 import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError, type WorkflowDecisionAdvisor, type RouteCandidate, type EdgeJudgment } from '../decisions/workflow.js'
 import { DecisionRuntimeService } from '../decisions/runtime.js'
-import { decideRoute } from './route.js'
-import type { RouteDecision, Scale } from './route.js'
+import { decideRoute, mergeRouterOverrides } from './route.js'
+import type { RouteDecision, RouterConfig, Scale } from './route.js'
 import { regexEdgeLabel, jevEdgeLabel, maxDrift, resolveEdgeAction, rerouteAllowed, promoteFloor } from './edge.js'
 import { runClaimCheck } from './claims.js'
+import { appendRoutingMiss } from './routing-misses.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
@@ -77,6 +78,16 @@ export interface RouteResolution {
   mode?: 'shadow' | 'enforce'
 }
 
+// Roadmap #31 phase 6 (PT-081, spec §6 item 3): merge tuned router
+// thresholds from the adaptive routing-policy doc onto the profile's router
+// config, but ONLY when the profile opted into `workflow.routing.policy:
+// adaptive` — `adaptivePolicy` itself is already `undefined` whenever that
+// policy isn't 'adaptive' (see `runWorkflow`), so this is a plain pass-through
+// merge; the policy gate lives at the `adaptivePolicy` call site, not here.
+function effectiveRouterConfig(router: RouterConfig | undefined, adaptivePolicy: RoutingPolicyDoc | undefined): RouterConfig | undefined {
+  return mergeRouterOverrides(router, adaptivePolicy?.router)
+}
+
 /**
  * Phase 2/3 (PT-077/PT-078): compute and log one routing decision. Shadow
  * mode still never applies it (phase 2 behavior, preserved byte-for-byte
@@ -87,7 +98,7 @@ export interface RouteResolution {
  * Any non-control failure degrades to a logged fallback and the caller's
  * existing path continues untouched; a control outcome propagates.
  */
-async function resolveRoute(request: string, profile: Profile, session: Session, context: ToolContext, signal: AbortSignal, taskId: string, currentPlaybookName: string, clarificationsRemaining: number): Promise<RouteResolution> {
+async function resolveRoute(request: string, profile: Profile, session: Session, context: ToolContext, signal: AbortSignal, taskId: string, currentPlaybookName: string, clarificationsRemaining: number, adaptivePolicy?: RoutingPolicyDoc): Promise<RouteResolution> {
   const router = profile.workflow?.router
   if (!router) return {}
   const configuredCandidates = router.candidates ?? []
@@ -100,6 +111,7 @@ async function resolveRoute(request: string, profile: Profile, session: Session,
   const advisor = routeAdvisor(profile, context, signal)
   if (!advisor?.chooseRoute) return { mode }
 
+  const effectiveRouter: RouterConfig = effectiveRouterConfig(router, adaptivePolicy) ?? router
   const base = { session: session.id, profile: profile.name, kind: 'route' as const, task_id: taskId, route_mode: mode, route_candidates: candidateNames }
   try {
     const candidates = candidateNames.map(name => ({ name, description: available.find(p => p.name === name)?.description }))
@@ -109,7 +121,7 @@ async function resolveRoute(request: string, profile: Profile, session: Session,
       logEvent({ ...base, route_fallback: 'incomplete or malformed route signals', route_applied: false })
       return { mode }
     }
-    const decision = decideRoute(signals, router, currentPlaybookName, clarificationsRemaining, session.workflow_route)
+    const decision = decideRoute(signals, effectiveRouter, currentPlaybookName, clarificationsRemaining, session.workflow_route)
     const applied = mode === 'enforce' && decision.kind === 'run'
     logEvent({
       ...base,
@@ -120,6 +132,15 @@ async function resolveRoute(request: string, profile: Profile, session: Session,
       ...(decision.kind === 'run' ? { route_playbooks: decision.playbooks, route_scale: decision.scale } : {}),
       route_applied: applied,
     })
+    // Roadmap #31 phase 6 (PT-081, spec §6 item 4): a fallback to
+    // `workflow.playbook` because no candidate cleared its domain threshold
+    // is a "miss" worth clustering for playbook mining — opt-in only.
+    // Tainted sessions are never recorded: excerpts feed a model prompt later.
+    const noCandidateQualified = !Object.entries(signals.domain).some(([name, p]) => p > (effectiveRouter.domainThresholds?.[name] ?? effectiveRouter.domain_threshold))
+    if (router.mining?.enabled && decision.kind === 'run' && noCandidateQualified && !session.taint_sources?.length) {
+      const maxDomainP = Object.values(signals.domain).reduce((max, p) => Math.max(max, p), 0)
+      try { appendRoutingMiss(profile, request, maxDomainP) } catch { /* mining is advisory; never break routing */ }
+    }
     return { decision, mode }
   } catch (error) {
     if (error instanceof WorkflowDecisionControlError) throw error
@@ -209,20 +230,20 @@ export interface RouteDecisionResolution {
  * needed for that case. An unattended run (no `onInputRequest`) short-circuits
  * by re-resolving once with `clarificationsRemaining = 0` instead of asking.
  */
-async function resolveRouteDecision(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, taskId: string, currentPlaybookName: string, clarifications: { used: number }): Promise<RouteDecisionResolution> {
+async function resolveRouteDecision(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, taskId: string, currentPlaybookName: string, clarifications: { used: number }, adaptivePolicy?: RoutingPolicyDoc): Promise<RouteDecisionResolution> {
   const maxClarifications = profile.workflow?.router?.max_clarifications ?? 0
   let effectiveRequest = request
 
   while (true) {
     const clarificationsRemaining = Math.max(0, maxClarifications - clarifications.used)
-    const resolution = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, clarificationsRemaining)
+    const resolution = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, clarificationsRemaining, adaptivePolicy)
     if (!resolution.decision || resolution.mode !== 'enforce' || resolution.decision.kind !== 'ask') {
       return { decision: resolution.decision, mode: resolution.mode, request: effectiveRequest }
     }
     if (!events.onInputRequest) {
       // Unattended: no human channel to ask through. Re-decide forcing
       // clarificationsRemaining = 0 so rule 1 cannot fire, and proceed.
-      const forced = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, 0)
+      const forced = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, 0, adaptivePolicy)
       return { decision: forced.decision, mode: forced.mode, request: effectiveRequest }
     }
     const question = await generateClarifyingQuestion(profile, context, openai, effectiveRequest)
@@ -648,12 +669,12 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
     if (edgeResolution.mode === 'enforce' && edgeResolution.judgment) {
       const judgment = edgeResolution.judgment
       const topDrift = maxDrift(judgment.drift)
-      const routerConfig = profile.workflow?.router
+      const routerConfig = effectiveRouterConfig(profile.workflow?.router, adaptivePolicy)
       const rerouteOk = allowReroute && rerouteAllowed({
         routerConfigured: !!routerConfig,
         requestRoutingMode: profile.decision_layer?.features.request_routing,
         maxDriftP: topDrift.p,
-        domainThreshold: routerConfig?.domain_threshold ?? 0.5,
+        domainThreshold: (topDrift.name ? routerConfig?.domainThresholds?.[topDrift.name] : undefined) ?? routerConfig?.domain_threshold ?? 0.5,
         reroutesUsed: reroutes.used,
         maxReroutes: routerConfig?.max_reroutes ?? 1,
       })
@@ -816,7 +837,7 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   const clarifications = { used: 0 }
   const reroutes = { used: 0 }
 
-  const routeResolution = await resolveRouteDecision(request, profile, session, context, events, openai, signal, taskId, fallbackPlaybookName, clarifications)
+  const routeResolution = await resolveRouteDecision(request, profile, session, context, events, openai, signal, taskId, fallbackPlaybookName, clarifications, adaptivePolicy)
   const effectiveRequest = routeResolution.request
   const decision = routeResolution.decision
   const routeMode = routeResolution.mode

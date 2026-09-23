@@ -17,10 +17,25 @@ describe('workflow.router schema (PT-076, roadmap #31 phase 1)', () => {
     const profile = ProfileSchema.parse({ ...base, workflow: { enabled: true, router: {} } })
     expect(profile.workflow?.router).toEqual({
       domain_threshold: 0.5,
-      ask_threshold: 0.6,
+      ask_threshold: 0.7,
       max_reroutes: 1,
       max_clarifications: 1,
+      mining: { enabled: false, min_cluster: 10 },
     })
+  })
+
+  it('mining defaults to disabled — no opt-in, no behavior change (roadmap #31 phase 6, PT-081)', () => {
+    const profile = ProfileSchema.parse({ ...base, workflow: { enabled: true, router: {} } })
+    expect(profile.workflow?.router?.mining).toEqual({ enabled: false, min_cluster: 10 })
+  })
+
+  it('accepts an explicit mining block', () => {
+    const profile = ProfileSchema.parse({ ...base, workflow: { enabled: true, router: { mining: { enabled: true, min_cluster: 5 } } } })
+    expect(profile.workflow?.router?.mining).toEqual({ enabled: true, min_cluster: 5 })
+  })
+
+  it('rejects a mining.min_cluster below 2', () => {
+    expect(() => ProfileSchema.parse({ ...base, workflow: { enabled: true, router: { mining: { min_cluster: 1 } } } })).toThrow()
   })
 
   it('accepts candidates and scale_presets, merging under defaults', () => {

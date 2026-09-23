@@ -77,7 +77,7 @@ workflow:
   router:
     candidates: [coding, data, writing, research, generic]
     domain_threshold: 0.5      # Noul p above which a playbook is "in"
-    ask_threshold: 0.6         # ambiguity Noul p above which we clarify
+    ask_threshold: 0.7         # ambiguity Noul p above which we clarify (0.6 over-asked in live eval)
     max_reroutes: 1
     max_clarifications: 1
     scale_presets:             # optional; per-scale intensity floors, recon clamped ≥1

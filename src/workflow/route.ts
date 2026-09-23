@@ -27,6 +27,14 @@ export interface RouterConfig {
   max_reroutes: number
   max_clarifications: number
   scale_presets?: Partial<Record<Scale, Partial<IntensityMap>>>
+  /**
+   * Roadmap #31 phase 6 (PT-081, spec §6): per-playbook domain threshold
+   * overrides, read from the adaptive routing-policy doc's `router` block
+   * (see `src/workflow/adaptive.ts`'s `RouterOverrides`) only when
+   * `workflow.routing.policy === 'adaptive'`. A playbook without an entry
+   * here still uses `domain_threshold`. Absent entirely => today's behavior.
+   */
+  domainThresholds?: Record<string, number>
 }
 
 export interface SessionRoute {
@@ -102,7 +110,7 @@ export function decideRoute(
   }
 
   const inDomain = Object.entries(signals.domain)
-    .filter(([, p]) => p > config.domain_threshold)
+    .filter(([name, p]) => p > (config.domainThresholds?.[name] ?? config.domain_threshold))
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name)
     .slice(0, 2)
@@ -120,5 +128,22 @@ export function decideRoute(
     scale,
     intensityFloor: intensityFloorFor(config, scale),
     why,
+  }
+}
+
+/**
+ * Roadmap #31 phase 6 (PT-081, spec §6): merge tuned `RouterOverrides` (from
+ * the adaptive routing-policy doc) onto a profile's `RouterConfig`. Pure,
+ * synchronous. Absent `overrides` (no adaptive doc, doc has no `router`
+ * block, or the profile isn't on `workflow.routing.policy: adaptive`) is a
+ * no-op — the caller is responsible for that gating (see
+ * `src/workflow/runner.ts`), so this function alone never changes behavior.
+ */
+export function mergeRouterOverrides<T extends RouterConfig | undefined>(config: T, overrides?: { ask_threshold?: number; domain_thresholds?: Record<string, number> }): T {
+  if (!config || !overrides) return config
+  return {
+    ...config,
+    ask_threshold: overrides.ask_threshold ?? config.ask_threshold,
+    domainThresholds: overrides.domain_thresholds ? { ...config.domainThresholds, ...overrides.domain_thresholds } : config.domainThresholds,
   }
 }

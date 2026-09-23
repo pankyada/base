@@ -24,7 +24,14 @@ if (process.argv[2] === 'stats' && process.argv[3] === 'routing') {
     const sinceArg = flagValue('--since')
     const stageArg = flagValue('--stage')
     const classArg = flagValue('--class')
-    console.log(routingStats({ since: sinceArg && !sinceArg.startsWith('--') ? new Date(sinceArg) : undefined, stage: stageArg && !stageArg.startsWith('--') ? stageArg : undefined, taskClass: classArg && !classArg.startsWith('--') ? classArg : undefined, shadow: process.argv.includes('--shadow') }))
+    console.log(routingStats({
+      since: sinceArg && !sinceArg.startsWith('--') ? new Date(sinceArg) : undefined,
+      stage: stageArg && !stageArg.startsWith('--') ? stageArg : undefined,
+      taskClass: classArg && !classArg.startsWith('--') ? classArg : undefined,
+      shadow: process.argv.includes('--shadow'),
+      suggest: process.argv.includes('--suggest'),
+      json: process.argv.includes('--json'),
+    }))
   } catch (error: any) {
     console.error(error.message)
     process.exitCode = 1

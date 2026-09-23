@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createJevProvider } from '../src/decisions/jev.js'
 import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError } from '../src/decisions/workflow.js'
@@ -30,6 +30,9 @@ type Corpus = { provenance: { name: string; description: string; created: string
 const corpus = JSON.parse(readFileSync(resolve(import.meta.dirname, '../tests/fixtures/routing-evaluation.json'), 'utf8')) as Corpus
 const live = process.argv.includes('--live')
 const json = process.argv.includes('--json')
+// --signals-out <path>: write every row with its raw Jev signals, for offline threshold sweeps.
+const signalsOutIndex = process.argv.indexOf('--signals-out')
+const signalsOut = signalsOutIndex >= 0 ? process.argv[signalsOutIndex + 1] : undefined
 const keyEnv = 'TYPESAFE_API_KEY'
 const PLAYBOOKS = [
   { name: 'coding', description: 'Software change workflow' },
@@ -40,9 +43,9 @@ const PLAYBOOKS = [
   { name: 'writing', description: 'Structured writing workflow' },
 ]
 
-const routerConfig: RouterConfig = { domain_threshold: 0.5, ask_threshold: 0.6, max_reroutes: 1, max_clarifications: 1 }
+const routerConfig: RouterConfig = { domain_threshold: 0.5, ask_threshold: 0.7, max_reroutes: 1, max_clarifications: 1 }
 
-type Row = { id: string; kind: 'ask' | 'run'; playbooks: string[]; scale: Scale | null; expected_kind: 'ask' | 'run'; expected_playbooks: string[]; expected_scale: Scale | null; match: boolean; fallback?: string }
+type Row = { id: string; kind: 'ask' | 'run'; playbooks: string[]; scale: Scale | null; expected_kind: 'ask' | 'run'; expected_playbooks: string[]; expected_scale: Scale | null; match: boolean; fallback?: string; signals?: RouteSignals }
 
 function decisionRow(testCase: RoutingCase, signals: RouteSignals | undefined, fallback?: string): Row {
   if (!signals) {
@@ -54,7 +57,7 @@ function decisionRow(testCase: RoutingCase, signals: RouteSignals | undefined, f
   const match = decision.kind === testCase.expected.kind &&
     JSON.stringify(playbooks) === JSON.stringify(testCase.expected.playbooks) &&
     scale === testCase.expected.scale
-  return { id: testCase.id, kind: decision.kind, playbooks, scale, expected_kind: testCase.expected.kind, expected_playbooks: testCase.expected.playbooks, expected_scale: testCase.expected.scale, match, fallback }
+  return { id: testCase.id, kind: decision.kind, playbooks, scale, expected_kind: testCase.expected.kind, expected_playbooks: testCase.expected.playbooks, expected_scale: testCase.expected.scale, match, fallback, signals }
 }
 
 async function runOffline(): Promise<Row[]> {
@@ -93,6 +96,19 @@ async function main() {
   const rows = live ? await runLive() : await runOffline()
   const matches = rows.filter(row => row.match).length
   const accuracy = rows.length ? matches / rows.length : 1
+  const SCALE_ORDER: Array<Scale | null> = ['trivial', 'small', 'medium', 'large']
+  const rate = (predicate: (row: Row) => boolean, subset = rows) => subset.length ? subset.filter(predicate).length / subset.length : 1
+  const kindOk = (row: Row) => row.kind === row.expected_kind
+  const bothRun = rows.filter(row => row.kind === 'run' && row.expected_kind === 'run')
+  // Per-dimension accuracy: kind over all rows; playbooks and scale only where both sides ran.
+  const per_dimension = {
+    kind: rate(kindOk),
+    playbooks: rate(row => JSON.stringify(row.playbooks) === JSON.stringify(row.expected_playbooks), bothRun),
+    primary_playbook: rate(row => row.playbooks[0] === row.expected_playbooks[0], bothRun),
+    scale_exact: rate(row => row.scale === row.expected_scale, bothRun),
+    scale_within_one: rate(row => Math.abs(SCALE_ORDER.indexOf(row.scale) - SCALE_ORDER.indexOf(row.expected_scale)) <= 1, bothRun),
+  }
+  if (signalsOut) writeFileSync(signalsOut, JSON.stringify(rows, null, 2))
   const result = {
     mode: live ? 'live' : 'offline',
     status: 'synthetic_fixture_only',
@@ -101,10 +117,11 @@ async function main() {
     cases: rows.length,
     matches,
     accuracy,
-    mismatches: rows.filter(row => !row.match),
+    per_dimension,
+    mismatches: rows.filter(row => !row.match).map(({ signals: _signals, ...row }) => row),
   }
   if (json) console.log(JSON.stringify(result, null, 2))
-  else console.log(`Routing evaluation (${result.mode})\nCases: ${result.cases}\nMatches: ${result.matches}\nAccuracy: ${(accuracy * 100).toFixed(1)}%\n${result.mismatches.length > 0 ? `Mismatches:\n${result.mismatches.map(row => `  ${row.id}: got ${row.kind}/${JSON.stringify(row.playbooks)}/${row.scale}${row.fallback ? ` (fallback: ${row.fallback})` : ''} expected ${row.expected_kind}/${JSON.stringify(row.expected_playbooks)}/${row.expected_scale}`).join('\n')}` : 'All cases matched.'}\nProduction accuracy: ${result.production_accuracy}; this is synthetic fixture evidence only.`)
+  else console.log(`Routing evaluation (${result.mode})\nCases: ${result.cases}\nMatches: ${result.matches}\nAccuracy: ${(accuracy * 100).toFixed(1)}%\nPer dimension: ${Object.entries(per_dimension).map(([key, value]) => `${key} ${(value * 100).toFixed(0)}%`).join(', ')}\n${result.mismatches.length > 0 ? `Mismatches:\n${result.mismatches.map(row => `  ${row.id}: got ${row.kind}/${JSON.stringify(row.playbooks)}/${row.scale}${row.fallback ? ` (fallback: ${row.fallback})` : ''} expected ${row.expected_kind}/${JSON.stringify(row.expected_playbooks)}/${row.expected_scale}`).join('\n')}` : 'All cases matched.'}\nProduction accuracy: ${result.production_accuracy}; this is synthetic fixture evidence only.`)
 }
 
 await main()

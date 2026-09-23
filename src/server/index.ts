@@ -1372,6 +1372,10 @@ async function main() {
           const improver = new DefaultImprover(connectionProfile, connectionOpenai, helper.provider)
           try {
             await improver.mineSkills([session])
+            // Roadmap #31 phase 6 (PT-081, spec §6 item 4): playbook mining rides
+            // the same cadence as skill mining. No-op unless the profile opted
+            // into `workflow.router.mining.enabled` (checked inside minePlaybooks).
+            await improver.minePlaybooks?.()
           } finally {
             releaseMaintenanceContext(helper)
           }

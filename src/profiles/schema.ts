@@ -254,10 +254,17 @@ const WorkflowSchema = z.object({
   router: z.object({
     candidates: z.array(z.string()).optional(),
     domain_threshold: z.number().min(0).max(1).default(0.5),
-    ask_threshold: z.number().min(0).max(1).default(0.6),
+    ask_threshold: z.number().min(0).max(1).default(0.7), // 0.7 per PT-082 live eval (0.6 over-asked)
     max_reroutes: z.number().int().min(0).default(1),
     max_clarifications: z.number().int().min(0).default(1),
     scale_presets: z.partialRecord(z.enum(['trivial', 'small', 'medium', 'large']), z.partialRecord(z.enum(['recon', 'plan', 'design', 'build', 'verify', 'review']), IntensityValue)).optional(),
+    // Roadmap #31 phase 6 (PT-081), spec §6: opt-in local misses store for
+    // playbook mining proposals. Disabled by default — absent/disabled means
+    // no `routing-misses` memory write ever happens (invariant 2).
+    mining: z.object({
+      enabled: z.boolean().default(false),
+      min_cluster: z.number().int().min(2).default(10),
+    }).default({ enabled: false, min_cluster: 10 }),
   }).optional(),
 })
 export { RoleModelsSchema, WorkflowSchema }
