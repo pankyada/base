@@ -64,16 +64,38 @@ func serverBinaryPath(executable, goos string) string {
 	return filepath.Join(filepath.Dir(executable), name)
 }
 
+func serverBinaryAvailable(path, goos string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return goos == "windows" || info.Mode().Perm()&0o111 != 0
+}
+
 // serverCommand returns dev (tsx) vs prod (harness-server binary) invocation.
 func serverCommand(profile string) (string, []string, string) {
 	exe, _ := os.Executable()
-	root, ok := findRepoRoot(filepath.Dir(exe))
+	wd, _ := os.Getwd()
+	return serverCommandFor(profile, exe, wd, runtime.GOOS)
+}
+
+func serverCommandFor(profile, executable, workingDir, goos string) (string, []string, string) {
+	root, ok := findRepoRoot(filepath.Dir(executable))
 	if !ok {
-		wd, _ := os.Getwd()
-		if r, ok2 := findRepoRoot(wd); ok2 {
+		if r, ok2 := findRepoRoot(workingDir); ok2 {
 			root = r
 		}
 	}
+
+	serverBinary := serverBinaryPath(executable, goos)
+	if serverBinaryAvailable(serverBinary, goos) {
+		args := []string{}
+		if profile != "" {
+			args = append(args, profile)
+		}
+		return serverBinary, args, root
+	}
+
 	devEntry := filepath.Join(root, "src", "server", "index.ts")
 	if _, err := os.Stat(devEntry); err == nil {
 		args := []string{devEntry}
@@ -86,7 +108,7 @@ func serverCommand(profile string) (string, []string, string) {
 	if profile != "" {
 		args = append(args, profile)
 	}
-	return serverBinaryPath(exe, runtime.GOOS), args, root
+	return serverBinary, args, root
 }
 
 // EnsureServer probes /health and spawns the server if it is not already up.
