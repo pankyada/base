@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { fileURLToPath } from 'url'
 import { resolve, dirname } from 'path'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, readdirSync } from 'fs'
 import { loadProfile } from '../src/profiles/loader.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -13,8 +13,8 @@ describe('devops profile', () => {
   beforeAll(() => { profile = loadProfile(resolve(ROOT, 'profiles/devops.yaml')) })
 
   it('name is devops', () => { expect(profile.name).toBe('devops') })
-  it('model id is claude-sonnet-4-6', () => { expect(profile.model.id).toBe('claude-sonnet-4-6') })
-  it('api_key_env is ANTHROPIC_API_KEY', () => { expect(profile.model.api_key_env).toBe('ANTHROPIC_API_KEY') })
+  it('model id is gpt-6-luna', () => { expect(profile.model.id).toBe('gpt-6-luna') })
+  it('uses the OpenAI API key', () => { expect(profile.model.api_key_env).toBe('OPENAI_API_KEY') })
   it('Bash is allow', () => { expect(profile.tools.builtin.Bash).toBe('allow') })
   it('ExecuteCode is deny', () => { expect(profile.tools.builtin.ExecuteCode).toBe('deny') })
   it('mode is undefined', () => { expect(profile.mode).toBeUndefined() })
@@ -34,7 +34,7 @@ describe('research profile', () => {
   beforeAll(() => { profile = loadProfile(resolve(ROOT, 'profiles/research.yaml')) })
 
   it('name is research', () => { expect(profile.name).toBe('research') })
-  it('model id is claude-opus-4-8', () => { expect(profile.model.id).toBe('claude-opus-4-8') })
+  it('model id is gpt-6-luna', () => { expect(profile.model.id).toBe('gpt-6-luna') })
   it('Delegate is allow', () => { expect(profile.tools.builtin.Delegate).toBe('allow') })
   it('Bash is deny', () => { expect(profile.tools.builtin.Bash).toBe('deny') })
   it('Write is deny', () => { expect(profile.tools.builtin.Write).toBe('deny') })
@@ -89,7 +89,7 @@ describe('writer profile', () => {
   beforeAll(() => { profile = loadProfile(resolve(ROOT, 'profiles/writer.yaml')) })
 
   it('name is writer', () => { expect(profile.name).toBe('writer') })
-  it('model id is claude-sonnet-4-6', () => { expect(profile.model.id).toBe('claude-sonnet-4-6') })
+  it('model id is gpt-6-luna', () => { expect(profile.model.id).toBe('gpt-6-luna') })
   it('Write is allow', () => { expect(profile.tools.builtin.Write).toBe('allow') })
   it('Bash is deny', () => { expect(profile.tools.builtin.Bash).toBe('deny') })
   it('Edit is deny', () => { expect(profile.tools.builtin.Edit).toBe('deny') })
@@ -116,7 +116,7 @@ describe('security profile', () => {
   beforeAll(() => { profile = loadProfile(resolve(ROOT, 'profiles/security.yaml')) })
 
   it('name is security', () => { expect(profile.name).toBe('security') })
-  it('model id is claude-opus-4-8', () => { expect(profile.model.id).toBe('claude-opus-4-8') })
+  it('model id is gpt-6-luna', () => { expect(profile.model.id).toBe('gpt-6-luna') })
   it('Bash is deny', () => { expect(profile.tools.builtin.Bash).toBe('deny') })
   it('Write is deny', () => { expect(profile.tools.builtin.Write).toBe('deny') })
   it('Edit is deny', () => { expect(profile.tools.builtin.Edit).toBe('deny') })
@@ -154,6 +154,24 @@ describe('skill files exist with valid frontmatter', () => {
       expect(content).toMatch(/^---/)
       expect(content).toMatch(/name:/)
       expect(content).toMatch(/description:/)
+    })
+  }
+})
+
+describe('shipped profiles use the GPT-6 defaults and role tiers', () => {
+  const profileFiles = readdirSync(resolve(ROOT, 'profiles')).filter(file => file.endsWith('.yaml'))
+
+  for (const file of profileFiles) {
+    it(`${file} defaults to GPT-6 Luna with GPT-6 role tiers`, () => {
+      const profile = loadProfile(resolve(ROOT, 'profiles', file))
+      expect(profile.model).toMatchObject({
+        base_url: 'https://api.openai.com/v1',
+        api_key_env: 'OPENAI_API_KEY',
+        id: 'gpt-6-luna',
+      })
+      expect(profile.models?.roles).toMatchObject({
+        cheap: 'gpt-6-luna', balanced: 'gpt-6-luna', frontier: 'gpt-6-sol', critic: 'gpt-6-sol',
+      })
     })
   }
 })

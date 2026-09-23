@@ -5,10 +5,11 @@ use_case:
   rank: 4
 description: "Infra health-check and DevOps automation agent. Runs daily at 08:00 via cron; usable interactively too."
 model:
-  base_url: https://api.anthropic.com/v1
-  api_key_env: ANTHROPIC_API_KEY
-  id: claude-sonnet-4-6
-  fallback_id: claude-sonnet-4-6
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  id: gpt-6-luna
+models:
+  roles: { cheap: gpt-6-luna, balanced: gpt-6-luna, frontier: gpt-6-sol, critic: gpt-6-sol }
 system_prompt: ./devops.md
 working_dir: $CWD
 artifact_dir: .harness/devops

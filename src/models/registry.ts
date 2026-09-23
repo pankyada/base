@@ -44,6 +44,10 @@ export const MODEL_PRICES: Readonly<Record<string, ModelPricing>> = {
   'gpt-5.6-terra': { input: 0.000002, output: 0.000012 },
   // source: https://developers.openai.com/api/docs/pricing, checked 2026-07-31
   'gpt-5.6-luna': { input: 0.0000002, output: 0.0000012 },
+  // source: https://developers.openai.com/api/docs/changelog, checked 2026-09-24
+  'gpt-6-sol': { input: 0.000002, output: 0.00001 },
+  // source: https://developers.openai.com/api/docs/changelog, checked 2026-09-24
+  'gpt-6-luna': { input: 0.0000001, output: 0.0000005 },
   // source: https://developers.openai.com/api/docs/models/gpt-5.5, checked 2026-07-31
   'gpt-5.5': { input: 0.000005, output: 0.00003 },
   // source: https://developers.openai.com/api/docs/models/gpt-5.5-pro, checked 2026-07-31
@@ -82,6 +86,8 @@ const DEFINITIONS: readonly ModelDefinition[] = [
   { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['reasoning', 'frontier'], ...MODEL_PRICES['gpt-5.6-sol'] },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['balanced', 'agentic'], ...MODEL_PRICES['gpt-5.6-terra'] },
   { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['fast', 'cost-efficient'], ...MODEL_PRICES['gpt-5.6-luna'] },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['reasoning', 'frontier', 'agentic'], ...MODEL_PRICES['gpt-6-sol'] },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['reasoning', 'fast', 'cost-efficient'], ...MODEL_PRICES['gpt-6-luna'] },
   { id: 'gpt-5.5', label: 'GPT-5.5', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['reasoning', 'frontier'], ...MODEL_PRICES['gpt-5.5'] },
   { id: 'gpt-5.5-pro', label: 'GPT-5.5 Pro', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['reasoning', 'pro'], ...MODEL_PRICES['gpt-5.5-pro'] },
   { id: 'gpt-5.4', label: 'GPT-5.4', provider: 'OpenAI', base_url: OPENAI_BASE_URL, context_window: 1_050_000, tags: ['reasoning', 'agentic'], ...MODEL_PRICES['gpt-5.4'] },
@@ -197,7 +203,7 @@ function codexEffort(model: (typeof CODEX_MODELS)[number]): EffortCapability {
 // /v1/chat/completions unless reasoning_effort is explicitly 'none' — the
 // API otherwise defaults to a nonzero effort that's incompatible with
 // function tools on that endpoint. See agent-loop.ts's create() call.
-const REASONING_EFFORT_PREFIXES = ['o1', 'o3', 'o4', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6']
+const REASONING_EFFORT_PREFIXES = ['o1', 'o3', 'o4', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6', 'gpt-6']
 
 export function requiresReasoningEffortNone(modelId: string): boolean {
   return REASONING_EFFORT_PREFIXES.some(prefix => modelId.startsWith(prefix))

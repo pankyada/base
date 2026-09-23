@@ -1,9 +1,11 @@
 name: summariser
 description: "Synthesis worker. Takes research findings and writes a structured report. Called by the research orchestrator."
 model:
-  base_url: https://api.anthropic.com/v1
-  api_key_env: ANTHROPIC_API_KEY
-  id: claude-sonnet-4-6
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  id: gpt-6-luna
+models:
+  roles: { cheap: gpt-6-luna, balanced: gpt-6-luna, frontier: gpt-6-sol, critic: gpt-6-sol }
 system_prompt: ./summariser.md
 working_dir: $CWD
 artifact_dir: .harness/summariser

@@ -23,6 +23,8 @@ describe('model registry', () => {
     expect(estimateCost('claude-sonnet-4-6', 1000, 500)).toBe(0.0105)
     expect(estimateCost('claude-opus-4-8', 1000, 500)).toBe(0.0525)
     expect(estimateCost('gpt-4o', 1000, 500)).toBe(0.0075)
+    expect(estimateCost('gpt-6-sol', 1000, 500)).toBe(0.007)
+    expect(estimateCost('gpt-6-luna', 1000, 500)).toBe(0.00035)
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(estimateCost('unknown-model', 1000, 500)).toBe(
@@ -58,7 +60,7 @@ describe('model registry', () => {
   })
 
   it('flags the reasoning-family models that 400 on tools without reasoning_effort: none', () => {
-    for (const id of ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.4-mini', 'o3', 'o4-mini']) {
+    for (const id of ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-luna', 'gpt-6-sol', 'gpt-5.4-mini', 'o3', 'o4-mini']) {
       expect(requiresReasoningEffortNone(id), id).toBe(true)
     }
     for (const id of ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-5', 'claude-opus-4-8']) {
@@ -76,5 +78,15 @@ describe('model registry', () => {
         expect(ids.has(id), `${file} references missing model ${id}`).toBe(true)
       }
     }
+  })
+
+  it('lists GPT-6 models as OpenAI models with the supported context window', () => {
+    const models = listModels(profile('https://api.openai.com/v1', 'gpt-6-luna'))
+    expect(models.find((model) => model.id === 'gpt-6-luna')).toMatchObject({
+      provider: 'OpenAI', available: true, context_window: 1_050_000,
+    })
+    expect(models.find((model) => model.id === 'gpt-6-sol')).toMatchObject({
+      provider: 'OpenAI', available: true, context_window: 1_050_000,
+    })
   })
 })
