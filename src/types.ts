@@ -110,7 +110,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify' | 'edge' | 'reroute'
   name?: string
   server?: string
   model?: string
@@ -175,6 +175,15 @@ export interface TelemetryEvent {
   // §5.3) back to the primary pass's task_id.
   route_applied?: boolean
   parent_task_id?: string
+  // Phase 4 (roadmap #31 / PT-079, spec §5.4/§5.8). `edge` events never carry
+  // raw artifact/request text, only bounded verdict labels; `reroute` reuses
+  // `route_playbooks` (single element: the reroute target) and `task_id`/
+  // `parent_task_id` for linkage.
+  edge_regex?: string
+  edge_jev?: string
+  edge_agree?: boolean
+  edge_applied?: boolean
+  edge_fallback?: string
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {

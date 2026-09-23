@@ -5,12 +5,21 @@ import { SCALES, type RouteSignals, type Scale, type SessionRoute } from '../wor
 
 export interface RouteCandidate { name: string; description?: string }
 
+/** Phase 4 (roadmap #31, PT-079), spec §5.4. `failed_back` is `undefined` for 'none'. `drift` is empty when no drift candidates were passed. */
+export interface EdgeJudgment {
+  next: 'continue' | 'promote' | 'reroute' | 'stuck' | 'done'
+  failed_back?: Stage
+  drift: Record<string, number>
+}
+
 export interface WorkflowDecisionAdvisor {
   mode?: 'shadow' | 'enforce'
   chooseTriage(request: string, playbook: Playbook): Promise<{ task_class: string; recon_intensity: Intensity } | undefined>
   choosePlan?(request: string, reconArtifact: string, playbook: Playbook, taskClass: string): Promise<{ task_class?: string; intensity?: Partial<IntensityMap> } | undefined>
   /** Request routing graph (roadmap #31 phase 2, spec §5.1). One `evaluate` call fanning out domain/scale/ambiguity/existing-work/continuity questions. */
   chooseRoute?(request: string, candidates: RouteCandidate[], sessionRoute?: SessionRoute, lastAssistantMessage?: string): Promise<RouteSignals | undefined>
+  /** Request routing graph (roadmap #31 phase 4, spec §5.4). One `evaluate` call per non-recon stage completion. */
+  judgeEdge?(request: string, stage: Stage, artifact: string, playbook: string, remainingStages: Stage[], earlierStages: Stage[], driftCandidates?: RouteCandidate[]): Promise<EdgeJudgment | undefined>
 }
 
 export class WorkflowDecisionControlError extends Error {
@@ -35,11 +44,11 @@ function score(outcome: Extract<DecisionOutcome, { kind: 'success' }>, key: stri
 // Question keys sent to Jev must be safe identifiers; playbook names are
 // operator-controlled but not guaranteed to be. Sanitize to [a-z0-9_] and
 // keep a reverse map so answers route back to the real candidate name.
-function sanitizeKey(name: string): string {
+export function sanitizeKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'candidate'
 }
 
-function domainKeyMap(candidates: RouteCandidate[]): Map<string, string> {
+export function domainKeyMap(candidates: RouteCandidate[]): Map<string, string> {
   const map = new Map<string, string>()
   const seen = new Set<string>()
   for (const candidate of candidates) {
@@ -162,6 +171,62 @@ export function createWorkflowDecisionAdvisor(options: { provider: DecisionProvi
         signals.continues_previous = continuesPrevious
       }
       return signals
+    },
+    async judgeEdge(request, stage, artifact, playbook, remainingStages, earlierStages, driftCandidates) {
+      const questions: Record<string, DecisionQuestion> = {
+        next: {
+          type: 'choice',
+          instructions: 'Judge the edge right after this workflow stage completed. Choose what should happen next.',
+          criteria: {
+            continue: 'The work is on track with the plan; proceed to the next stage as planned.',
+            promote: 'The work is turning out bigger than what was planned; the remaining stages need more intensity, restarting from planning.',
+            reroute: 'The remaining work no longer belongs to this workflow; it belongs to a different one entirely.',
+            stuck: 'Progress cannot continue without asking the user a clarifying question.',
+            done: 'The request is already fully satisfied by the work so far; no further stage work is needed.',
+          },
+        },
+      }
+      const failedBackOptions = ['none', ...earlierStages]
+      questions.failed_back = {
+        type: 'choice',
+        instructions: "Which earlier stage's output was wrong and must be redone? Choose 'none' if nothing earlier needs to be redone.",
+        criteria: Object.fromEntries(failedBackOptions.map(name => [name, name === 'none' ? 'Nothing earlier needs to be redone.' : `The ${name} stage's output was wrong and must be redone.`])),
+      }
+      const keyMap = driftCandidates && driftCandidates.length > 0 ? domainKeyMap(driftCandidates) : undefined
+      if (keyMap) {
+        for (const [key, name] of keyMap) {
+          const candidate = driftCandidates!.find(c => c.name === name)
+          questions[`drift_${key}`] = {
+            type: 'noul',
+            instructions: `The remaining work now belongs to the ${name} workflow${candidate?.description ? ` (${candidate.description})` : ''}, not ${playbook}.`,
+          }
+        }
+      }
+      const state: Record<string, unknown> = {
+        stage,
+        artifact: bounded(artifact, 6_000),
+        request: bounded(request, 4_000),
+        playbook,
+        remaining_stages: remainingStages,
+        earlier_stages: earlierStages,
+      }
+      const outcome = await evaluate(state, questions)
+
+      const next = choice(outcome, 'next')
+      if (!next || !['continue', 'promote', 'reroute', 'stuck', 'done'].includes(next)) return undefined
+      const failedBackRaw = choice(outcome, 'failed_back')
+      if (!failedBackRaw || !failedBackOptions.includes(failedBackRaw)) return undefined
+      const failed_back = failedBackRaw === 'none' ? undefined : (failedBackRaw as Stage)
+
+      const drift: Record<string, number> = {}
+      if (keyMap) {
+        for (const [key, name] of keyMap) {
+          const value = noul(outcome, `drift_${key}`)
+          if (value === undefined) return undefined
+          drift[name] = value
+        }
+      }
+      return { next: next as EdgeJudgment['next'], failed_back, drift }
     },
   }
 }

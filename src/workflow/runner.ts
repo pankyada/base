@@ -21,10 +21,11 @@ import { maybeShadow } from './shadow.js'
 import type { ProviderClient, UsageMetadata } from '../provider/types.js'
 import { bindRunProvider } from '../provider/invocation.js'
 import { mergeUsageDelta, usageDeltaFromSession } from '../usage/ledger.js'
-import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError, type WorkflowDecisionAdvisor } from '../decisions/workflow.js'
+import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError, type WorkflowDecisionAdvisor, type RouteCandidate, type EdgeJudgment } from '../decisions/workflow.js'
 import { DecisionRuntimeService } from '../decisions/runtime.js'
 import { decideRoute } from './route.js'
-import type { RouteDecision } from './route.js'
+import type { RouteDecision, Scale } from './route.js'
+import { regexEdgeLabel, jevEdgeLabel, maxDrift, resolveEdgeAction, rerouteAllowed, promoteFloor } from './edge.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
@@ -56,6 +57,16 @@ function workflowAdvisor(profile: Profile, context: ToolContext, signal: AbortSi
 function routeAdvisor(profile: Profile, context: ToolContext, signal: AbortSignal): WorkflowDecisionAdvisor | undefined {
   const config = profile.decision_layer
   const mode = config?.features.request_routing
+  if (!config || (mode !== 'shadow' && mode !== 'enforce') || !(context.decisionRuntime instanceof DecisionRuntimeService) || !context.decisionRuntime.provider || !config.model) return undefined
+  return createWorkflowDecisionAdvisor({ provider: context.decisionRuntime.provider, model: config.model, signal, mode, evaluateOptions: context.decisionRuntime.evaluateOptions(signal) })
+}
+
+// Phase 4 (roadmap #31 / PT-079, spec §5.4). Gated on
+// `decision_layer.features.edge_checks`, mirroring `routeAdvisor`'s gating
+// but keyed on the edge-check-specific feature mode.
+function edgeAdvisor(profile: Profile, context: ToolContext, signal: AbortSignal): WorkflowDecisionAdvisor | undefined {
+  const config = profile.decision_layer
+  const mode = config?.features.edge_checks
   if (!config || (mode !== 'shadow' && mode !== 'enforce') || !(context.decisionRuntime instanceof DecisionRuntimeService) || !context.decisionRuntime.provider || !config.model) return undefined
   return createWorkflowDecisionAdvisor({ provider: context.decisionRuntime.provider, model: config.model, signal, mode, evaluateOptions: context.decisionRuntime.evaluateOptions(signal) })
 }
@@ -117,6 +128,50 @@ async function resolveRoute(request: string, profile: Profile, session: Session,
   }
 }
 
+export interface EdgeResolution {
+  judgment?: EdgeJudgment
+  mode?: 'shadow' | 'enforce'
+}
+
+/**
+ * Phase 4 (PT-079), spec §5.4/§5.8: one `judgeEdge` call for a completed
+ * non-recon stage, plus its `edge` telemetry. Only called by the caller when
+ * `hardEscalation` did not fire. Any Jev failure (validation, network,
+ * malformed judgment) degrades to `{ mode }` — the caller then falls back to
+ * today's regex-based path, same as `resolveRoute`. A control outcome
+ * propagates.
+ */
+async function resolveEdgeJudgment(request: string, stage: Stage, artifact: string, playbook: Playbook, remainingStages: Stage[], earlierStages: Stage[], profile: Profile, session: Session, context: ToolContext, signal: AbortSignal, taskId: string, parentTaskId: string | undefined, regexLabel: string): Promise<EdgeResolution> {
+  const mode = profile.decision_layer?.features.edge_checks
+  if (mode !== 'shadow' && mode !== 'enforce') return {}
+  const advisor = edgeAdvisor(profile, context, signal)
+  if (!advisor?.judgeEdge) return { mode }
+
+  const router = profile.workflow?.router
+  let driftCandidates: RouteCandidate[] | undefined
+  if (router?.candidates?.length) {
+    const available = listPlaybooks()
+    const names = router.candidates.filter(name => name !== playbook.name && available.some(p => p.name === name))
+    if (names.length > 0) driftCandidates = names.map(name => ({ name, description: available.find(p => p.name === name)?.description }))
+  }
+
+  const base = { session: session.id, profile: profile.name, kind: 'edge' as const, task_id: taskId, stage, edge_regex: regexLabel, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) }
+  try {
+    const judgment = await advisor.judgeEdge(request, stage, artifact, playbook.name, remainingStages, earlierStages, driftCandidates)
+    if (!judgment) {
+      logEvent({ ...base, edge_applied: false, edge_fallback: 'incomplete or malformed edge judgment' })
+      return { mode }
+    }
+    const edgeJevLabel = jevEdgeLabel(judgment.next, judgment.failed_back)
+    logEvent({ ...base, edge_jev: edgeJevLabel, edge_agree: edgeJevLabel === regexLabel, edge_applied: mode === 'enforce' })
+    return { judgment, mode }
+  } catch (error) {
+    if (error instanceof WorkflowDecisionControlError) throw error
+    logEvent({ ...base, edge_applied: false, edge_fallback: (error instanceof Error ? error.message : 'edge provider error').slice(0, 200) })
+    return { mode }
+  }
+}
+
 export const FIXED_CLARIFYING_QUESTION = 'Could you clarify what exactly you want done?'
 
 // Spec §5.6: the clarifying question's TEXT is produced by the cheap-role
@@ -153,13 +208,12 @@ export interface RouteDecisionResolution {
  * needed for that case. An unattended run (no `onInputRequest`) short-circuits
  * by re-resolving once with `clarificationsRemaining = 0` instead of asking.
  */
-async function resolveRouteDecision(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, taskId: string, currentPlaybookName: string): Promise<RouteDecisionResolution> {
+async function resolveRouteDecision(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, taskId: string, currentPlaybookName: string, clarifications: { used: number }): Promise<RouteDecisionResolution> {
   const maxClarifications = profile.workflow?.router?.max_clarifications ?? 0
   let effectiveRequest = request
-  let clarificationsUsed = 0
 
   while (true) {
-    const clarificationsRemaining = Math.max(0, maxClarifications - clarificationsUsed)
+    const clarificationsRemaining = Math.max(0, maxClarifications - clarifications.used)
     const resolution = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, clarificationsRemaining)
     if (!resolution.decision || resolution.mode !== 'enforce' || resolution.decision.kind !== 'ask') {
       return { decision: resolution.decision, mode: resolution.mode, request: effectiveRequest }
@@ -173,8 +227,8 @@ async function resolveRouteDecision(request: string, profile: Profile, session: 
     const question = await generateClarifyingQuestion(profile, context, openai, effectiveRequest)
     const id = randomUUID().replace(/-/g, '').slice(0, 8)
     const answer = await events.onInputRequest(id, question, 'text')
-    clarificationsUsed++
-    logEvent({ session: session.id, profile: profile.name, kind: 'clarify', task_id: taskId, attempt: clarificationsUsed })
+    clarifications.used++
+    logEvent({ session: session.id, profile: profile.name, kind: 'clarify', task_id: taskId, attempt: clarifications.used })
     effectiveRequest = `${effectiveRequest}\n\nClarification: ${answer}`
   }
 }
@@ -217,6 +271,21 @@ export function shouldEscalate(result: StageResult): { escalate: boolean; reason
   if ((result.tool_error_rate ?? 0) > 0.3) return { escalate: true, reason: 'tool error rate above 30%' }
   if ((result.confidence ?? 1) < 0.4) return { escalate: true, reason: 'low confidence' }
   if ((result.high_findings ?? 0) > 0) return { escalate: true, reason: 'high severity review finding' }
+  return { escalate: false, reason: '' }
+}
+
+// Phase 4 (roadmap #31 / PT-079, spec §5.4): the subset of `shouldEscalate`
+// that stays authoritative in code even when edge checks are active — these
+// are hard, code-verifiable signals (contract validation, thrash, tool
+// error rate), never deferred to a Jev judgment. Same messages as
+// `shouldEscalate` for the overlapping cases. `shouldEscalate` itself is
+// unchanged and still used as today's full escalation path (including the
+// soft/verify-specific signals) whenever edge checks are absent, disabled,
+// in shadow mode, or the Jev call fails.
+export function hardEscalation(result: StageResult): { escalate: boolean; reason: string } {
+  if (!result.contract_ok) return { escalate: true, reason: 'stage contract unmet' }
+  if ((result.edit_rewrites ?? 0) >= 3) return { escalate: true, reason: 'edit thrash' }
+  if ((result.tool_error_rate ?? 0) > 0.3) return { escalate: true, reason: 'tool error rate above 30%' }
   return { escalate: false, reason: '' }
 }
 
@@ -405,6 +474,22 @@ interface PassOptions {
   /** Prior artifacts from an earlier pass (spec §5.3 multi-domain chaining), used as stage context but excluded from this pass's own outcome stats. */
   priorArtifacts: Array<{ stage: Stage; body: string }>
   parentTaskId?: string
+  /** The routed scale, when a `run` decision routed this pass (phase 4 `promote` uses it to find the next scale's intensity floor). */
+  scale?: Scale
+  /**
+   * Phase 4 (PT-079) reroute (spec §5.4): when set, this pass skips
+   * executing recon — the recon gate was already satisfied by the pass that
+   * rerouted here — seeds this body as the recon artifact for prior-stage
+   * context, runs triage-B on it, and starts at the playbook's `plan` stage
+   * (or its first stage, if it has none).
+   */
+  reconArtifactBody?: string
+  /** Shared across every pass and the top-level route-ask loop in one `runWorkflow` call (spec §6 phase 4: "share ONE per-runWorkflow counter with phase 3's route clarifications"). */
+  clarifications: { used: number }
+  /** Shared across every pass in one `runWorkflow` call, bounding phase 4 reroutes (spec §2 invariant 4). */
+  reroutes: { used: number }
+  /** Only the primary chain may reroute; runWorkflow does not re-dispatch a secondary pass's reroute. */
+  allowReroute?: boolean
 }
 
 type PassOutcome =
@@ -412,6 +497,8 @@ type PassOutcome =
   | { verdict: 'abandoned'; reason: string }
   | { verdict: 'budget_exhausted' }
   | { verdict: 'aborted' }
+  /** Phase 4 (PT-079) reroute (spec §5.4/§6): the caller starts a fresh pass on `playbook`, seeding `reconArtifact`. */
+  | { verdict: 'reroute'; playbook: string; reconArtifact: string; artifacts: Array<{ stage: Stage; body: string }> }
 
 /**
  * One playbook pass of the workflow state machine (stage pointer, fail-back,
@@ -422,9 +509,10 @@ type PassOutcome =
  * call (item 4 of the phase 3 task). Does NOT push the user message to
  * `session.messages` — the caller does that once, before any pass runs.
  */
-async function runWorkflowPass(request: string, shared: PassShared, opts: PassOptions): Promise<PassOutcome> {
+async function runWorkflowPass(initialRequest: string, shared: PassShared, opts: PassOptions): Promise<PassOutcome> {
+  let request = initialRequest
   const { profile, session, context, events, openai, signal, loop, maxRetries, maxCost, workflowDeadline, adaptivePolicy } = shared
-  const { taskId, playbook, intensityFloor, priorArtifacts, parentTaskId } = opts
+  const { taskId, playbook, intensityFloor, priorArtifacts, parentTaskId, scale, reconArtifactBody, clarifications, reroutes, allowReroute = false } = opts
   const decision = workflowAdvisor(profile, context, signal)
   const fixedTriage = triageIsFixed(profile)
   const rawTriage = fixedTriage
@@ -454,6 +542,21 @@ async function runWorkflowPass(request: string, shared: PassShared, opts: PassOp
   let reconAttempts = 0
   const failureCounts = new Map<Stage, number>()
   let finalResult: StageResult | undefined
+
+  // Phase 4 (PT-079) reroute target (spec §6 phase 4): recon already ran for
+  // this task in an earlier pass, so this pass skips it — recon gate
+  // invariant #1 stays satisfied because recon did run, just not in *this*
+  // pass. triage-B still runs (on the seeded artifact) so plan gets a real
+  // task_class/intensity instead of defaults.
+  if (reconArtifactBody !== undefined) {
+    artifacts.push({ stage: 'recon', body: reconArtifactBody })
+    plan = fixedTriage
+      ? defaultTaskPlan(playbook, triage.task_class, profile.workflow)
+      : await triageB(request, reconArtifactBody, playbook, openai, profile, triage.task_class, context.provider, decision)
+    plan = applyIntensityFloor(plan, intensityFloor, profile.workflow)
+    pointer = playbook.stages.indexOf('plan')
+    if (pointer < 0) pointer = 0
+  }
 
   const ownArtifacts = () => artifacts.slice(priorArtifacts.length)
   const budgetExhausted = () => session.usage.cost_usd >= maxCost || Date.now() >= workflowDeadline || (context.deadline !== undefined && Date.now() >= context.deadline)
@@ -526,6 +629,89 @@ async function runWorkflowPass(request: string, shared: PassShared, opts: PassOp
     }
 
     const escalation = shouldEscalate(result)
+    const hard = hardEscalation(result)
+    const regexFailBack = failBackTarget(result)
+    const regexLabel = regexEdgeLabel(escalation.escalate, regexFailBack)
+
+    // Phase 4 (PT-079), spec §5.4: the Jev edge check only runs when the
+    // code-level hard signals did not already fire — those stay
+    // authoritative and take today's path below untouched.
+    let edgeResolution: EdgeResolution = {}
+    if (!hard.escalate) {
+      const earlierStages = artifacts.filter(a => a.stage !== 'recon').map(a => a.stage)
+      const remainingStages = playbook.stages.slice(pointer + 1)
+      edgeResolution = await resolveEdgeJudgment(request, stage, result.body, playbook, remainingStages, earlierStages, profile, session, context, signal, taskId, parentTaskId, regexLabel)
+    }
+
+    if (edgeResolution.mode === 'enforce' && edgeResolution.judgment) {
+      const judgment = edgeResolution.judgment
+      const topDrift = maxDrift(judgment.drift)
+      const routerConfig = profile.workflow?.router
+      const rerouteOk = allowReroute && rerouteAllowed({
+        routerConfigured: !!routerConfig,
+        requestRoutingMode: profile.decision_layer?.features.request_routing,
+        maxDriftP: topDrift.p,
+        domainThreshold: routerConfig?.domain_threshold ?? 0.5,
+        reroutesUsed: reroutes.used,
+        maxReroutes: routerConfig?.max_reroutes ?? 1,
+      })
+      const action = resolveEdgeAction(judgment, { rerouteAllowed: rerouteOk, rerouteTarget: topDrift.name })
+
+      if (action.kind === 'failback') {
+        if (reentries >= maxRetries) {
+          emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `${stage}: edge fail-back to ${action.stage}`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+          return { verdict: 'abandoned', reason: `${stage}: edge fail-back to ${action.stage}` }
+        }
+        reentries++
+        activePlan.intensity[action.stage] = Math.min(3, activePlan.intensity[action.stage] + 1) as Intensity
+        pointer = playbook.stages.indexOf(action.stage)
+        if (pointer < 0) pointer = 0
+        continue
+      }
+      if (action.kind === 'continue') { pointer++; continue }
+      if (action.kind === 'promote') {
+        if (reentries >= maxRetries) {
+          emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `${stage}: promote limit reached`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+          return { verdict: 'abandoned', reason: `${stage}: promote limit reached` }
+        }
+        reentries++
+        const floor = promoteFloor(activePlan.intensity, scale, routerConfig)
+        plan = applyIntensityFloor(plan!, floor, profile.workflow)
+        pointer = playbook.stages.indexOf('plan')
+        if (pointer < 0) pointer = 0
+        continue
+      }
+      if (action.kind === 'stuck') {
+        const maxClarifications = profile.workflow?.router?.max_clarifications ?? 0
+        if (clarifications.used < maxClarifications && events.onInputRequest && reentries < maxRetries) {
+          const question = await generateClarifyingQuestion(profile, context, openai, request)
+          const id = randomUUID().replace(/-/g, '').slice(0, 8)
+          const answer = await events.onInputRequest(id, question, 'text')
+          clarifications.used++
+          logEvent({ session: session.id, profile: profile.name, kind: 'clarify', task_id: taskId, attempt: clarifications.used, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+          request = `${request}\n\nClarification: ${answer}`
+          reentries++
+          pointer = playbook.stages.indexOf(stage)
+          continue
+        }
+        emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `${stage}: stuck`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+        return { verdict: 'abandoned', reason: `${stage}: stuck` }
+      }
+      if (action.kind === 'reroute') {
+        // The new pass seeds the *recon* artifact (spec §6 phase 4: "seeds
+        // the prior recon artifact"), not the current stage's own output —
+        // recon ran once for this task and its context still applies.
+        const reconArtifact = artifacts.find(a => a.stage === 'recon')?.body ?? result.body
+        // Close out this task so routing stats can count the misroute.
+        emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `rerouted to ${action.target}`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+        return { verdict: 'reroute', playbook: action.target, reconArtifact, artifacts: ownArtifacts() }
+      }
+      // action.kind === 'done'
+      const verifyIndex = playbook.stages.indexOf('verify')
+      if (verifyIndex > pointer && activePlan.intensity.verify > 0) { pointer = verifyIndex; continue }
+      break
+    }
+
     if (!escalation.escalate) failureCounts.delete(stage)
     if (escalation.escalate) {
       if (reentries >= maxRetries) {
@@ -603,25 +789,61 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   // `playbooks` array already carries both the primary and (when present)
   // the secondary playbook for the multi-domain pass below (spec §5.3) — no
   // separate fan-out call happens per pass.
-  const routeResolution = await resolveRouteDecision(request, profile, session, context, events, openai, signal, taskId, fallbackPlaybookName)
+  // Shared for the whole runWorkflow call — spec §6 phase 4: "share ONE
+  // per-runWorkflow counter with phase 3's route clarifications", and reroute
+  // count bounded per §2 invariant 4, both across every pass this call runs.
+  const clarifications = { used: 0 }
+  const reroutes = { used: 0 }
+
+  const routeResolution = await resolveRouteDecision(request, profile, session, context, events, openai, signal, taskId, fallbackPlaybookName, clarifications)
   const effectiveRequest = routeResolution.request
   const decision = routeResolution.decision
   const routeMode = routeResolution.mode
   const enforceRun = routeMode === 'enforce' && decision?.kind === 'run'
-  const primaryPlaybook = enforceRun ? loadPlaybook(decision.primary) : fallbackPlaybook
   const intensityFloor = enforceRun ? decision.intensityFloor : undefined
-  const secondaryPlaybookName = enforceRun && decision.playbooks.length === 2 ? decision.playbooks[1] : undefined
+  const routedScale = enforceRun ? decision.scale : undefined
+  let secondaryPlaybookName = enforceRun && decision.playbooks.length === 2 ? decision.playbooks[1] : undefined
 
   session.messages.push({ role: 'user', content: effectiveRequest })
 
   const shared: PassShared = { profile, session, context, events, openai, signal, loop, maxRetries, maxCost, workflowDeadline, adaptivePolicy }
 
-  const primaryOutcome = await runWorkflowPass(effectiveRequest, shared, {
-    taskId,
-    playbook: primaryPlaybook,
-    intensityFloor,
-    priorArtifacts: [],
-  })
+  // Phase 4 (PT-079) reroute (spec §5.4/§6): a pass can hand back a `reroute`
+  // verdict instead of finishing; loop here to start the next pass on the
+  // reroute target, seeding its prior recon artifact so the new pass skips
+  // recon (already satisfied for this task) and starts at `plan`. Bounded by
+  // `reroutes.used < router.max_reroutes`, enforced inside runWorkflowPass —
+  // once exhausted, a `reroute` verdict can no longer be returned.
+  let activePlaybook = enforceRun ? loadPlaybook(decision.primary) : fallbackPlaybook
+  let activeTaskId = taskId
+  let activeParentTaskId: string | undefined
+  let activeReconArtifact: string | undefined
+  let primaryOutcome: PassOutcome
+  while (true) {
+    primaryOutcome = await runWorkflowPass(effectiveRequest, shared, {
+      taskId: activeTaskId,
+      playbook: activePlaybook,
+      intensityFloor,
+      priorArtifacts: [],
+      parentTaskId: activeParentTaskId,
+      scale: routedScale,
+      reconArtifactBody: activeReconArtifact,
+      clarifications,
+      reroutes,
+      allowReroute: true,
+    })
+    if (primaryOutcome.verdict !== 'reroute') break
+    reroutes.used++
+    const rerouteTaskId = newTaskId()
+    logEvent({ session: session.id, profile: profile.name, kind: 'reroute', task_id: rerouteTaskId, parent_task_id: activeTaskId, route_playbooks: [primaryOutcome.playbook] })
+    // Don't run the same playbook twice: if the reroute target is also the
+    // pending multi-domain secondary, drop the secondary pass.
+    if (secondaryPlaybookName === primaryOutcome.playbook) secondaryPlaybookName = undefined
+    activeParentTaskId = activeTaskId
+    activeTaskId = rerouteTaskId
+    activePlaybook = loadPlaybook(primaryOutcome.playbook)
+    activeReconArtifact = primaryOutcome.reconArtifact
+  }
 
   // Aborted runs never ended the session before phase 3. Budget exhaustion
   // runs the flat loop via plainFallback, which ends the session itself.
@@ -636,7 +858,12 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   // whenever a `run` decision existed, in shadow OR enforce — shadow only
   // feeds the next `chooseRoute`'s `continues_previous` state, never applies.
   if (decision?.kind === 'run') {
-    session.workflow_route = { playbook: decision.primary, scale: decision.scale, task_id: taskId, at: new Date().toISOString() }
+    // enforceRun: the playbook that actually delivered (original routed
+    // playbook, or a later reroute target, tracked by `activePlaybook`).
+    // Shadow: the decision's primary — shadow never applies the decision or
+    // reroutes, so nothing else ran.
+    const deliveredPlaybook = enforceRun ? activePlaybook.name : decision.primary
+    session.workflow_route = { playbook: deliveredPlaybook, scale: decision.scale, task_id: activeTaskId, at: new Date().toISOString() }
   }
 
   if (secondaryPlaybookName) {
@@ -647,7 +874,10 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
       playbook: loadPlaybook(secondaryPlaybookName),
       intensityFloor,
       priorArtifacts: priorArtifact ? [priorArtifact] : [],
-      parentTaskId: taskId,
+      parentTaskId: activeTaskId,
+      scale: routedScale,
+      clarifications,
+      reroutes,
     })
     if (secondaryOutcome.verdict === 'aborted' || secondaryOutcome.verdict === 'budget_exhausted') return
   }

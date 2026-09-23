@@ -57,10 +57,16 @@ function argmaxScale(scale: Record<Scale, number>): Scale {
   return topIdx > secondIdx ? top : second
 }
 
-function intensityFloorFor(config: RouterConfig, scale: Scale): Partial<IntensityMap> {
+export function intensityFloorFor(config: RouterConfig, scale: Scale): Partial<IntensityMap> {
   const preset = config.scale_presets?.[scale] ?? {}
   const recon = Math.max(1, preset.recon ?? 0) as Intensity
   return { ...preset, recon }
+}
+
+/** Phase 4 (PT-079), spec §5.4 `promote`: the next-larger scale level, capped at 'large'. */
+export function nextScale(scale: Scale): Scale {
+  const idx = SCALES.indexOf(scale)
+  return SCALES[Math.min(idx + 1, SCALES.length - 1)]
 }
 
 /**
