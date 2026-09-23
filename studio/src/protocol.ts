@@ -116,7 +116,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify' | 'claim_check'
   name?: string
   server?: string
   model?: string
@@ -181,6 +181,18 @@ export interface TelemetryEvent {
   // §5.3) back to the primary pass's task_id.
   route_applied?: boolean
   parent_task_id?: string
+  // Verify claim-check (roadmap #31 phase 5, spec §5.7/§5.8). `claim_check`
+  // events never carry claim or evidence text — count/probability/verdict
+  // only. `claim_skipped` covers the no-evidence short circuit;
+  // `claim_fallback` covers a bounded Jev-failure message (proceed, no gate
+  // applied); `claim_applied` distinguishes shadow logging from an enforce
+  // decision that actually drove a re-entry/abandon.
+  claim_count?: number
+  claim_min_p?: number
+  claim_verdict?: 'pass' | 'fail'
+  claim_applied?: boolean
+  claim_skipped?: 'no_evidence'
+  claim_fallback?: string
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {

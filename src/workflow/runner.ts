@@ -25,6 +25,7 @@ import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError, type Workf
 import { DecisionRuntimeService } from '../decisions/runtime.js'
 import { decideRoute } from './route.js'
 import type { RouteDecision } from './route.js'
+import { runClaimCheck } from './claims.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
@@ -462,6 +463,7 @@ async function runWorkflowPass(request: string, shared: PassShared, opts: PassOp
     await loop(request, profile, session, context, events, openai, signal, { appendUser: false })
   }
 
+  claimCheckLoop: while (true) {
   while (pointer < playbook.stages.length) {
     if (signal.aborted) return { verdict: 'aborted' }
     const stage = playbook.stages[pointer]
@@ -558,6 +560,25 @@ async function runWorkflowPass(request: string, shared: PassShared, opts: PassOp
       continue
     }
     pointer++
+  }
+
+  // Roadmap #31 phase 5 (PT-080), spec §5.7/§6: single hook call for the
+  // verify claim-check. Reached only on the pass's natural completion (no
+  // early return above) — which already implies "a verify stage ran without
+  // escalating" or "this playbook never ran verify" (§5.7's two trigger
+  // cases), so one call here covers both. All extraction/evidence/gating
+  // logic lives in claims.ts; this loop only applies its action.
+  const claimGate = await runClaimCheck({ profile, session, context, signal, taskId, playbook, ownArtifacts: ownArtifacts(), toolCallsBefore, request, reentries, maxRetries, parentTaskId })
+  if (claimGate.action === 'retry') {
+    reentries++
+    pointer = claimGate.pointer
+    continue claimCheckLoop
+  }
+  if (claimGate.action === 'abandon') {
+    emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: claimGate.reason, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+    return { verdict: 'abandoned', reason: claimGate.reason }
+  }
+  break claimCheckLoop
   }
 
   const writtenFiles = session.tool_calls
