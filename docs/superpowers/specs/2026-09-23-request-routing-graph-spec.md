@@ -165,7 +165,7 @@ Uses the existing agent input request mechanism (roadmap #9; `input_request` fra
 
 ### 5.7 Verify claim-check (`checkClaims`)
 
-After the verify stage (or at Deliver when verify intensity is 0 and the playbook is non-coding), code extracts up to 8 candidate claims (sentences containing numbers, named files, or "passes/fails/is/are" assertions) from the final artifact, pairs each with evidence from session tool results (bounded, tainted-aware, reusing `DecisionAdvisoryService` taint handling). One Noul per claim: "The evidence supports this claim." Any claim with p < 0.3 ⇒ fail ⇒ pointer to `build` (counted as a re-entry). Shadow logs only.
+*(Amended 2026-09-23, PT-080: the "non-coding" condition was dropped as it violated invariant 5; the check runs once when a pass completes — i.e. after verify passed, or before acceptance when verify did not run — on the final delivered artifact, which is the review artifact when review runs.)* At pass completion, code extracts up to 8 candidate claims (sentences containing numbers, named files, or "passes/fails/is/are" assertions) from the final artifact, pairs each with evidence from session tool results (bounded, tainted-aware, reusing `DecisionAdvisoryService` taint handling). One Noul per claim: "The evidence supports this claim." Any claim with p < 0.3 ⇒ fail ⇒ pointer to `build` (counted as a re-entry). Shadow logs only.
 
 ### 5.8 Telemetry
 

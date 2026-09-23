@@ -116,7 +116,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify' | 'edge' | 'reroute'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route' | 'clarify' | 'edge' | 'reroute' | 'claim_check'
   name?: string
   server?: string
   model?: string
@@ -190,6 +190,18 @@ export interface TelemetryEvent {
   edge_agree?: boolean
   edge_applied?: boolean
   edge_fallback?: string
+  // Verify claim-check (roadmap #31 phase 5, spec §5.7/§5.8). `claim_check`
+  // events never carry claim or evidence text — count/probability/verdict
+  // only. `claim_skipped` covers the no-claims / no-evidence short circuits;
+  // `claim_fallback` covers a bounded Jev-failure message (proceed, no gate
+  // applied); `claim_applied` distinguishes shadow logging from an enforce
+  // decision that actually drove a re-entry/abandon.
+  claim_count?: number
+  claim_min_p?: number
+  claim_verdict?: 'pass' | 'fail'
+  claim_applied?: boolean
+  claim_skipped?: 'no_claims' | 'no_evidence'
+  claim_fallback?: string
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {
