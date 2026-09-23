@@ -1,11 +1,16 @@
-import type { DecisionAnswer, DecisionEvaluateOptions, DecisionOutcome, DecisionProvider, DecisionQuestion } from './types.js'
+import type { DecisionAnswer, DecisionEvaluateOptions, DecisionOutcome, DecisionProvider, DecisionQuestion, NoulAnswer, ScoreAnswer } from './types.js'
 import type { Intensity, IntensityMap, Playbook, Stage } from '../workflow/types.js'
 import { STAGES } from '../workflow/types.js'
+import { SCALES, type RouteSignals, type Scale, type SessionRoute } from '../workflow/route.js'
+
+export interface RouteCandidate { name: string; description?: string }
 
 export interface WorkflowDecisionAdvisor {
   mode?: 'shadow' | 'enforce'
   chooseTriage(request: string, playbook: Playbook): Promise<{ task_class: string; recon_intensity: Intensity } | undefined>
   choosePlan?(request: string, reconArtifact: string, playbook: Playbook, taskClass: string): Promise<{ task_class?: string; intensity?: Partial<IntensityMap> } | undefined>
+  /** Request routing graph (roadmap #31 phase 2, spec §5.1). One `evaluate` call fanning out domain/scale/ambiguity/existing-work/continuity questions. */
+  chooseRoute?(request: string, candidates: RouteCandidate[], sessionRoute?: SessionRoute, lastAssistantMessage?: string): Promise<RouteSignals | undefined>
 }
 
 export class WorkflowDecisionControlError extends Error {
@@ -15,6 +20,42 @@ export class WorkflowDecisionControlError extends Error {
 function choice(outcome: Extract<DecisionOutcome, { kind: 'success' }>, key: string): string | undefined {
   const answer: DecisionAnswer | undefined = outcome.response.answers[key]
   return answer?.type === 'choice' && typeof answer.choice === 'string' ? answer.choice : undefined
+}
+
+function noul(outcome: Extract<DecisionOutcome, { kind: 'success' }>, key: string): number | undefined {
+  const answer: DecisionAnswer | undefined = outcome.response.answers[key]
+  return answer?.type === 'noul' && typeof (answer as NoulAnswer).noul === 'number' ? (answer as NoulAnswer).noul : undefined
+}
+
+function score(outcome: Extract<DecisionOutcome, { kind: 'success' }>, key: string): ScoreAnswer | undefined {
+  const answer: DecisionAnswer | undefined = outcome.response.answers[key]
+  return answer?.type === 'score' ? (answer as ScoreAnswer) : undefined
+}
+
+// Question keys sent to Jev must be safe identifiers; playbook names are
+// operator-controlled but not guaranteed to be. Sanitize to [a-z0-9_] and
+// keep a reverse map so answers route back to the real candidate name.
+function sanitizeKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'candidate'
+}
+
+function domainKeyMap(candidates: RouteCandidate[]): Map<string, string> {
+  const map = new Map<string, string>()
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    let key = sanitizeKey(candidate.name)
+    while (seen.has(key)) key = `${key}_`
+    seen.add(key)
+    map.set(key, candidate.name)
+  }
+  return map
+}
+
+const SCALE_LEVEL_DESCRIPTIONS: Record<Scale, string> = {
+  trivial: 'trivial: a one-line answer, a single small edit, or a question that needs no real work.',
+  small: 'small: a single focused change confined to one file or a narrow area, completable in one pass.',
+  medium: 'medium: a multi-file change or a feature with several moving parts needing planning.',
+  large: 'large: a new multi-component system, a migration, or multi-day effort spanning many files.',
 }
 
 function bounded(value: string, max: number): string { return value.length > max ? value.slice(0, max) : value }
@@ -53,6 +94,74 @@ export function createWorkflowDecisionAdvisor(options: { provider: DecisionProvi
         return value && ['0', '1', '2', '3'].includes(value) ? [[stage, Number(value) as Intensity]] : []
       })) as Partial<IntensityMap>
       return { task_class: selectedClass && allowedClasses.includes(selectedClass) ? selectedClass : taskClass, intensity }
+    },
+    async chooseRoute(request, candidates, sessionRoute, lastAssistantMessage) {
+      const keyMap = domainKeyMap(candidates)
+      const questions: Record<string, DecisionQuestion> = {}
+      for (const [key, name] of keyMap) {
+        const candidate = candidates.find(c => c.name === name)
+        questions[`domain_${key}`] = {
+          type: 'noul',
+          instructions: `This request needs the ${name} workflow${candidate?.description ? ` (${candidate.description})` : ''}.`,
+        }
+      }
+      questions.scale = {
+        type: 'score',
+        instructions: 'How large is the effort this request needs? Choose the level that best fits.',
+        criteria: SCALES.map(level => SCALE_LEVEL_DESCRIPTIONS[level]),
+      }
+      questions.has_existing_work = {
+        type: 'noul',
+        instructions: 'This request operates on existing files, data, or an existing project rather than starting from scratch.',
+      }
+      questions.ambiguous = {
+        type: 'noul',
+        instructions: 'A competent assistant could not start this request without first asking one clarifying question.',
+      }
+      if (sessionRoute) {
+        questions.continues_previous = {
+          type: 'noul',
+          instructions: 'This request is a follow-up continuation of the previous task in this session, rather than a new, unrelated request.',
+        }
+      }
+      const state: Record<string, unknown> = { request: bounded(request, 8_000), candidates: candidates.map(c => ({ name: c.name, description: c.description ?? '' })) }
+      if (sessionRoute) state.session_route = sessionRoute
+      if (lastAssistantMessage) state.last_assistant_message = bounded(lastAssistantMessage, 2_000)
+
+      const outcome = await evaluate(state, questions)
+
+      const domain: Record<string, number> = {}
+      for (const [key, name] of keyMap) {
+        const value = noul(outcome, `domain_${key}`)
+        if (value === undefined) return undefined
+        domain[name] = value
+      }
+      const scaleAnswer = score(outcome, 'scale')
+      if (!scaleAnswer) return undefined
+      const scaleDistribution: Partial<Record<Scale, number>> = {}
+      for (const [index, label] of Object.entries(scaleAnswer.legend)) {
+        const level = SCALES.find(candidate => SCALE_LEVEL_DESCRIPTIONS[candidate] === label)
+        const probability = scaleAnswer.probabilities[index]
+        if (level && typeof probability === 'number') scaleDistribution[level] = probability
+      }
+      if (SCALES.some(level => scaleDistribution[level] === undefined)) return undefined
+
+      const hasExistingWork = noul(outcome, 'has_existing_work')
+      const ambiguous = noul(outcome, 'ambiguous')
+      if (hasExistingWork === undefined || ambiguous === undefined) return undefined
+
+      const signals: RouteSignals = {
+        domain,
+        scale: scaleDistribution as Record<Scale, number>,
+        has_existing_work: hasExistingWork,
+        ambiguous,
+      }
+      if (sessionRoute) {
+        const continuesPrevious = noul(outcome, 'continues_previous')
+        if (continuesPrevious === undefined) return undefined
+        signals.continues_previous = continuesPrevious
+      }
+      return signals
     },
   }
 }

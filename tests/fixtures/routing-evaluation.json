@@ -1,0 +1,954 @@
+{
+  "provenance": {
+    "name": "routing-synthetic-public-v1",
+    "description": "Synthetic request-routing labels for roadmap #31 phase 2 (PT-077): playbook domain, scale, ambiguity, multi-domain, and follow-up continuity. No private prompts or tool payloads.",
+    "created": "2026-09-23"
+  },
+  "cases": [
+    {
+      "id": "r-coding-1",
+      "request": "Fix the null pointer crash in the login handler.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "coding"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.85,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-coding-2",
+      "request": "Add a retry button to the upload form.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "coding"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.85,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-coding-3",
+      "request": "Refactor the session store to support pluggable backends.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "coding"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.85,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-coding-4",
+      "request": "Migrate the WebSocket protocol to a new versioned frame format across client and server.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "coding"
+        ],
+        "scale": "large"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.85,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.1,
+          "medium": 0.15,
+          "large": 0.7
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-coding-5",
+      "request": "What does this one-line regex do?",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "coding"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.85,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-data-1",
+      "request": "What is the sum of the revenue column in this CSV?",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "data"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.85,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-data-2",
+      "request": "Clean up the missing values in this dataset.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "data"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.85,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-data-3",
+      "request": "Build a reproducible pipeline that joins three data sources and reports summary stats.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "data"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.85,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-data-4",
+      "request": "Design and build a full data warehouse migration from the legacy schema to the new star schema across every table.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "data"
+        ],
+        "scale": "large"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.85,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.1,
+          "medium": 0.15,
+          "large": 0.7
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-generic-1",
+      "request": "Draft a one-line answer to this trivia question.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "generic"
+        ],
+        "scale": "large"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.85,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.1,
+          "medium": 0.15,
+          "large": 0.7
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-generic-2",
+      "request": "What time zone is UTC+5:30?",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "generic"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.85,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-generic-3",
+      "request": "Summarize this paragraph in one sentence.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "generic"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.85,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-research-1",
+      "request": "What year was the transistor invented?",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "research"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.85,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-research-2",
+      "request": "Survey the literature on transformer attention mechanisms and produce a synthesis.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "research"
+        ],
+        "scale": "large"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.85,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.1,
+          "medium": 0.15,
+          "large": 0.7
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-research-3",
+      "request": "Find three sources on coral bleaching causes.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "research"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.85,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-security-1",
+      "request": "Is this password hash algorithm considered broken?",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "security"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.85,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-security-2",
+      "request": "Audit the auth service for privilege escalation bugs.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "security"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.85,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-security-3",
+      "request": "Run a full security review of the payment and auth subsystems, producing a reproducible finding report.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "security"
+        ],
+        "scale": "large"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.85,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.1,
+          "medium": 0.15,
+          "large": 0.7
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-writing-1",
+      "request": "Write a one-line changelog entry for this bugfix.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "writing"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.85
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-writing-2",
+      "request": "Draft a short email declining the meeting invite.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "writing"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.85
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-writing-3",
+      "request": "Write a structured design doc covering motivation, alternatives, and rollout plan.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "writing"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.85
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.4,
+        "ambiguous": 0.1
+      }
+    },
+    {
+      "id": "r-ambig-1",
+      "request": "Can you fix this?",
+      "expected": {
+        "kind": "ask",
+        "playbooks": [],
+        "scale": null
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.3,
+        "ambiguous": 0.85
+      }
+    },
+    {
+      "id": "r-ambig-2",
+      "request": "Make it better.",
+      "expected": {
+        "kind": "ask",
+        "playbooks": [],
+        "scale": null
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.3,
+        "ambiguous": 0.85
+      }
+    },
+    {
+      "id": "r-ambig-3",
+      "request": "Look into the issue we discussed.",
+      "expected": {
+        "kind": "ask",
+        "playbooks": [],
+        "scale": null
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.3,
+        "ambiguous": 0.85
+      }
+    },
+    {
+      "id": "r-ambig-4",
+      "request": "Do the thing for the project.",
+      "expected": {
+        "kind": "ask",
+        "playbooks": [],
+        "scale": null
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.3,
+        "ambiguous": 0.85
+      }
+    },
+    {
+      "id": "r-multi-1",
+      "request": "Analyse this CSV of sales data and build a dashboard showing trends.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "data",
+          "coding"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.75,
+          "data": 0.85,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.6,
+        "ambiguous": 0.15
+      }
+    },
+    {
+      "id": "r-multi-2",
+      "request": "Research the competitive landscape and write a structured report with citations.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "research",
+          "writing"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.8,
+          "security": 0.1,
+          "writing": 0.7
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.6,
+        "ambiguous": 0.15
+      }
+    },
+    {
+      "id": "r-multi-3",
+      "request": "Audit the codebase for SQL injection and fix the vulnerable query builder.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "security",
+          "coding"
+        ],
+        "scale": "large"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.65,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.9,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.1,
+          "medium": 0.15,
+          "large": 0.7
+        },
+        "has_existing_work": 0.6,
+        "ambiguous": 0.15
+      }
+    },
+    {
+      "id": "r-multi-4",
+      "request": "Pull the transaction data and draft the incident summary email to the team.",
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "data",
+          "writing"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.7,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.6
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.6,
+        "ambiguous": 0.15
+      }
+    },
+    {
+      "id": "r-follow-1",
+      "request": "Also add a test for that edge case.",
+      "session_route": {
+        "playbook": "coding",
+        "scale": "small",
+        "task_id": "task-prev-r-follow-1",
+        "at": "2026-09-20T00:00:00.000Z"
+      },
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "coding"
+        ],
+        "scale": "small"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.1,
+          "small": 0.7,
+          "medium": 0.15,
+          "large": 0.05
+        },
+        "has_existing_work": 0.5,
+        "ambiguous": 0.1,
+        "continues_previous": 0.8
+      }
+    },
+    {
+      "id": "r-follow-2",
+      "request": "Now write the summary email about it.",
+      "session_route": {
+        "playbook": "writing",
+        "scale": "small",
+        "task_id": "task-prev-r-follow-2",
+        "at": "2026-09-20T00:00:00.000Z"
+      },
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "writing"
+        ],
+        "scale": "trivial"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.7,
+          "small": 0.15,
+          "medium": 0.1,
+          "large": 0.05
+        },
+        "has_existing_work": 0.5,
+        "ambiguous": 0.1,
+        "continues_previous": 0.8
+      }
+    },
+    {
+      "id": "r-follow-3",
+      "request": "Keep going on that analysis with the next quarter too.",
+      "session_route": {
+        "playbook": "research",
+        "scale": "small",
+        "task_id": "task-prev-r-follow-3",
+        "at": "2026-09-20T00:00:00.000Z"
+      },
+      "expected": {
+        "kind": "run",
+        "playbooks": [
+          "research"
+        ],
+        "scale": "medium"
+      },
+      "offline_signals": {
+        "domain": {
+          "coding": 0.1,
+          "data": 0.1,
+          "generic": 0.1,
+          "research": 0.1,
+          "security": 0.1,
+          "writing": 0.1
+        },
+        "scale": {
+          "trivial": 0.05,
+          "small": 0.15,
+          "medium": 0.7,
+          "large": 0.1
+        },
+        "has_existing_work": 0.5,
+        "ambiguous": 0.1,
+        "continues_previous": 0.8
+      }
+    }
+  ]
+}

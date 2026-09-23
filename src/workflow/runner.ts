@@ -6,7 +6,7 @@ import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import { estimateCost } from '../models/registry.js'
 import { logEvent } from '../telemetry/logger.js'
-import { loadPlaybook } from './playbook.js'
+import { loadPlaybook, listPlaybooks } from './playbook.js'
 import { buildStageContext, validateArtifact, writeArtifact } from './artifacts.js'
 import { defaultTaskPlan, triageA, triageB } from './triage.js'
 import { emitTaskOutcome, recordWrittenFiles } from './labeler.js'
@@ -20,8 +20,9 @@ import { maybeShadow } from './shadow.js'
 import type { ProviderClient, UsageMetadata } from '../provider/types.js'
 import { bindRunProvider } from '../provider/invocation.js'
 import { mergeUsageDelta, usageDeltaFromSession } from '../usage/ledger.js'
-import { createWorkflowDecisionAdvisor, type WorkflowDecisionAdvisor } from '../decisions/workflow.js'
+import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError, type WorkflowDecisionAdvisor } from '../decisions/workflow.js'
 import { DecisionRuntimeService } from '../decisions/runtime.js'
+import { decideRoute } from './route.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
 
@@ -45,6 +46,61 @@ function workflowAdvisor(profile: Profile, context: ToolContext, signal: AbortSi
   const config = profile.decision_layer
   if (!config || config.features.workflow_routing === 'disabled' || !(context.decisionRuntime instanceof DecisionRuntimeService) || !context.decisionRuntime.provider || !config.model) return undefined
   return createWorkflowDecisionAdvisor({ provider: context.decisionRuntime.provider, model: config.model, signal, mode: config.features.workflow_routing, evaluateOptions: context.decisionRuntime.evaluateOptions(signal) })
+}
+
+// Request routing graph (roadmap #31 phase 2, spec §5.1/§6). Gated on
+// `decision_layer.features.request_routing`, mirroring `workflowAdvisor`'s
+// gating but keyed on the routing-specific feature mode.
+function routeAdvisor(profile: Profile, context: ToolContext, signal: AbortSignal): WorkflowDecisionAdvisor | undefined {
+  const config = profile.decision_layer
+  const mode = config?.features.request_routing
+  if (!config || (mode !== 'shadow' && mode !== 'enforce') || !(context.decisionRuntime instanceof DecisionRuntimeService) || !context.decisionRuntime.provider || !config.model) return undefined
+  return createWorkflowDecisionAdvisor({ provider: context.decisionRuntime.provider, model: config.model, signal, mode, evaluateOptions: context.decisionRuntime.evaluateOptions(signal) })
+}
+
+/**
+ * Phase 2 (PT-077): compute and log a routing decision, but never apply it.
+ * Both `shadow` and `enforce` behave identically here — enforcing the
+ * decision (selecting the playbook, applying the intensity floor) is phase 3
+ * (PT-078). Any non-control failure degrades to a logged fallback and the
+ * caller's existing path continues untouched; a control outcome propagates.
+ */
+async function logRouteDecision(request: string, profile: Profile, session: Session, context: ToolContext, signal: AbortSignal, taskId: string, currentPlaybookName: string): Promise<void> {
+  const router = profile.workflow?.router
+  if (!router) return
+  const configuredCandidates = router.candidates ?? []
+  if (configuredCandidates.length === 0) return
+  const available = listPlaybooks()
+  const candidateNames = configuredCandidates.filter(name => available.some(p => p.name === name))
+  if (candidateNames.length === 0) return
+  const mode = profile.decision_layer?.features.request_routing
+  if (mode !== 'shadow' && mode !== 'enforce') return
+  const advisor = routeAdvisor(profile, context, signal)
+  if (!advisor?.chooseRoute) return
+
+  const base = { session: session.id, profile: profile.name, kind: 'route' as const, task_id: taskId, route_mode: mode, route_candidates: candidateNames }
+  try {
+    const candidates = candidateNames.map(name => ({ name, description: available.find(p => p.name === name)?.description }))
+    const lastAssistant = stageBody(session) || undefined
+    const signals = await advisor.chooseRoute(request, candidates, session.workflow_route, lastAssistant)
+    if (!signals) {
+      logEvent({ ...base, route_fallback: 'incomplete or malformed route signals' })
+      return
+    }
+    const decision = decideRoute(signals, router, currentPlaybookName, router.max_clarifications, session.workflow_route)
+    logEvent({
+      ...base,
+      route_domain: signals.domain,
+      route_scale_distribution: signals.scale,
+      route_ambiguous: signals.ambiguous,
+      route_decision_kind: decision.kind,
+      ...(decision.kind === 'run' ? { route_playbooks: decision.playbooks, route_scale: decision.scale } : {}),
+    })
+  } catch (error) {
+    if (error instanceof WorkflowDecisionControlError) throw error
+    // Bounded: provider error text is not ours to log in full.
+    logEvent({ ...base, route_fallback: (error instanceof Error ? error.message : 'route provider error').slice(0, 200) })
+  }
 }
 
 // A sentence-scoped negation check on the failure vocabulary — "no errors
@@ -249,6 +305,8 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   if (profile.workflow?.routing.policy === 'adaptive') {
     try { adaptivePolicy = parseRoutingPolicy((await context.memory.read('project', 'routing-policy'))?.content) } catch { adaptivePolicy = undefined }
   }
+
+  await logRouteDecision(request, profile, session, context, signal, taskId, playbook.name)
 
   const fixedTriage = triageIsFixed(profile)
   const triage = fixedTriage

@@ -116,7 +116,7 @@ export interface TelemetryEvent {
   ts: string
   session: string
   profile: string
-  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger'
+  kind: 'tool' | 'skill' | 'mcp' | 'llm' | 'safety' | 'stage' | 'outcome' | 'trigger' | 'route'
   name?: string
   server?: string
   model?: string
@@ -163,6 +163,17 @@ export interface TelemetryEvent {
   skip_reason?: 'cursor_unchanged' | 'overlap' | 'budget' | 'probe_error'
   probe_ms?: number
   coalesced_events?: number
+  // Request routing graph (roadmap #31 phase 2, spec §5.8). `route` events
+  // never carry raw request text, prompts, tool payloads, or model output.
+  route_mode?: 'shadow' | 'enforce'
+  route_candidates?: string[]
+  route_domain?: Record<string, number>
+  route_scale_distribution?: Record<string, number>
+  route_ambiguous?: number
+  route_decision_kind?: 'ask' | 'run'
+  route_playbooks?: string[]
+  route_scale?: string
+  route_fallback?: string
 }
 
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {
