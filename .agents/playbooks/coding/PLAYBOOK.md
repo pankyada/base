@@ -1,6 +1,6 @@
 ---
 name: coding
-description: Software change workflow
+description: Use for software changes, including investigating, designing, implementing, or debugging code and configuration. Not for structured data analysis, evidence-led research, security assessments, or standalone prose work.
 stages: [recon, plan, design, build, verify, review]
 task_classes: [ui-tweak, bugfix, feature, refactor, migration, spike, investigation]
 defaults:

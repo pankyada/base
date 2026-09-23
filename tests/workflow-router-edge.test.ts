@@ -180,9 +180,12 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
     const provider = combinedProvider({ edge: () => ({ next: 'promote' }) }) // disagrees with the regex 'continue'
     const runtime = new DecisionRuntimeService({ provider, model: 'jev-test' })
     const session = createSession(p.name, `shadow-${Math.random()}`)
-    const events = baseEvents()
+    const observations: any[] = []
+    const events = baseEvents({ onWorkflowMap: (value: any) => observations.push(value) })
     const withShadow = fakeLoop()
-    await runWorkflow('bugfix', p, session, context(p, session, runtime, events), events, openaiFor(), new AbortController().signal, { loop: withShadow.loop })
+    const runContext = context(p, session, runtime, events)
+    runContext.runId = 'run-map-edge-shadow'
+    await runWorkflow('bugfix', p, session, runContext, events, openaiFor(), new AbortController().signal, { loop: withShadow.loop })
 
     const disabledProfile = profile({ decision_layer: undefined })
     const session2 = createSession(disabledProfile.name, `shadow-disabled-${Math.random()}`)
@@ -197,6 +200,8 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
     expect(edgeEvents.every(e => e.edge_jev === 'promote')).toBe(true)
     expect(edgeEvents.every(e => e.edge_regex === 'continue')).toBe(true)
     expect(edgeEvents.every(e => e.edge_agree === false)).toBe(true)
+    expect(observations.some(value => value.kind === 'advice' && value.advice.kind === 'edge' && value.advice.mode === 'shadow' && value.advice.action === 'promote' && value.advice.applied === false)).toBe(true)
+    expect(observations.some(value => value.kind === 'transition' && value.transition.kind === 'promote')).toBe(false)
     expect(events.onSessionEnd).toHaveBeenCalledTimes(1)
   })
 
@@ -236,9 +241,12 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
     })
     const runtime = new DecisionRuntimeService({ provider, model: 'jev-test' })
     const session = createSession(p.name, `failback-${Math.random()}`)
-    const events = baseEvents()
+    const observations: any[] = []
+    const events = baseEvents({ onWorkflowMap: (value: any) => observations.push(value) })
     const { loop, calls } = fakeLoop()
-    await runWorkflow('bugfix', p, session, context(p, session, runtime, events), events, openaiFor(), new AbortController().signal, { loop })
+    const runContext = context(p, session, runtime, events)
+    runContext.runId = 'run-map-failback'
+    await runWorkflow('bugfix', p, session, runContext, events, openaiFor(), new AbortController().signal, { loop })
 
     const planCalls = calls.filter(c => c.stage === 'plan')
     expect(planCalls.length).toBe(2) // original + fail-back re-run
@@ -246,6 +254,8 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
     expect(buildCalls.length).toBe(2) // original + re-run after the fail-back replays plan
     const edgeEvents = readTelemetryLines().filter(e => e.kind === 'edge')
     expect(edgeEvents.some(e => e.edge_jev === 'failback:plan')).toBe(true)
+    expect(observations.some(value => value.kind === 'transition' && value.transition.kind === 'fail_back')).toBe(true)
+    expect(observations.some(value => value.kind === 'advice' && value.advice.kind === 'edge' && value.advice.applied === true && value.advice.action === 'failback')).toBe(true)
     expect(events.onSessionEnd).toHaveBeenCalledTimes(1)
   })
 
@@ -391,9 +401,12 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
       })
       const runtime = new DecisionRuntimeService({ provider, model: 'jev-test' })
       const session = createSession(p.name, `reroute-ok-${Math.random()}`)
-      const events = baseEvents()
+      const observations: any[] = []
+      const events = baseEvents({ onWorkflowMap: (value: any) => observations.push(value) })
       const { loop, calls } = fakeLoop()
-      await runWorkflow('bugfix', p, session, context(p, session, runtime, events), events, openaiFor(), new AbortController().signal, { loop })
+      const runContext = context(p, session, runtime, events)
+      runContext.runId = 'run-map-reroute'
+      await runWorkflow('bugfix', p, session, runContext, events, openaiFor(), new AbortController().signal, { loop })
 
       const genericCalls = calls.filter(c => c.playbook === 'generic')
       const dataCalls = calls.filter(c => c.playbook === 'data')
@@ -411,6 +424,11 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
       expect(rerouteEvents.length).toBe(1)
       expect(rerouteEvents[0].parent_task_id).toBe(genericTaskId)
       expect(rerouteEvents[0].route_playbooks).toEqual(['data'])
+
+      const mapAttempts = observations.filter(value => value.kind === 'attempt_started').map(value => value.attempt)
+      const secondaryMapAttempt = mapAttempts.find((attempt: any) => attempt.playbook === 'data')
+      expect(secondaryMapAttempt.parent_pass_id).toBe(genericTaskId)
+      expect(observations.some(value => value.kind === 'transition' && value.transition.kind === 'reroute')).toBe(true)
 
       expect(session.workflow_route!.playbook).toBe('data')
       expect(session.messages.filter((m: any) => m.role === 'user').length).toBe(1)
@@ -457,6 +475,25 @@ describe('runWorkflow edge checks + re-route (roadmap #31 phase 4, PT-079)', () 
       expect(readTelemetryLines().some(e => e.kind === 'reroute')).toBe(false)
       expect(session.messages.filter((m: any) => m.role === 'assistant').length).toBe(2)
       expect(events.onSessionEnd).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not offer a configured catch-all playbook as an edge drift target', async () => {
+      const p = reroutingProfile({
+        workflow: {
+          ...profile().workflow,
+          playbook: 'data',
+          router: { candidates: ['data', 'generic'], catch_all: ['generic'], domain_threshold: 0.5, ask_threshold: 0.6, max_reroutes: 1, max_clarifications: 1 },
+        },
+      })
+      const provider = combinedProvider({ edge: () => ({ next: 'continue' }) })
+      const runtime = new DecisionRuntimeService({ provider, model: 'jev-test' })
+      const session = createSession(p.name, `catch-all-drift-${Math.random()}`)
+      const events = baseEvents()
+      await runWorkflow('data task', p, session, context(p, session, runtime, events), events, openaiFor(), new AbortController().signal, { loop: fakeLoop().loop })
+
+      const edgeInput = provider.evaluate.mock.calls.map((call: any) => call[0]).find((input: any) => input.state?.playbook === 'data' && input.questions.next)
+      expect(edgeInput).toBeDefined()
+      expect(Object.keys(edgeInput.questions).some((key: string) => key.startsWith('drift_'))).toBe(false)
     })
 
     it('cap reached (max_reroutes: 0): treated as continue', async () => {

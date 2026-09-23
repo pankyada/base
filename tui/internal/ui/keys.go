@@ -14,6 +14,7 @@ type KeyMap struct {
 	Overlay          key.Binding
 	Rail             key.Binding
 	ExpandAll        key.Binding
+	WorkflowMap      key.Binding
 	PageUp           key.Binding
 	PageDown         key.Binding
 	HalfPageUp       key.Binding
@@ -35,6 +36,7 @@ func NewKeyMap() KeyMap {
 		Overlay:          key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "panels")),
 		Rail:             key.NewBinding(key.WithKeys("ctrl+b"), key.WithHelp("^b", "context rail")),
 		ExpandAll:        key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "expand all")),
+		WorkflowMap:      key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "workflow map details")),
 		PageUp:           key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "scroll up")),
 		PageDown:         key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "scroll down")),
 		HalfPageUp:       key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("^u", "page up")),
@@ -59,7 +61,7 @@ func (m KeyMap) ShortHelp() []key.Binding {
 func (m KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{m.Send, m.Newline, m.Cancel, m.Quit},
-		{m.Overlay, m.Rail, m.ExpandAll},
+		{m.Overlay, m.Rail, m.ExpandAll, m.WorkflowMap},
 		{m.PageUp, m.PageDown, m.HalfPageUp, m.HalfPageDown, m.HistoryUp, m.HistoryDown},
 		{m.AcceptCompletion, m.Palette},
 	}

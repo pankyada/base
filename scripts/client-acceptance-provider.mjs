@@ -31,7 +31,9 @@ const server = createServer((req, res) => {
     } else if (datasetCall) {
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-dataset', type: 'function', function: { name: 'RenderUI', arguments: '{"title":"CA dataset surface","html":"<p>CA_DATASET_SURFACE</p>"}' } }] } }] })}\n\n`)
     } else {
-      const content = raw.includes('CA_SLOW') ? 'fixture slow complete' : raw.includes('CA_SCOPE_A') ? 'fixture A complete' : raw.includes('CA_SCOPE_B') ? 'fixture B complete' : 'fixture complete'
+      const content = raw.includes('CA_MAP_ACTUAL')
+        ? '# Files touched\n- isolated workflow map fixture\n# Prior knowledge\n- deterministic browser acceptance\n# Open questions\n- none\n# Plan\n- execute fixture stages\n# Risks\n- none\n# Result\n- fixture stage complete\n# Verification\n- deterministic output returned\n'
+        : raw.includes('CA_SLOW') ? 'fixture slow complete' : raw.includes('CA_SCOPE_A') ? 'fixture A complete' : raw.includes('CA_SCOPE_B') ? 'fixture B complete' : 'fixture complete'
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)
     }
     res.write(`data: ${JSON.stringify({ choices: [{ delta: {} }], usage: { prompt_tokens: 2, completion_tokens: 2 } })}\n\n`)

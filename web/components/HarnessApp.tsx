@@ -23,6 +23,7 @@ import { useHarnessQuery } from '../hooks/useHarnessQuery'
 import { NotebookCell } from './data/NotebookCell'
 import { Rail } from './chrome/Rail'
 import { StageStrip } from './turn/StageStrip'
+import { WorkflowMap } from './turn/WorkflowMap'
 import { Toasts } from './chrome/Toasts'
 import { useSharedHarnessWS } from './chrome/SocketProvider'
 import { sendFailureReason } from '../hooks/useHarnessWS'
@@ -34,6 +35,8 @@ export function HarnessApp() {
   const wsUrl = process.env.NEXT_PUBLIC_HARNESS_WS_URL || 'ws://localhost:7337'
   const { send, status, reconnect, events, subscribe, userId, setUserId } = useSharedHarnessWS()
   const previousUserId = useRef(userId)
+  const workflowMapRequests = useRef(new Set<string>())
+  const lastSocketStatus = useRef(status)
   useEffect(() => {
     if (previousUserId.current === userId) return
     previousUserId.current = userId
@@ -45,6 +48,31 @@ export function HarnessApp() {
   // Initial buffered events are replayed once; live events use the subscription.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (status !== 'open') {
+      workflowMapRequests.current.clear()
+      lastSocketStatus.current = status
+      return
+    }
+    const reconnected = lastSocketStatus.current !== 'open'
+    lastSocketStatus.current = 'open'
+    const request = (scope: { run_id: string; session_id: string; profile: string }, after_revision?: number, reason = 'reconnect') => {
+      const key = `${scope.run_id}\u0000${scope.session_id}\u0000${scope.profile}\u0000${reason}\u0000${after_revision ?? ''}`
+      if (workflowMapRequests.current.has(key)) return
+      const result = send({ type: 'workflow_map', scope, ...(after_revision === undefined ? {} : { after_revision }) })
+      if (result.ok) workflowMapRequests.current.add(key)
+    }
+    for (const [runId, lane] of Object.entries(state.runs ?? {})) {
+      const map = lane.workflowMap
+      if (map?.needsRecovery) request(map.snapshot.scope, undefined, 'gap')
+      else if (reconnected && lane.status === 'running' && !map && state.sessionId !== '…' && state.profile !== '…') {
+        request({ run_id: runId, session_id: state.sessionId, profile: state.profile })
+      } else if (reconnected && lane.status === 'running' && map) {
+        request(map.snapshot.scope, map.snapshot.revision, 'reconnect')
+      }
+    }
+  }, [send, state.profile, state.runs, state.sessionId, status])
 
   const hydrateTranscript = useCallback((messages: UIMessage[], prepend: boolean) => dispatch({ type: 'HYDRATE_MESSAGES', payload: { messages, prepend } }), [])
   const transcript = useHarnessQuery(wsUrl.replace(/^ws/, 'http'), state.sessionId, hydrateTranscript, { userId, profile: state.profile })
@@ -200,13 +228,18 @@ export function HarnessApp() {
           ) : (
             <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
               {transcript.hasEarlier ? <button onClick={transcript.loadEarlier} disabled={transcript.loading}>load earlier</button> : null}
-              {turns.map((t, i) => t.type === 'user' ? (
-                <Message key={t.msg.id} role="user" time={new Date().toLocaleTimeString()}>{t.msg.content}</Message>
-              ) : (
-                <Message key={`agent-${i}`} role="agent" time={new Date().toLocaleTimeString()}>
+              {turns.map((t, i) => {
+                if (t.type === 'user') {
+                  const runMap = t.msg.runId ? state.runs?.[t.msg.runId]?.workflowMap?.snapshot : undefined
+                  return <Message key={t.msg.id} role="user" time={new Date().toLocaleTimeString()}>
+                    {t.msg.content}
+                    {runMap && runMap.availability.state !== 'empty' ? <WorkflowMap snapshot={runMap} title="Workflow execution" /> : null}
+                  </Message>
+                }
+                return <Message key={`agent-${i}`} role="agent" time={new Date().toLocaleTimeString()}>
                   <AgentTurn message={t.agentMsg || { id: '0', role: 'agent' }} tools={t.tools} />
                 </Message>
-              ))}
+              })}
             </div>
           )}
           {state.executions?.map((execution, index) => <NotebookCell key={`${execution.result.id}-${index}`} result={execution.result} code={execution.code} onRerun={() => execution.code ? sendControl({ type: 'message', content: `Run this code again:\n\n${execution.code}` }) : undefined} onEdit={() => dispatch({ type: 'INPUT', payload: execution.code ?? '' })} />)}

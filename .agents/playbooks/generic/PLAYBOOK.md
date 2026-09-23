@@ -1,6 +1,6 @@
 ---
 name: generic
-description: Safe generic workflow
+description: Use for requests that do not clearly fit a specialized workflow, including general questions, coordination, and small mixed tasks. Not for focused software changes, structured data analysis, research, security review, or document drafting.
 stages: [recon, plan, build, verify]
 task_classes: [general]
 defaults:

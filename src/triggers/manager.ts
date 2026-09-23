@@ -131,6 +131,7 @@ export class TriggerManager {
         signal: abort.signal,
         channels: this.options.channels,
         runId: id,
+        onSessionCreated: sessionId => this.options.runStore.update(id, { session_id: sessionId }),
         pendingInputs: this.options.pendingStore,
         unattended: true,
         budget: this.options.profile.triggers?.budget ? new RunBudget(this.options.profile.triggers.budget) : undefined,

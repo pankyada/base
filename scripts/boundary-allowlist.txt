@@ -2,6 +2,7 @@
 # belongs in adapters and fixtures, not in src/.
 src/agents/runner.ts|assistant
 src/types.ts|assistant
+src/decisions/workflow.ts|assistant
 src/context/projection.ts|assistant
 src/loop/agent-loop.ts|assistant
 src/profiles/schema.ts|assistant

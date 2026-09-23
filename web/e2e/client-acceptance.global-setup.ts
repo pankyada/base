@@ -59,6 +59,10 @@ export default async function globalSetup(_config: FullConfig) {
   await mkdir(join(root, 'artifacts'), { recursive: true })
   await writeFile(join(profilesDir, 'fixture-p.yaml'), yaml('fixture-p', artifactP))
   await writeFile(join(profilesDir, 'fixture-q.yaml'), yaml('fixture-q', artifactQ))
+  const artifactMap = join(root, 'artifacts', 'fixture-map')
+  await writeFile(join(profilesDir, 'fixture-map.yaml'), yaml('fixture-map', artifactMap).replace('tools:\n', [
+    'workflow:', '  enabled: true', '  playbook: generic', '  routing:', '    policy: static', '    explore_rate: 0', '    shadow_rate: 0', 'tools:',
+  ].join('\n') + '\n'))
   const provider = spawn(process.execPath, [join(process.cwd(), '..', 'scripts', 'client-acceptance-provider.mjs')], { cwd: join(process.cwd(), '..'), env: { ...process.env, CLIENT_ACCEPTANCE_PROVIDER_PORT: String(providerPort) }, stdio: ['ignore', 'pipe', 'pipe'] })
   const harness = spawn(process.execPath, ['--import', 'tsx', '--import', './scripts/client-acceptance-sockets.mjs', 'src/server/index.ts', '--profiles', profilesDir, '--default-profile', 'fixture-p'], { cwd: join(process.cwd(), '..'), env: { ...process.env, HOME: root, CLIENT_ACCEPTANCE_SOCKET_COUNT: join(root, 'socket-count.json'), HARNESS_PORT: String(harnessPort), HARNESS_ALLOWED_ORIGINS: 'http://127.0.0.1:3012', TEST_KEY: 'fixture-key', NODE_ENV: 'test' }, stdio: ['ignore', 'pipe', 'pipe'] })
   let logs = ''

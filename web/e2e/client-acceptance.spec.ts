@@ -6,14 +6,16 @@ const http = 'http://127.0.0.1:18832'
 async function installSocketProbe(page: import('@playwright/test').Page) {
   await page.addInitScript(() => {
     const Native = window.WebSocket
-    const stats = { created: 0, opened: 0, closed: 0, active: 0 }
+    const stats = { created: 0, opened: 0, closed: 0, active: 0, workflowMaps: [] as unknown[], workflowMapRequests: [] as unknown[] }
     class TrackedSocket extends Native {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols as any)
         stats.created++
         ;(stats as any).last = this
+        const nativeSend = this.send.bind(this)
+        this.send = (data: string | ArrayBufferLike | Blob | ArrayBufferView) => { try { const message = JSON.parse(String(data)); if (message.type === 'workflow_map') stats.workflowMapRequests.push(message) } catch {} return nativeSend(data) }
         this.addEventListener('open', () => { stats.opened++; stats.active++ })
-        this.addEventListener('message', event => { const m = JSON.parse(event.data); if (m.type === 'session_ready' || m.type === 'session_resumed') (stats as any).ready = m })
+        this.addEventListener('message', event => { const m = JSON.parse(event.data); if (m.type === 'session_ready' || m.type === 'session_resumed') (stats as any).ready = m; if (m.type === 'workflow_map') stats.workflowMaps.push(m) })
         this.addEventListener('close', () => { stats.closed++; stats.active = Math.max(0, stats.active - 1) })
       }
     }
@@ -42,6 +44,103 @@ async function setScope(page: import('@playwright/test').Page, user: string, pro
 }
 
 test.describe('PT-041 client acceptance fixture', () => {
+  test('WM-08: actual workflow map follows its turn, reconnects once, and loads the selected Ops run', async ({ page }) => {
+    test.setTimeout(90_000)
+    await installSocketProbe(page)
+    await page.addInitScript(() => localStorage.setItem('harness-user-id', 'ca-map-user'))
+    await openAnalyst(page)
+    const profile = page.locator('select[aria-label="profile"]')
+    await expect(profile).toHaveValue('fixture-p', { timeout: 15_000 })
+    await profile.selectOption('fixture-map')
+    await expect(profile).toHaveValue('fixture-map')
+    await expect(page.getByText('ready')).toBeVisible({ timeout: 15_000 })
+
+    const composer = page.getByPlaceholder('Message harness...')
+    await composer.fill('CA_MAP_ACTUAL deterministic branch fixture')
+    await composer.press('Enter')
+    const map = page.locator('[data-testid="workflow-map"]')
+    await expect(map).toBeVisible({ timeout: 15_000 })
+    await expect(map.locator('summary')).toContainText(/observed attempts/i)
+    const frames = await page.evaluate(() => (window as any).__caSocketStats.workflowMaps.map((frame: any) => frame.snapshot ?? frame.observation))
+    await test.info().attach('workflow-map-frames.json', { body: JSON.stringify(frames, null, 2), contentType: 'application/json' })
+    await expect(map).toHaveAttribute('data-availability', 'available', { timeout: 20_000 })
+    await map.locator('summary').click()
+    await expect(map).toHaveAttribute('open', '')
+    await expect(map.getByRole('list', { name: 'Connected actual workflow execution path' }).getByRole('listitem').first()).toBeVisible({ timeout: 30_000 })
+    await expect(map).toContainText('Actual')
+    await expect(map).toContainText('→')
+    await map.screenshot({ path: '/tmp/base-workflow-map-chat-desktop.png', animations: 'disabled' })
+
+    // A disconnect after map observations arrive must preserve this turn's map and not duplicate it.
+    await page.evaluate(() => (window as any).__caSocketStats.last.close())
+    await expect(page.getByText(/Disconnected/)).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText('ready')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('[data-testid="workflow-map"]')).toHaveCount(1)
+    await expect(page.locator('[data-testid="workflow-map"]').getByRole('list', { name: 'Connected actual workflow execution path' }).getByRole('listitem').first()).toBeVisible()
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await map.screenshot({ path: '/tmp/base-workflow-map-chat-narrow.png', animations: 'disabled' })
+    const mapFits = await map.evaluate(element => element.scrollWidth <= element.clientWidth)
+    expect(mapFits).toBe(true)
+
+    // Supplemental display-only shadow fixture. This is an injected browser frame,
+    // not evidence of a provider-generated recommendation or routing decision.
+    const actualScope = await page.evaluate(() => (window as any).__caSocketStats.workflowMaps.map((frame: any) => frame.snapshot?.scope ?? frame.observation?.scope).find((scope: any) => scope?.profile === 'fixture-map'))
+    const shadowSnapshot = {
+      version: 1, scope: actualScope, revision: 100, availability: { state: 'available' },
+      attempts: [{ attempt_id: 'injected-attempt', pass_id: 'injected-pass', playbook: 'generic', stage: 'plan', attempt: 1, intensity: 1, tier: 'balanced', model: 'browser fixture', state: 'done' }],
+      transitions: [{ transition_id: 'injected-transition', kind: 'start', to_attempt_id: 'injected-attempt' }],
+      advice: [{ advice_id: 'injected-shadow-advice', kind: 'route', mode: 'shadow', applied: false, action: 'suggest', summary: 'Injected display fixture only' }],
+    }
+    await page.evaluate(snapshot => (window as any).__caSocketStats.last.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workflow_map', snapshot }) })), shadowSnapshot)
+    await expect(map).toContainText('Shadow suggestion')
+    await expect(map).toContainText('Not an execution path')
+
+    await page.goto('/ops')
+    await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible()
+    // Ops has a separate socket and no run-profile picker. Set its existing
+    // profile state through the same public protocol used by the profile switch.
+    await expect.poll(() => page.evaluate(() => (window as any).__caSocketStats.last?.readyState === WebSocket.OPEN)).toBe(true)
+    await page.evaluate(() => (window as any).__caSocketStats.last.send(JSON.stringify({ type: 'set_profile', profile: 'fixture-map' })))
+    const run = page.locator('.run-row').filter({ hasText: 'CA_MAP_ACTUAL deterministic branch fixture' })
+    await expect(run).toBeVisible({ timeout: 15_000 })
+    await run.getByRole('button', { name: /Select run .* for workflow map/ }).click()
+    const selectedMap = page.locator('[data-testid="ops-selected-workflow-map"] [data-testid="workflow-map"]')
+    await expect(selectedMap).toBeVisible({ timeout: 15_000 })
+    await expect(selectedMap).toHaveAttribute('open', '')
+    await expect(selectedMap.getByRole('list', { name: 'Connected actual workflow execution path' }).getByRole('listitem').first()).toBeVisible()
+    await expect(selectedMap).toHaveAttribute('data-run-id', await run.locator('.run-row__identity strong').innerText())
+    await expect(selectedMap).toHaveAttribute('data-profile', 'fixture-map')
+    await expect(selectedMap).toHaveAttribute('data-session-id', actualScope.session_id)
+
+    const workflowScopes = await page.evaluate(() => (window as any).__caSocketStats.workflowMaps.map((frame: any) => frame.snapshot?.scope ?? frame.observation?.scope))
+    expect(workflowScopes.some((scope: any) => scope?.run_id && scope?.session_id && scope?.profile === 'fixture-map')).toBe(true)
+    await page.screenshot({ path: '/tmp/base-workflow-map-ops-selected.png', fullPage: true, animations: 'disabled' })
+
+    // The Ops subscription must recover a detected revision gap with a full
+    // exact-scope snapshot. Both seed and gap are injected transport fixtures.
+    const mapScope = { run_id: await selectedMap.getAttribute('data-run-id'), session_id: await selectedMap.getAttribute('data-session-id'), profile: await selectedMap.getAttribute('data-profile') }
+    const currentRevision = await page.evaluate((scope: any) => Math.max(...(window as any).__caSocketStats.workflowMaps.map((frame: any) => frame.snapshot ?? frame.observation).filter((frame: any) => frame.scope?.run_id === scope.run_id && frame.scope?.session_id === scope.session_id && frame.scope?.profile === scope.profile).map((frame: any) => frame.revision)), mapScope)
+    const requestsBeforeGap = await page.evaluate((scope: any) => (window as any).__caSocketStats.workflowMapRequests.filter((request: any) => request.scope?.run_id === scope.run_id && request.scope?.session_id === scope.session_id && request.scope?.profile === scope.profile && request.after_revision === undefined).length, mapScope)
+    const dispatchMapFrame = async (frame: unknown) => page.evaluate(value => (window as any).__caSocketStats.last.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })), frame)
+    await dispatchMapFrame({ type: 'workflow_map', snapshot: { version: 1, scope: mapScope, revision: currentRevision, availability: { state: 'available' }, attempts: [], transitions: [], advice: [] } })
+    await page.waitForTimeout(100)
+    await dispatchMapFrame({ type: 'workflow_map', observation: { event_id: 'injected-gap', revision: currentRevision + 2, kind: 'pass_started', scope: mapScope } })
+    await expect.poll(() => page.evaluate((scope: any) => (window as any).__caSocketStats.workflowMapRequests.filter((request: any) => request.scope?.run_id === scope.run_id && request.scope?.session_id === scope.session_id && request.scope?.profile === scope.profile && request.after_revision === undefined).length, mapScope)).toBeGreaterThan(requestsBeforeGap)
+    await expect(selectedMap).toHaveAttribute('data-availability', 'available', { timeout: 5000 })
+
+    await page.getByRole('tab', { name: 'Telemetry' }).click()
+    await expect(page.locator('[data-testid="routing-evidence"]')).toContainText('Server-wide')
+
+    // A separate flat-profile turn must have no per-turn workflow disclosure.
+    await page.goto('/')
+    const flatComposer = page.getByPlaceholder('Message harness...')
+    await flatComposer.fill('CA_MAP_FLAT flat loop acceptance')
+    await flatComposer.press('Enter')
+    await expect(page.getByText('fixture complete', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('[data-testid="workflow-map"]')).toHaveCount(0)
+  })
+
   test('CA-03: two user/profile scopes expose isolated memory, audit, usage and transcript reads', async ({ page, request }) => {
     await installSocketProbe(page)
     await openAnalyst(page)

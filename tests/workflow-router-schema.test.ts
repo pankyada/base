@@ -20,6 +20,7 @@ describe('workflow.router schema (PT-076, roadmap #31 phase 1)', () => {
       ask_threshold: 0.7,
       max_reroutes: 1,
       max_clarifications: 1,
+      catch_all: [],
       mining: { enabled: false, min_cluster: 10 },
     })
   })

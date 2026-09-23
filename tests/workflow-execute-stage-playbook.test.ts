@@ -71,4 +71,40 @@ describe('executeStage playbook threading (PT-076)', () => {
     // fake-loop's matching body satisfies it.
     expect(result.contract_ok).toBe(true)
   })
+
+  it('emits an identity-bearing start and exactly one bounded close observation', async () => {
+    const customPlaybook: Playbook = { name: 'custom-test-playbook', stages: ['recon'], task_classes: ['general'], defaults: {}, contract: () => ({ required_sections: [], exit_criteria: 'done', prompt: '' }) }
+    const p = profile()
+    const session = createSession(p.name, 'test')
+    const observed: any[] = []
+    const mapEvents = { ...events, onWorkflowMap: (value: any) => observed.push(value) }
+    let stageTag: any
+    const loop = vi.fn(async (_seed: string, _profile: any, staged: any, _ctx: any, _events: any, _openai: any, _signal: any, opts: any) => {
+      stageTag = opts.stage
+      staged.messages.push({ role: 'assistant', content: 'done' })
+    })
+    await executeStage('safe request', 'recon', 1, 'cheap', 1, 'pass-1', { task_class: 'general', blast_radius: 'module', reversibility: 'easy', intensity: { recon: 1 }, confidence: 1, why: 'test' } as any, p, customPlaybook, session, context(p, session), mapEvents, undefined, new AbortController().signal, [], '', loop, false, false, undefined, { scope: { run_id: 'run-1', session_id: session.id, profile: p.name }, nextTransition: 'start' })
+    expect(observed.map(value => value.kind)).toEqual(['attempt_started', 'attempt_updated'])
+    expect(observed[0].attempt.attempt_id).toBe(stageTag.stage_id)
+    expect(observed[1].attempt).toMatchObject({ state: 'done', cost_usd: 0, contract_ok: true })
+    expect(observed[1].attempt.duration_ms).toEqual(expect.any(Number))
+  })
+
+  it('closes a thrown attempt once and isolates observer failures from stage execution', async () => {
+    const customPlaybook: Playbook = { name: 'custom-test-playbook', stages: ['recon'], task_classes: ['general'], defaults: {}, contract: () => ({ required_sections: [], exit_criteria: 'done', prompt: '' }) }
+    const p = profile()
+    const session = createSession(p.name, 'test')
+    const observed: any[] = []
+    const mapEvents = { ...events, onWorkflowMap: (value: any) => observed.push(value) }
+    const loop = vi.fn(async () => { throw new Error('fixture failure') })
+    await expect(executeStage('safe request', 'recon', 1, 'cheap', 1, 'pass-1', { task_class: 'general', blast_radius: 'module', reversibility: 'easy', intensity: { recon: 1 }, confidence: 1, why: 'test' } as any, p, customPlaybook, session, context(p, session), mapEvents, undefined, new AbortController().signal, [], '', loop, false, false, undefined, { scope: { run_id: 'run-1', session_id: session.id, profile: p.name }, nextTransition: 'start' })).rejects.toThrow('fixture failure')
+    expect(observed.map(value => value.kind)).toEqual(['attempt_started', 'attempt_updated'])
+    expect(observed[1].attempt.state).toBe('failed')
+
+    const throwingObserver = { ...events, onWorkflowMap: () => { throw new Error('observer failed') } }
+    const succeeds = vi.fn(async (_seed: string, _profile: any, staged: any) => { staged.messages.push({ role: 'assistant', content: 'done' }) })
+    const result = await executeStage('safe request', 'recon', 1, 'cheap', 1, 'pass-1', { task_class: 'general', blast_radius: 'module', reversibility: 'easy', intensity: { recon: 1 }, confidence: 1, why: 'test' } as any, p, customPlaybook, session, context(p, session), throwingObserver, undefined, new AbortController().signal, [], '', succeeds, false, false, undefined, { scope: { run_id: 'run-2', session_id: session.id, profile: p.name }, nextTransition: 'start' })
+    expect(result.contract_ok).toBe(true)
+    expect(succeeds).toHaveBeenCalledOnce()
+  })
 })

@@ -56,6 +56,12 @@ describe('rerouteAllowed', () => {
   it('denies when the reroute cap is reached', () => {
     expect(rerouteAllowed({ ...base, reroutesUsed: 1 })).toBe(false)
   })
+  it('denies a catch-all target injected while rerouting from a specific playbook', () => {
+    expect(rerouteAllowed({ ...base, target: 'generic', currentPlaybook: 'data', catchAll: ['generic'] })).toBe(false)
+  })
+  it('allows a specific target when rerouting from a catch-all playbook', () => {
+    expect(rerouteAllowed({ ...base, target: 'data', currentPlaybook: 'generic', catchAll: ['generic'] })).toBe(true)
+  })
 })
 
 describe('resolveEdgeAction', () => {

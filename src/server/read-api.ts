@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http'
 import { createHash } from 'crypto'
-import { aggregateRouting } from '../analysis/routing.js'
+import { aggregateRouteGraph, aggregateRouting, suggestRouterThresholds } from '../analysis/routing.js'
 import { listAudit } from '../audit/query.js'
 import { FsMemoryProvider } from '../memory/fs-memory.js'
 import type { MemoryProvider, MemoryScope } from '../memory/interface.js'
@@ -270,7 +270,31 @@ export function createReadApiHandler(deps: ReadApiDeps): (req: IncomingMessage, 
         return true
       }
       if (path === '/stats/routing') {
-        send(res, 200, aggregateRouting(events({ since })))
+        const rawProfile = params.get('profile')
+        if (rawProfile !== null && !rawProfile.trim()) throw new HttpError(400, 'invalid profile')
+        const requestedProfile = rawProfile ?? undefined
+        const source = events({ profile: requestedProfile, since })
+          .filter(event => (!requestedProfile || event.profile === requestedProfile) && (!until || new Date(event.ts) <= until))
+        const profile = requestedProfile
+          ? (deps.profiles?.get(requestedProfile) ?? (requestedProfile === deps.defaultProfile.name ? deps.defaultProfile : undefined))
+          : deps.defaultProfile
+        const router = profile?.workflow?.router
+        const current = {
+          domain_threshold: router?.domain_threshold ?? 0.5,
+          ask_threshold: router?.ask_threshold ?? 0.6,
+        }
+        send(res, 200, {
+          ...aggregateRouting(source),
+          routeGraph: aggregateRouteGraph(source),
+          suggestions: suggestRouterThresholds(source, current),
+          scope: {
+            server_wide: true,
+            ...(requestedProfile !== undefined ? { profile: requestedProfile } : {}),
+            ...(params.get('since') !== null ? { since: params.get('since')! } : {}),
+            ...(params.get('until') !== null ? { until: params.get('until')! } : {}),
+            sample_count: source.length,
+          },
+        })
         return true
       }
       const sessionId = path.split('/')[2]

@@ -134,6 +134,7 @@ export interface ClaimCheckHookInput {
   reentries: number
   maxRetries: number
   parentTaskId?: string
+  onAdvice?: (advice: { mode: 'shadow' | 'enforce'; applied: boolean; action?: 'retry' | 'abandon' | 'pass'; summary?: 'provider_unavailable' | 'invalid_judgment' | 'no_claims' | 'no_evidence' | 'claim_check_failed' }) => void
 }
 
 export type ClaimCheckAction =
@@ -165,10 +166,13 @@ function claimCheckAdvisorReady(profile: Profile, context: ToolContext): { model
  * and `{ action: 'none' }` — claim-check failure never blocks the run.
  */
 export async function runClaimCheck(input: ClaimCheckHookInput): Promise<ClaimCheckAction> {
-  const { profile, session, context, signal, taskId, playbook, ownArtifacts, toolCallsBefore, request, reentries, maxRetries, parentTaskId } = input
+  const { profile, session, context, signal, taskId, playbook, ownArtifacts, toolCallsBefore, request, reentries, maxRetries, parentTaskId, onAdvice } = input
+  const reportAdvice = (advice: Parameters<NonNullable<ClaimCheckHookInput['onAdvice']>>[0]) => { try { onAdvice?.(advice) } catch { /* advisory UI cannot alter claim control flow */ } }
+  const configuredMode = profile.decision_layer?.features.claim_check
+  if (configuredMode !== 'shadow' && configuredMode !== 'enforce') return { action: 'none' }
   const ready = claimCheckAdvisorReady(profile, context)
-  if (!ready) return { action: 'none' }
-  const mode = profile.decision_layer!.features.claim_check as 'shadow' | 'enforce'
+  const mode = configuredMode
+  if (!ready) { reportAdvice({ mode, applied: false, summary: 'provider_unavailable' }); return { action: 'none' } }
 
   const base = { session: session.id, profile: profile.name, kind: 'claim_check' as const, task_id: taskId, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) }
 
@@ -176,11 +180,13 @@ export async function runClaimCheck(input: ClaimCheckHookInput): Promise<ClaimCh
   const claims = extractClaims(finalArtifact)
   if (claims.length === 0) {
     logEvent({ ...base, claim_skipped: 'no_claims', claim_applied: false })
+    reportAdvice({ mode, applied: false, action: 'pass', summary: 'no_claims' })
     return { action: 'none' }
   }
   const evidence = buildClaimEvidence(session, toolCallsBefore)
   if (!evidence) {
     logEvent({ ...base, claim_skipped: 'no_evidence', claim_applied: false })
+    reportAdvice({ mode, applied: false, action: 'pass', summary: 'no_evidence' })
     return { action: 'none' }
   }
 
@@ -189,18 +195,21 @@ export async function runClaimCheck(input: ClaimCheckHookInput): Promise<ClaimCh
     const probabilities = await checkClaims(runtime.provider!, ready.model, claims, evidence, request, { signal, evaluateOptions: runtime.evaluateOptions(signal) })
     if (!probabilities) {
       logEvent({ ...base, claim_count: claims.length, claim_fallback: 'incomplete or malformed claim-check response', claim_applied: false })
+      reportAdvice({ mode, applied: false, summary: 'invalid_judgment' })
       return { action: 'none' }
     }
     const { verdict, minP } = decideClaimGate(probabilities)
     const applied = mode === 'enforce' && verdict === 'fail'
     logEvent({ ...base, claim_count: claims.length, claim_min_p: minP, claim_verdict: verdict, claim_applied: applied })
-    if (!applied) return { action: 'none' }
-    if (reentries >= maxRetries) return { action: 'abandon', reason: 'claim-check failed' }
+    if (!applied) { reportAdvice({ mode, applied: false, action: 'pass' }); return { action: 'none' } }
+    if (reentries >= maxRetries) { reportAdvice({ mode, applied: true, action: 'abandon', summary: 'claim_check_failed' }); return { action: 'abandon', reason: 'claim-check failed' } }
+    reportAdvice({ mode, applied: true, action: 'retry', summary: 'claim_check_failed' })
     return { action: 'retry', pointer: claimRetryPointer(playbook.stages) }
   } catch (error) {
     if (error instanceof WorkflowDecisionControlError) throw error
     // Bounded: provider error text is not ours to log in full.
     logEvent({ ...base, claim_count: claims.length, claim_fallback: (error instanceof Error ? error.message : 'claim-check provider error').slice(0, 200), claim_applied: false })
+    reportAdvice({ mode, applied: false, summary: 'provider_unavailable' })
     return { action: 'none' }
   }
 }

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import type { Profile } from '../profiles/schema.js'
 import { resolveRole } from '../profiles/schema.js'
 import type { Session } from '../session/types.js'
+import type { WorkflowMapAdvice, WorkflowMapAttempt, WorkflowMapObservationInput, WorkflowMapScope, WorkflowMapTransition } from '../types.js'
 import type { AgentLoopEvents, ToolContext } from '../tools/types.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import { estimateCost } from '../models/registry.js'
@@ -28,8 +29,30 @@ import type { RouteDecision, RouterConfig, Scale } from './route.js'
 import { regexEdgeLabel, jevEdgeLabel, maxDrift, resolveEdgeAction, rerouteAllowed, promoteFloor } from './edge.js'
 import { runClaimCheck } from './claims.js'
 import { appendRoutingMiss } from './routing-misses.js'
+import { BudgetExceeded } from '../runs/budget.js'
 
 export interface WorkflowRunOptions { taskId?: string; loop?: typeof runAgentLoop }
+
+interface WorkflowMapFlow {
+  scope: WorkflowMapScope
+  previousAttemptId?: string
+  nextTransition: WorkflowMapTransition['kind']
+}
+
+function observeMap(events: AgentLoopEvents, flow: WorkflowMapFlow | undefined, value: Omit<WorkflowMapObservationInput, 'event_id' | 'scope'>): void {
+  if (!flow || !events.onWorkflowMap) return
+  try { events.onWorkflowMap({ event_id: randomUUID(), scope: flow.scope, ...value }) } catch { /* observation must never alter workflow execution */ }
+}
+
+function mapTransition(events: AgentLoopEvents, flow: WorkflowMapFlow | undefined, kind: WorkflowMapTransition['kind'], toAttemptId?: string): void {
+  if (!flow) return
+  const transition: WorkflowMapTransition = { transition_id: randomUUID(), kind, ...(flow.previousAttemptId ? { from_attempt_id: flow.previousAttemptId } : {}), ...(toAttemptId ? { to_attempt_id: toAttemptId } : {}) }
+  observeMap(events, flow, { kind: 'transition', transition })
+}
+
+function mapAdvice(events: AgentLoopEvents, flow: WorkflowMapFlow | undefined, advice: Omit<WorkflowMapAdvice, 'advice_id'>): void {
+  observeMap(events, flow, { kind: 'advice', advice: { advice_id: randomUUID(), ...advice } })
+}
 
 export interface PlanPreview {
   taskId: string
@@ -76,6 +99,7 @@ function edgeAdvisor(profile: Profile, context: ToolContext, signal: AbortSignal
 export interface RouteResolution {
   decision?: RouteDecision
   mode?: 'shadow' | 'enforce'
+  fallback?: boolean
 }
 
 // Roadmap #31 phase 6 (PT-081, spec §6 item 3): merge tuned router
@@ -119,7 +143,7 @@ async function resolveRoute(request: string, profile: Profile, session: Session,
     const signals = await advisor.chooseRoute(request, candidates, session.workflow_route, lastAssistant)
     if (!signals) {
       logEvent({ ...base, route_fallback: 'incomplete or malformed route signals', route_applied: false })
-      return { mode }
+      return { mode, fallback: true }
     }
     const decision = decideRoute(signals, effectiveRouter, currentPlaybookName, clarificationsRemaining, session.workflow_route)
     const applied = mode === 'enforce' && decision.kind === 'run'
@@ -146,7 +170,7 @@ async function resolveRoute(request: string, profile: Profile, session: Session,
     if (error instanceof WorkflowDecisionControlError) throw error
     // Bounded: provider error text is not ours to log in full.
     logEvent({ ...base, route_fallback: (error instanceof Error ? error.message : 'route provider error').slice(0, 200), route_applied: false })
-    return { mode }
+    return { mode, fallback: true }
   }
 }
 
@@ -173,7 +197,9 @@ async function resolveEdgeJudgment(request: string, stage: Stage, artifact: stri
   let driftCandidates: RouteCandidate[] | undefined
   if (router?.candidates?.length) {
     const available = listPlaybooks()
-    const names = router.candidates.filter(name => name !== playbook.name && available.some(p => p.name === name))
+    const currentIsCatchAll = router.catch_all?.includes(playbook.name) ?? false
+    // Catch-all playbooks may receive initial work, but must not attract drift away from a specific playbook.
+    const names = router.candidates.filter(name => name !== playbook.name && (currentIsCatchAll || !router.catch_all?.includes(name)) && available.some(p => p.name === name))
     if (names.length > 0) driftCandidates = names.map(name => ({ name, description: available.find(p => p.name === name)?.description }))
   }
 
@@ -215,6 +241,7 @@ async function generateClarifyingQuestion(profile: Profile, context: ToolContext
 export interface RouteDecisionResolution {
   decision?: RouteDecision
   mode?: 'shadow' | 'enforce'
+  fallback?: boolean
   request: string
 }
 
@@ -238,13 +265,13 @@ async function resolveRouteDecision(request: string, profile: Profile, session: 
     const clarificationsRemaining = Math.max(0, maxClarifications - clarifications.used)
     const resolution = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, clarificationsRemaining, adaptivePolicy)
     if (!resolution.decision || resolution.mode !== 'enforce' || resolution.decision.kind !== 'ask') {
-      return { decision: resolution.decision, mode: resolution.mode, request: effectiveRequest }
+      return { decision: resolution.decision, mode: resolution.mode, fallback: resolution.fallback, request: effectiveRequest }
     }
     if (!events.onInputRequest) {
       // Unattended: no human channel to ask through. Re-decide forcing
       // clarificationsRemaining = 0 so rule 1 cannot fire, and proceed.
       const forced = await resolveRoute(effectiveRequest, profile, session, context, signal, taskId, currentPlaybookName, 0, adaptivePolicy)
-      return { decision: forced.decision, mode: forced.mode, request: effectiveRequest }
+      return { decision: forced.decision, mode: forced.mode, fallback: forced.fallback, request: effectiveRequest }
     }
     const question = await generateClarifyingQuestion(profile, context, openai, effectiveRequest)
     const id = randomUUID().replace(/-/g, '').slice(0, 8)
@@ -386,11 +413,11 @@ async function shadowCompletion(openai: OpenAI | undefined, provider: ProviderCl
 // refactor — executeStage uses the `playbook` argument instead of re-resolving
 // it from `profile.workflow?.playbook` — can be unit-tested directly with a
 // playbook that differs from the profile's configured one.
-export async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, playbook: Playbook, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true, parentTaskId?: string): Promise<StageResult> {
+export async function executeStage(request: string, stage: Stage, intensity: Intensity, tier: Tier, attempt: number, taskId: string, plan: TaskPlan, profile: Profile, playbook: Playbook, root: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal, prior: Array<{ stage: Stage; body: string }>, graphSlice: string, loop: typeof runAgentLoop, explore = false, persistArtifact = true, parentTaskId?: string, workflowMap?: WorkflowMapFlow, stageIdOverride?: string): Promise<StageResult> {
   const modelId = tier === 'critic' ? (profile.models?.roles.critic ?? profile.model.id) : (profile.models?.roles?.[tier] ?? profile.model.id)
   const contract = playbook.contract(stage, intensity)
   const seed = buildStageContext(request, prior, contract, stage === 'recon' ? graphSlice : '')
-  const stageId = newStageId()
+  const stageId = stageIdOverride ?? newStageId()
   const staged = childSession(root, stageId, seed)
   if (context.stageSystemPromptAppend) {
     const messages = staged.messages as Array<{ role: string; content?: string }>
@@ -408,28 +435,46 @@ export async function executeStage(request: string, stage: Stage, intensity: Int
   }
   if (context.provider) stageContext.provider = bindRunProvider(context.provider, stageContext)
   const started = Date.now()
+  const mapAttempt: WorkflowMapAttempt = {
+    attempt_id: stageId, pass_id: taskId, ...(parentTaskId ? { parent_pass_id: parentTaskId } : {}),
+    playbook: playbook.name, stage, attempt, intensity, tier, model: modelId, state: 'running', ...(explore ? { explore: true } : {}),
+  }
+  observeMap(events, workflowMap, { kind: 'attempt_started', pass_id: taskId, attempt: mapAttempt })
   events.onStage?.(stage, intensity, tier, modelId, 'start')
   logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: playbook.name, attempt, model: modelId, state: 'start', ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+  let closed = false
+  const closeAttempt = (state: WorkflowMapAttempt['state'], extras: Partial<WorkflowMapAttempt> = {}) => {
+    if (closed) return
+    closed = true
+    observeMap(events, workflowMap, { kind: 'attempt_updated', pass_id: taskId, attempt: { ...mapAttempt, ...extras, state } })
+  }
   try {
-    await loop(seed, profile, staged, stageContext, stageContext.events, openai, signal, { modelId, stage: { task_id: taskId, stage_id: stageId, stage, attempt, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, playbook: playbook.name, explore } })
-  } finally {
-    root.tool_calls.push(...staged.tool_calls)
-    mergeStageUsage(root, staged)
-    if (stageBudget && context.budget) context.budget.absorbChildUsage(stageBudget, staged.usage.cost_usd)
+    try {
+      await loop(seed, profile, staged, stageContext, stageContext.events, openai, signal, { modelId, stage: { task_id: taskId, stage_id: stageId, stage, attempt, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, playbook: playbook.name, explore } })
+    } finally {
+      root.tool_calls.push(...staged.tool_calls)
+      mergeStageUsage(root, staged)
+      if (stageBudget && context.budget) context.budget.absorbChildUsage(stageBudget, staged.usage.cost_usd)
+    }
+    const body = stageBody(staged)
+    const validation = validateArtifact(body, contract)
+    if (persistArtifact) writeArtifact(profile, root, stage, body, { intensity, tier, model: modelId, confidence: plan.confidence, contract_ok: validation.ok, attempt, task_id: taskId })
+    if (profile.workflow?.knowledge.graph) {
+      const knowledge = await extractKnowledge(body, stage, openai, profile, context.provider)
+      const generalized = stage === 'review' && profile.workflow.knowledge.generalization_probe ? generalizationFromReview(body) : { nodes: [], edges: [] }
+      await persistKnowledge(context.memory, [...knowledge.nodes, ...generalized.nodes], [...knowledge.edges, ...generalized.edges]).catch(() => {})
+    }
+    const result: StageResult = { stage, intensity, tier, modelId, attempt, body, contract_ok: validation.ok, missing: validation.missing, confidence: plan.confidence, high_findings: stage === 'review' && /\bhigh\b/i.test(body) ? 1 : 0 }
+    const escalation = shouldEscalate(result)
+    const duration = Date.now() - started
+    closeAttempt(escalation.escalate ? 'escalated' : 'done', { cost_usd: staged.usage.cost_usd, duration_ms: duration, contract_ok: validation.ok })
+    logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: playbook.name, attempt, model: modelId, state: escalation.escalate ? 'escalated' : 'done', contract_ok: validation.ok, cost_usd: staged.usage.cost_usd, duration_ms: duration, escalated_from: escalation.escalate ? tier : undefined, failed_back_to: failBackTarget(result) ?? undefined, explore, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+    events.onStage?.(stage, intensity, tier, modelId, escalation.escalate ? 'escalated' : 'done', staged.usage.cost_usd)
+    return result
+  } catch (error) {
+    closeAttempt(signal.aborted ? 'cancelled' : error instanceof BudgetExceeded ? 'budget_exceeded' : 'failed', { cost_usd: staged.usage.cost_usd, duration_ms: Date.now() - started })
+    throw error
   }
-  const body = stageBody(staged)
-  const validation = validateArtifact(body, contract)
-  if (persistArtifact) writeArtifact(profile, root, stage, body, { intensity, tier, model: modelId, confidence: plan.confidence, contract_ok: validation.ok, attempt, task_id: taskId })
-  if (profile.workflow?.knowledge.graph) {
-    const knowledge = await extractKnowledge(body, stage, openai, profile, context.provider)
-    const generalized = stage === 'review' && profile.workflow.knowledge.generalization_probe ? generalizationFromReview(body) : { nodes: [], edges: [] }
-    await persistKnowledge(context.memory, [...knowledge.nodes, ...generalized.nodes], [...knowledge.edges, ...generalized.edges]).catch(() => {})
-  }
-  const result: StageResult = { stage, intensity, tier, modelId, attempt, body, contract_ok: validation.ok, missing: validation.missing, confidence: plan.confidence, high_findings: stage === 'review' && /\bhigh\b/i.test(body) ? 1 : 0 }
-  const escalation = shouldEscalate(result)
-  logEvent({ session: root.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity, tier, task_class: plan.task_class, blast_radius: plan.blast_radius, reversibility: plan.reversibility, playbook: playbook.name, attempt, model: modelId, state: escalation.escalate ? 'escalated' : 'done', contract_ok: validation.ok, cost_usd: staged.usage.cost_usd, duration_ms: Date.now() - started, escalated_from: escalation.escalate ? tier : undefined, failed_back_to: failBackTarget(result) ?? undefined, explore, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
-  events.onStage?.(stage, intensity, tier, modelId, escalation.escalate ? 'escalated' : 'done', staged.usage.cost_usd)
-  return result
 }
 
 function cloneSession(session: Session): Session {
@@ -487,6 +532,7 @@ interface PassShared {
   maxCost: number
   workflowDeadline: number
   adaptivePolicy?: RoutingPolicyDoc
+  workflowMap?: WorkflowMapFlow
 }
 
 interface PassOptions {
@@ -535,6 +581,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
   let request = initialRequest
   const { profile, session, context, events, openai, signal, loop, maxRetries, maxCost, workflowDeadline, adaptivePolicy } = shared
   const { taskId, playbook, intensityFloor, priorArtifacts, parentTaskId, scale, reconArtifactBody, clarifications, reroutes, allowReroute = false } = opts
+  const workflowMap = shared.workflowMap
   const decision = workflowAdvisor(profile, context, signal)
   const fixedTriage = triageIsFixed(profile)
   const rawTriage = fixedTriage
@@ -587,6 +634,8 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
     await loop(request, profile, session, context, events, openai, signal, { appendUser: false })
   }
 
+  observeMap(events, workflowMap, { kind: 'pass_started', pass_id: taskId })
+
   claimCheckLoop: while (true) {
   while (pointer < playbook.stages.length) {
     if (signal.aborted) return { verdict: 'aborted' }
@@ -602,8 +651,18 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
     const intensity = stage === 'recon' ? Math.max(1, baseIntensity) as Intensity : baseIntensity
 
     if (intensity === 0) {
+      const stageId = newStageId()
+      const transitionKind = workflowMap?.previousAttemptId ? 'skip' : workflowMap?.nextTransition ?? 'start'
+      mapTransition(events, workflowMap, transitionKind, stageId)
+      const skippedAttempt: WorkflowMapAttempt = {
+        attempt_id: stageId, pass_id: taskId, ...(parentTaskId ? { parent_pass_id: parentTaskId } : {}), playbook: playbook.name,
+        stage, attempt: 0, intensity: 0, tier: routing.tier, model: routing.modelId, state: 'running',
+      }
+      observeMap(events, workflowMap, { kind: 'attempt_started', pass_id: taskId, attempt: skippedAttempt })
       events.onStage?.(stage, 0, routing.tier, routing.modelId, 'skipped', 0)
-      logEvent({ session: session.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: newStageId(), stage, intensity: 0, tier: routing.tier, task_class: activePlan.task_class, blast_radius: activePlan.blast_radius, reversibility: activePlan.reversibility, playbook: playbook.name, attempt: 0, model: routing.modelId, state: 'skipped', contract_ok: true, cost_usd: 0, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+      observeMap(events, workflowMap, { kind: 'attempt_updated', pass_id: taskId, attempt: { ...skippedAttempt, state: 'skipped', contract_ok: true, cost_usd: 0, duration_ms: 0 } })
+      if (workflowMap) { workflowMap.previousAttemptId = stageId; workflowMap.nextTransition = 'continue' }
+      logEvent({ session: session.id, profile: profile.name, kind: 'stage', task_id: taskId, stage_id: stageId, stage, intensity: 0, tier: routing.tier, task_class: activePlan.task_class, blast_radius: activePlan.blast_radius, reversibility: activePlan.reversibility, playbook: playbook.name, attempt: 0, model: routing.modelId, state: 'skipped', contract_ok: true, cost_usd: 0, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
       pointer++
       continue
     }
@@ -611,7 +670,10 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
 
     const attempt = (stage === 'recon' ? reconAttempts : 0) + 1
     if (stage === 'recon') reconAttempts++
-    const result = await executeStage(request, stage, intensity, exploration.tier, attempt, taskId, activePlan, profile, playbook, session, context, events, openai, signal, artifacts, graphSlice, loop, exploration.explore, true, parentTaskId)
+    const stageId = newStageId()
+    mapTransition(events, workflowMap, workflowMap?.nextTransition ?? 'start', stageId)
+    const result = await executeStage(request, stage, intensity, exploration.tier, attempt, taskId, activePlan, profile, playbook, session, context, events, openai, signal, artifacts, graphSlice, loop, exploration.explore, true, parentTaskId, workflowMap, stageId)
+    if (workflowMap) { workflowMap.previousAttemptId = stageId; workflowMap.nextTransition = 'continue' }
     finalResult = result
     artifacts.push({ stage, body: result.body })
 
@@ -641,6 +703,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         reentries++
         reconPlan.intensity.recon = Math.min(3, reconPlan.intensity.recon + 1) as Intensity
         tierOverrides.set('recon', promoteTier(selectedTier))
+        if (workflowMap) workflowMap.nextTransition = 'retry'
         continue
       }
       plan = fixedTriage
@@ -648,6 +711,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         : await triageB(request, result.body, playbook, openai, profile, triage.task_class, context.provider, decision)
       plan = applyIntensityFloor(plan, intensityFloor, profile.workflow)
       pointer++
+      if (workflowMap) workflowMap.nextTransition = 'continue'
       continue
     }
 
@@ -666,6 +730,13 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
       edgeResolution = await resolveEdgeJudgment(request, stage, result.body, playbook, remainingStages, earlierStages, profile, session, context, signal, taskId, parentTaskId, regexLabel)
     }
 
+    if (edgeResolution.mode === 'shadow' && edgeResolution.judgment) {
+      const suggested = resolveEdgeAction(edgeResolution.judgment, { rerouteAllowed: false, rerouteTarget: undefined })
+      mapAdvice(events, workflowMap, { kind: 'edge', mode: 'shadow', applied: false, action: suggested.kind === 'failback' ? 'failback' : suggested.kind, summary: edgeResolution.judgment.next === 'done' ? 'pass' : undefined })
+    } else if (edgeResolution.mode === 'enforce' && !edgeResolution.judgment) {
+      mapAdvice(events, workflowMap, { kind: 'edge', mode: 'enforce', applied: false, summary: 'provider_unavailable' })
+    }
+
     if (edgeResolution.mode === 'enforce' && edgeResolution.judgment) {
       const judgment = edgeResolution.judgment
       const topDrift = maxDrift(judgment.drift)
@@ -673,12 +744,16 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
       const rerouteOk = allowReroute && rerouteAllowed({
         routerConfigured: !!routerConfig,
         requestRoutingMode: profile.decision_layer?.features.request_routing,
+        target: topDrift.name,
+        currentPlaybook: playbook.name,
+        catchAll: routerConfig?.catch_all,
         maxDriftP: topDrift.p,
         domainThreshold: (topDrift.name ? routerConfig?.domainThresholds?.[topDrift.name] : undefined) ?? routerConfig?.domain_threshold ?? 0.5,
         reroutesUsed: reroutes.used,
         maxReroutes: routerConfig?.max_reroutes ?? 1,
       })
       const action = resolveEdgeAction(judgment, { rerouteAllowed: rerouteOk, rerouteTarget: topDrift.name })
+      mapAdvice(events, workflowMap, { kind: 'edge', mode: 'enforce', applied: true, action: action.kind === 'failback' ? 'failback' : action.kind, summary: action.kind === 'done' ? 'pass' : undefined })
 
       if (action.kind === 'failback') {
         if (reentries >= maxRetries) {
@@ -689,9 +764,10 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         activePlan.intensity[action.stage] = Math.min(3, activePlan.intensity[action.stage] + 1) as Intensity
         pointer = playbook.stages.indexOf(action.stage)
         if (pointer < 0) pointer = 0
+        if (workflowMap) workflowMap.nextTransition = 'fail_back'
         continue
       }
-      if (action.kind === 'continue') { pointer++; continue }
+      if (action.kind === 'continue') { pointer++; if (workflowMap) workflowMap.nextTransition = 'continue'; continue }
       if (action.kind === 'promote') {
         if (reentries >= maxRetries) {
           emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `${stage}: promote limit reached`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
@@ -702,6 +778,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         plan = applyIntensityFloor(plan!, floor, profile.workflow)
         pointer = playbook.stages.indexOf('plan')
         if (pointer < 0) pointer = 0
+        if (workflowMap) workflowMap.nextTransition = 'promote'
         continue
       }
       if (action.kind === 'stuck') {
@@ -715,6 +792,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
           request = `${request}\n\nClarification: ${answer}`
           reentries++
           pointer = playbook.stages.indexOf(stage)
+          if (workflowMap) workflowMap.nextTransition = 'retry'
           continue
         }
         emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `${stage}: stuck`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
@@ -727,11 +805,12 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         const reconArtifact = artifacts.find(a => a.stage === 'recon')?.body ?? result.body
         // Close out this task so routing stats can count the misroute.
         emitTaskOutcome(session, { task_id: taskId, stages_run: ownArtifacts().length, rework_count: reentries, escalations: reentries, verify_first_try: false, review_findings: { high: 0, med: 0, low: 0 }, verdict: 'abandoned', reason: `rerouted to ${action.target}`, ...(parentTaskId ? { parent_task_id: parentTaskId } : {}) })
+        if (workflowMap) workflowMap.nextTransition = 'reroute'
         return { verdict: 'reroute', playbook: action.target, reconArtifact, artifacts: ownArtifacts() }
       }
       // action.kind === 'done'
       const verifyIndex = playbook.stages.indexOf('verify')
-      if (verifyIndex > pointer && activePlan.intensity.verify > 0) { pointer = verifyIndex; continue }
+      if (verifyIndex > pointer && activePlan.intensity.verify > 0) { pointer = verifyIndex; if (workflowMap) workflowMap.nextTransition = 'continue'; continue }
       break
     }
 
@@ -747,6 +826,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         activePlan.intensity[target] = Math.min(3, activePlan.intensity[target] + 1) as Intensity
         pointer = playbook.stages.indexOf(target)
         if (pointer < 0) pointer = 0
+        if (workflowMap) workflowMap.nextTransition = 'fail_back'
         continue
       }
       const failures = (failureCounts.get(stage) ?? 0) + 1
@@ -754,6 +834,7 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
       const sameTierRetry = (!result.contract_ok || stage === 'verify') && failures < 2
       if (sameTierRetry) {
         pointer = playbook.stages.indexOf(stage)
+        if (workflowMap) workflowMap.nextTransition = 'retry'
       } else {
         // A repeated verification failure re-runs build at the promoted tier;
         // other triggers promote and retry their own stage.
@@ -762,11 +843,13 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
         const promoted = promoteTier(promotionSource)
         tierOverrides.set(promoteStage, promoted)
         pointer = playbook.stages.indexOf(promoteStage)
+        if (workflowMap) workflowMap.nextTransition = 'promote'
       }
       if (pointer < 0) pointer = playbook.stages.indexOf(stage)
       continue
     }
     pointer++
+    if (workflowMap) workflowMap.nextTransition = 'continue'
   }
 
   // Roadmap #31 phase 5 (PT-080), spec §5.7/§6: single hook call for the
@@ -775,10 +858,11 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
   // escalating" or "this playbook never ran verify" (§5.7's two trigger
   // cases), so one call here covers both. All extraction/evidence/gating
   // logic lives in claims.ts; this loop only applies its action.
-  const claimGate = await runClaimCheck({ profile, session, context, signal, taskId, playbook, ownArtifacts: ownArtifacts(), toolCallsBefore, request, reentries, maxRetries, parentTaskId })
+  const claimGate = await runClaimCheck({ profile, session, context, signal, taskId, playbook, ownArtifacts: ownArtifacts(), toolCallsBefore, request, reentries, maxRetries, parentTaskId, onAdvice: advice => mapAdvice(events, workflowMap, { kind: 'claim_check', ...advice }) })
   if (claimGate.action === 'retry') {
     reentries++
     pointer = claimGate.pointer
+    if (workflowMap) workflowMap.nextTransition = 'claim_reentry'
     continue claimCheckLoop
   }
   if (claimGate.action === 'abandon') {
@@ -812,6 +896,17 @@ async function runWorkflowPass(initialRequest: string, shared: PassShared, opts:
 
 export async function runWorkflow(request: string, profile: Profile, session: Session, context: ToolContext, events: AgentLoopEvents, openai: OpenAI | undefined, signal: AbortSignal = new AbortController().signal, options: WorkflowRunOptions = {}): Promise<void> {
   const taskId = options.taskId ?? newTaskId()
+  const workflowMap: WorkflowMapFlow | undefined = context.runId && events.onWorkflowMap
+    ? { scope: { run_id: context.runId, session_id: session.id, profile: profile.name }, nextTransition: 'start' }
+    : undefined
+  let mapTerminal = false
+  const closeMap = (terminal: NonNullable<WorkflowMapObservationInput['terminal']>) => {
+    if (!workflowMap || mapTerminal) return
+    mapTransition(events, workflowMap, 'terminal')
+    observeMap(events, workflowMap, { kind: 'terminal', terminal })
+    mapTerminal = true
+  }
+  try {
   const fallbackPlaybookName = profile.workflow?.playbook ?? 'generic'
   const fallbackPlaybook = loadPlaybook(fallbackPlaybookName)
   const loop = options.loop ?? runAgentLoop
@@ -842,13 +937,20 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
   const decision = routeResolution.decision
   const routeMode = routeResolution.mode
   const enforceRun = routeMode === 'enforce' && decision?.kind === 'run'
+  if (routeMode) {
+    mapAdvice(events, workflowMap, {
+      kind: 'route', mode: routeMode, applied: enforceRun,
+      ...(decision ? { action: decision.kind } : {}),
+      ...(routeResolution.fallback ? { summary: 'provider_unavailable' } : {}),
+    })
+  }
   const intensityFloor = enforceRun ? decision.intensityFloor : undefined
   const routedScale = enforceRun ? decision.scale : undefined
   let secondaryPlaybookName = enforceRun && decision.playbooks.length === 2 ? decision.playbooks[1] : undefined
 
   session.messages.push({ role: 'user', content: effectiveRequest })
 
-  const shared: PassShared = { profile, session, context, events, openai, signal, loop, maxRetries, maxCost, workflowDeadline, adaptivePolicy }
+  const shared: PassShared = { profile, session, context, events, openai, signal, loop, maxRetries, maxCost, workflowDeadline, adaptivePolicy, workflowMap }
 
   // Phase 4 (PT-079) reroute (spec §5.4/§6): a pass can hand back a `reroute`
   // verdict instead of finishing; loop here to start the next pass on the
@@ -889,9 +991,13 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
 
   // Aborted runs never ended the session before phase 3. Budget exhaustion
   // runs the flat loop via plainFallback, which ends the session itself.
-  if (primaryOutcome.verdict === 'aborted' || primaryOutcome.verdict === 'budget_exhausted') return
+  if (primaryOutcome.verdict === 'aborted' || primaryOutcome.verdict === 'budget_exhausted') {
+    closeMap(primaryOutcome.verdict === 'aborted' ? 'cancelled' : 'budget_exceeded')
+    return
+  }
 
   if (primaryOutcome.verdict === 'abandoned') {
+    closeMap('failed')
     events.onSessionEnd(session.id)
     return
   }
@@ -921,8 +1027,16 @@ export async function runWorkflow(request: string, profile: Profile, session: Se
       clarifications,
       reroutes,
     })
-    if (secondaryOutcome.verdict === 'aborted' || secondaryOutcome.verdict === 'budget_exhausted') return
+    if (secondaryOutcome.verdict === 'aborted' || secondaryOutcome.verdict === 'budget_exhausted') {
+      closeMap(secondaryOutcome.verdict === 'aborted' ? 'cancelled' : 'budget_exceeded')
+      return
+    }
   }
 
+  closeMap('completed')
   events.onSessionEnd(session.id)
+  } catch (error) {
+    closeMap(signal.aborted ? 'cancelled' : error instanceof BudgetExceeded ? 'budget_exceeded' : 'failed')
+    throw error
+  }
 }

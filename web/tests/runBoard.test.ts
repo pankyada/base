@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeRunEvent, runStatusLabel, runBoardEmptyLabel, runStatusGroup, runInputTitle, runsUrl } from '../components/ops/RunBoard'
+import { mergeRunEvent, runStatusLabel, runBoardEmptyLabel, runStatusGroup, runInputTitle, runsUrl, workflowMapScopeForRun } from '../components/ops/RunBoard'
 
 describe('run board', () => {
   it('keeps concurrent lanes and distinguishes waiting input', () => {
@@ -47,5 +47,11 @@ describe('run board', () => {
     expect(runInputTitle(undefined)).toBeUndefined()
     expect(runInputTitle({ task: 'ship patch' })).toBe('{"task":"ship patch"}')
     expect(runInputTitle('x'.repeat(220))).toHaveLength(180)
+  })
+
+  it('requires the run row session and profile before constructing an exact map scope', () => {
+    expect(workflowMapScopeForRun({ id: 'run-a', status: 'completed', session_id: 'session-a', profile: 'coding' })).toEqual({ run_id: 'run-a', session_id: 'session-a', profile: 'coding' })
+    expect(workflowMapScopeForRun({ id: 'run-b', status: 'completed', profile: 'coding' })).toBeUndefined()
+    expect(workflowMapScopeForRun({ id: 'run-c', status: 'completed', session_id: 'session-c' })).toBeUndefined()
   })
 })

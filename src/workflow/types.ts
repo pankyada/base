@@ -73,5 +73,6 @@ export function newTaskId(): string {
 }
 
 export function newStageId(): string {
-  return `stage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  return randomUUID()
 }
+import { randomUUID } from 'node:crypto'

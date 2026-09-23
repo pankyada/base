@@ -299,9 +299,12 @@ describe('runWorkflow enforce routing (roadmap #31 phase 3, PT-078)', () => {
       const p = profile()
       const runtime = new DecisionRuntimeService({ provider: routeProvider({ domain: { coding: 0.9, data: 0.6 } }), model: 'jev-test' })
       const session = createSession(p.name, `multi-domain-${Math.random()}`)
-      const events = baseEvents()
+      const observations: any[] = []
+      const events = baseEvents({ onWorkflowMap: (value: any) => observations.push(value) })
       const { loop, calls } = fakeLoop()
-      await runWorkflow('cross-cutting change', p, session, context(p, session, runtime, events), events, openaiRouting(), new AbortController().signal, { loop })
+      const runContext = context(p, session, runtime, events)
+      runContext.runId = 'run-map-sequential-pass'
+      await runWorkflow('cross-cutting change', p, session, runContext, events, openaiRouting(), new AbortController().signal, { loop })
 
       const codingIdx = calls.map((c, i) => (c.playbook === 'coding' ? i : -1)).filter(i => i >= 0)
       const dataIdx = calls.map((c, i) => (c.playbook === 'data' ? i : -1)).filter(i => i >= 0)
@@ -323,6 +326,12 @@ describe('runWorkflow enforce routing (roadmap #31 phase 3, PT-078)', () => {
       expect(secondaryStageEvents.every(e => e.parent_task_id === primaryTaskId)).toBe(true)
       const primaryStageEvents = stageEvents.filter(e => e.task_id === primaryTaskId)
       expect(primaryStageEvents.every(e => e.parent_task_id === undefined)).toBe(true)
+
+      const mapAttempts = observations.filter(value => value.kind === 'attempt_started').map(value => value.attempt)
+      const primaryMapAttempt = mapAttempts.filter((attempt: any) => attempt.pass_id === primaryTaskId).at(-1)
+      const secondaryMapAttempt = mapAttempts.find((attempt: any) => attempt.pass_id === secondaryTaskId)
+      expect(secondaryMapAttempt.parent_pass_id).toBe(primaryTaskId)
+      expect(observations.some(value => value.kind === 'transition' && value.transition.from_attempt_id === primaryMapAttempt.attempt_id && value.transition.to_attempt_id === secondaryMapAttempt.attempt_id)).toBe(true)
 
       expect(session.messages.filter((m: any) => m.role === 'user').length).toBe(1)
       expect(events.onSessionEnd).toHaveBeenCalledTimes(1)

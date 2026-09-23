@@ -246,7 +246,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse, deps: RestDe
       userMessage: prepared.userMessage, events: headlessEvents(capture),
       signal: abort.signal,
       channels: channelsFor(deps, prepared.profile),
-      runId, pendingInputs: pendingStore(deps), unattended: true,
+      runId, onSessionCreated: sessionId => deps.runStore.update(runId, { session_id: sessionId }), pendingInputs: pendingStore(deps), unattended: true,
     })
   } catch (e: any) {
     deps.abortRegistry.delete(runId)
@@ -306,6 +306,7 @@ async function handleStream(req: IncomingMessage, res: ServerResponse, deps: Res
       userMessage: prepared.userMessage, events, signal: abort.signal,
       channels: channelsFor(deps, prepared.profile),
       runId, pendingInputs: pendingStore(deps),
+      onSessionCreated: sessionId => deps.runStore.update(runId, { session_id: sessionId }),
       unattended: true,
     })
     deps.abortRegistry.delete(runId)
@@ -597,7 +598,7 @@ async function handleWebhook(req: IncomingMessage, res: ServerResponse, deps: Re
   try {
     const result = await runProfileOnce({
       profile, userId, userMessage: inputCheck.userMessage, events: headlessEvents(), signal: abort.signal, channels: channelsFor(deps, profile),
-      runId, pendingInputs: pendingStore(deps), unattended: true,
+      runId, onSessionCreated: sessionId => deps.runStore.update(runId, { session_id: sessionId }), pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
@@ -689,7 +690,7 @@ async function handleAcpMessages(
       events,
       signal: abort.signal,
       channels: channelsFor(deps, deps.defaultProfile),
-      runId, pendingInputs: pendingStore(deps), unattended: true,
+      runId, onSessionCreated: sessionId => deps.runStore.update(runId, { session_id: sessionId }), pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, {
@@ -775,7 +776,7 @@ async function handleA2ATask(req: IncomingMessage, res: ServerResponse, deps: Re
       events: headlessEvents(),
       signal: abort.signal,
       channels: channelsFor(deps, deps.defaultProfile),
-      runId, pendingInputs: pendingStore(deps), unattended: true,
+      runId, onSessionCreated: sessionId => deps.runStore.update(runId, { session_id: sessionId }), pendingInputs: pendingStore(deps), unattended: true,
     })
     deps.abortRegistry.delete(runId)
     deps.runStore.update(runId, {

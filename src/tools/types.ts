@@ -18,6 +18,7 @@ import type { MemoryCaptureService } from '../decisions/memory.js'
 import type { CompactionDecisionAdvisor } from '../decisions/compaction.js'
 import type { MemoryConflictStore } from '../memory/conflicts.js'
 import type { DecisionAdvisoryService } from '../decisions/advisories.js'
+import type { WorkflowMapObservationInput } from '../types.js'
 
 export type ToolEffect = 'read' | 'write' | 'outbound' | 'destructive'
 export type ToolProvenance = 'trusted' | 'untrusted'
@@ -49,6 +50,8 @@ export interface AgentLoopEvents {
   onCodeExecute?(id: string, code: string, language: string, data?: Record<string, unknown>, agentId?: string): Promise<ExecutionResult>
   onRenderUI?(surface: SurfaceSpec, agentId?: string): Promise<SurfaceRenderResult>
   onStage?(stage: Stage, intensity: Intensity, tier: Tier, model: string, state: 'start' | 'done' | 'escalated' | 'skipped', cost_usd?: number, agentId?: string): void
+  /** Internal workflow control-flow facts; the server assigns wire revisions. */
+  onWorkflowMap?(observation: WorkflowMapObservationInput): void
 }
 
 export interface Skill {

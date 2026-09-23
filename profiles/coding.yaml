@@ -18,6 +18,9 @@ workflow:
   enabled: true
   playbook: coding
   min_intensity: { recon: 1, review: 1 }
+  router:
+    candidates: [coding, generic]
+    catch_all: [generic]
   budget:
     max_usd_per_task: 2.00
     max_stage_retries: 2
@@ -30,6 +33,15 @@ workflow:
   knowledge:
     graph: true
     generalization_probe: true
+decision_layer:
+  enabled: true
+  allow_remote_state: true
+  api_key_env: TYPESAFE_API_KEY
+  model: jev-1.13.0
+  features:
+    request_routing: shadow
+    edge_checks: shadow
+    claim_check: shadow
 system_prompt: ./coding.md
 working_dir: $CWD
 artifact_dir: .harness/coding

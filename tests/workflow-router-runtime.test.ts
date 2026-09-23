@@ -52,11 +52,11 @@ function context(profileValue: any, session: any, decisionRuntime?: any): any {
   return { profile: profileValue, session, workingDir: process.cwd(), memory, skills: [], mcpEntries: [], events, openai: {}, delegateDepth: 0, decisionRuntime }
 }
 
-function goodRouteProvider() {
+function goodRouteProvider(preferred = 'coding') {
   return { evaluate: vi.fn(async (input: any) => {
     const answers: Record<string, any> = {}
     for (const key of Object.keys(input.questions)) {
-      if (key.startsWith('domain_')) answers[key] = { type: 'noul', noul: key === 'domain_coding' ? 0.9 : 0.1 }
+      if (key.startsWith('domain_')) answers[key] = { type: 'noul', noul: key === `domain_${preferred}` ? 0.9 : 0.1 }
     }
     answers.scale = { type: 'score', score: 1, legend: { '0': input.questions.scale.criteria[0], '1': input.questions.scale.criteria[1], '2': input.questions.scale.criteria[2], '3': input.questions.scale.criteria[3] }, probabilities: { '0': 0.1, '1': 0.6, '2': 0.2, '3': 0.1 }, confidence: 0.8 }
     answers.has_existing_work = { type: 'noul', noul: 0.4 }
@@ -105,6 +105,22 @@ describe('runWorkflow request routing hook (roadmap #31 phase 2, PT-077)', () =>
     rmSync(telemetryFilePath(), { force: true })
     const withoutRouting = await stageSequence(profile({ decision_layer: undefined }))
     expect(withRouting).toEqual(withoutRouting)
+  })
+
+  it('shadow route is advice only; fallback playbook attempts establish the actual path', async () => {
+    const p = profile()
+    const runtime = new DecisionRuntimeService({ provider: goodRouteProvider('data'), model: 'jev-test' })
+    const session = createSession(p.name, `router-map-shadow-${Math.random()}`)
+    const observations: any[] = []
+    const mapEvents = { ...events, onWorkflowMap: (value: any) => observations.push(value) }
+    const runContext = { ...context(p, session, runtime), events: mapEvents, runId: 'run-map-route-shadow' }
+    const { loop, calls } = fakeLoop()
+    await runWorkflow('fix the crash in app.ts', p, session, runContext, mapEvents, openaiFixed(), new AbortController().signal, { loop })
+
+    expect(observations.find(value => value.kind === 'advice')?.advice).toMatchObject({ kind: 'route', mode: 'shadow', applied: false, action: 'run' })
+    expect(calls.every(stage => stage === 'recon' || stage === 'plan' || stage === 'build' || stage === 'verify')).toBe(true)
+    expect(observations.filter(value => value.kind === 'attempt_started').every(value => value.attempt.playbook === 'coding')).toBe(true)
+    expect(observations.some(value => value.kind === 'transition' && value.transition.kind === 'reroute')).toBe(false)
   })
 
   it('enforce mode also only logs — same stage sequence and no runtime behavior change (phase 2 invariant)', async () => {

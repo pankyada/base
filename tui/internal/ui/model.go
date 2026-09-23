@@ -132,6 +132,12 @@ type Model struct {
 	activeToolID       string
 	activeToolStarted  time.Time
 	activeRunID        string
+
+	workflowMaps               map[string]*WorkflowMapState
+	workflowDetailsOpen        bool
+	workflowMapSelection       int
+	workflowMapRecoveryPending bool
+
 	noMotion           bool
 	noNotify           bool
 	notifyTTY          bool
@@ -226,6 +232,7 @@ func NewModel(sender MessageSender, profile, userID string, preferences prefs.Pr
 		taskRuns:           map[string]*TaskRun{},
 		workflowStages:     map[string]StageItem{},
 		stageCosts:         map[string]float64{},
+		workflowMaps:       map[string]*WorkflowMapState{},
 		modelInput:         modelInput,
 		paletteInput:       paletteInput,
 		keys:               NewKeyMap(),
@@ -415,6 +422,25 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		for _, loaded := range msg.Turns {
 			m.transcript.Turns = append(m.transcript.Turns, Turn{Role: loaded.Role, Text: loaded.Text})
 		}
+		// Persisted transcript rows do not carry run IDs. During a reconnect of
+		// the selected live run, associate its recovery projection only with
+		// the final agent row that represents that resumed turn.
+		if m.activeRunID != "" {
+			if state := m.workflowMaps[m.activeRunID]; state != nil && sameWorkflowScope(state.Scope, protocol.WorkflowMapScope{RunID: m.activeRunID, SessionID: m.sessionID, Profile: m.profile}) {
+				attached := false
+				for i := len(m.transcript.Turns) - 1; i >= 0; i-- {
+					if m.transcript.Turns[i].Role == "agent" {
+						m.transcript.Turns[i].RunID = m.activeRunID
+						m.transcript.Turns[i].WorkflowMap = state
+						attached = true
+						break
+					}
+				}
+				if !attached && (len(m.transcript.Turns) == 0 || m.transcript.Turns[len(m.transcript.Turns)-1].Role == "user") {
+					m.transcript.Turns = append(m.transcript.Turns, Turn{Role: "agent", RunID: m.activeRunID, WorkflowMap: state})
+				}
+			}
+		}
 		m.reflow()
 		return m, nil
 	case ws.ServerMsg:
@@ -584,6 +610,56 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.helpOpen {
 		m.helpOpen = false
+		m.reflow()
+		return m, nil
+	}
+	if m.workflowDetailsOpen {
+		switch msg.String() {
+		case "esc":
+			m.workflowDetailsOpen = false
+			m.reflow()
+			return m, nil
+		case "up", "k":
+			m.moveWorkflowMapSelection(-1)
+			m.reflow()
+			return m, nil
+		case "down", "j":
+			m.moveWorkflowMapSelection(1)
+			m.reflow()
+			return m, nil
+		case "pgup":
+			m.moveWorkflowMapSelection(-5)
+			m.reflow()
+			return m, nil
+		case "pgdown":
+			m.moveWorkflowMapSelection(5)
+			m.reflow()
+			return m, nil
+		case "home":
+			m.workflowMapSelection = 0
+			m.reflow()
+			return m, nil
+		case "end":
+			if state := m.currentWorkflowMap(); state != nil {
+				m.workflowMapSelection = maxInt(0, len(state.Attempts)-1)
+			}
+			m.reflow()
+			return m, nil
+		case "tab":
+			m.workflowDetailsOpen = false
+			m.openOverlay(m.prefs.OverlayTab)
+			m.reflow()
+			return m, nil
+		case "ctrl+g":
+			m.workflowDetailsOpen = false
+			m.reflow()
+			return m, nil
+		}
+		return m, nil // details own the keys until closed; never type behind the panel
+	}
+	if msg.String() == "ctrl+g" && m.currentWorkflowMap() != nil {
+		m.workflowDetailsOpen = true
+		m.workflowMapSelection = clampInt(m.workflowMapSelection, 0, len(m.currentWorkflowMap().Attempts)-1)
 		m.reflow()
 		return m, nil
 	}
@@ -2103,6 +2179,29 @@ func (m *Model) currentAgent() *Turn {
 	return &m.transcript.Turns[len(m.transcript.Turns)-1]
 }
 
+func (m *Model) currentWorkflowMap() *WorkflowMapState {
+	if m.activeRunID != "" {
+		if state := m.workflowMaps[m.activeRunID]; state != nil && state.Visible() {
+			return state
+		}
+	}
+	for i := len(m.transcript.Turns) - 1; i >= 0; i-- {
+		turn := &m.transcript.Turns[i]
+		if turn.Role == "agent" && turn.WorkflowMap != nil && turn.WorkflowMap.Visible() {
+			return turn.WorkflowMap
+		}
+	}
+	return nil
+}
+
+func (m *Model) moveWorkflowMapSelection(delta int) {
+	state := m.currentWorkflowMap()
+	if state == nil || len(state.Attempts) == 0 {
+		return
+	}
+	m.workflowMapSelection = clampInt(m.workflowMapSelection+delta, 0, len(state.Attempts)-1)
+}
+
 func (m *Model) stageItems() []StageItem {
 	if len(m.workflowStages) == 0 {
 		return nil
@@ -2120,7 +2219,19 @@ func (m *Model) stageItems() []StageItem {
 
 func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 	if msg.Type == "turn_start" {
+		if msg.RunID != m.activeRunID {
+			m.workflowDetailsOpen = false
+			m.workflowMapSelection = 0
+		}
 		m.activeRunID = msg.RunID
+		if msg.RunID != "" {
+			m.currentAgent().RunID = msg.RunID
+			m.currentAgent().WorkflowMap = m.workflowMaps[msg.RunID]
+		}
+		return
+	}
+	if msg.Type == "workflow_map" {
+		m.handleWorkflowMap(msg)
 		return
 	}
 	if msg.RunID != "" && msg.RunID != m.activeRunID {
@@ -2234,6 +2345,19 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 			if err := m.send(protocol.RuntimeSubscribe(msg.SessionID)); err != nil {
 				m.reportSendFailure("runtime subscribe", err)
 			}
+			if m.activeRunID != "" {
+				scope := protocol.WorkflowMapScope{RunID: m.activeRunID, SessionID: m.sessionID, Profile: m.profile}
+				var after *uint64
+				if state := m.workflowMaps[m.activeRunID]; state != nil && sameWorkflowScope(state.Scope, scope) && !state.awaitingSnapshot {
+					revision := state.Revision
+					after = &revision
+				}
+				if err := m.send(protocol.WorkflowMap(scope, after)); err != nil {
+					m.reportSendFailure("workflow map recovery", err)
+				} else {
+					m.workflowMapRecoveryPending = true
+				}
+			}
 		}
 		m.running = false
 		m.activeTool = ""
@@ -2345,6 +2469,7 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		m.activeTool = ""
 		m.activeToolID = ""
 		m.activeRunID = ""
+		m.workflowMapRecoveryPending = false
 		m.activeToolStarted = time.Time{}
 		agent := m.currentAgent()
 		if !agent.Started.IsZero() {
@@ -2426,6 +2551,65 @@ func (m *Model) handleServerMessage(msg protocol.ServerMessage) {
 		}
 		m.notices.Add(NoticeLevel(msg.Level), msg.Message, msg.Detail, "")
 	}
+}
+
+func (m *Model) handleWorkflowMap(msg protocol.ServerMessage) {
+	if (msg.WorkflowMapSnapshot == nil) == (msg.WorkflowMapObservation == nil) {
+		return // malformed or ambiguous additive frame
+	}
+	var scope protocol.WorkflowMapScope
+	if msg.WorkflowMapSnapshot != nil {
+		scope = msg.WorkflowMapSnapshot.Scope
+	} else {
+		scope = msg.WorkflowMapObservation.Scope
+	}
+	if scope.RunID == "" || scope.SessionID != m.sessionID || scope.Profile != m.profile || scope.RunID != m.activeRunID {
+		return
+	}
+	state := m.workflowMaps[scope.RunID]
+	if state != nil && !sameWorkflowScope(state.Scope, scope) {
+		return
+	}
+	if state == nil {
+		state = newWorkflowMapState(scope)
+		m.workflowMaps[scope.RunID] = state
+	}
+	accepted, refresh := false, false
+	if msg.WorkflowMapSnapshot != nil {
+		accepted = state.applySnapshot(*msg.WorkflowMapSnapshot)
+		refresh = accepted
+		if accepted {
+			m.workflowMapRecoveryPending = false
+		}
+	} else {
+		var gap bool
+		accepted, gap = state.applyObservation(*msg.WorkflowMapObservation)
+		refresh = accepted || gap
+		if gap && !m.workflowMapRecoveryPending {
+			if err := m.send(protocol.WorkflowMap(scope, nil)); err == nil {
+				m.workflowMapRecoveryPending = true
+			}
+		}
+		if accepted && !state.awaitingSnapshot {
+			m.workflowMapRecoveryPending = false
+		}
+	}
+	if !refresh {
+		return
+	}
+	for i := range m.transcript.Turns {
+		if m.transcript.Turns[i].Role == "agent" && m.transcript.Turns[i].RunID == scope.RunID {
+			m.transcript.Turns[i].WorkflowMap = state
+		}
+	}
+	if len(m.transcript.Turns) > 0 {
+		last := &m.transcript.Turns[len(m.transcript.Turns)-1]
+		if last.Role == "agent" && (last.RunID == "" || last.RunID == scope.RunID) {
+			last.RunID = scope.RunID
+			last.WorkflowMap = state
+		}
+	}
+	m.reflow()
 }
 
 func (m *Model) addServerError(message string) {
@@ -2610,6 +2794,9 @@ func (m Model) View() string {
 			body = undoPanelView(m.undoEntries, m.undoCursor, m.width, m.height)
 		}
 		return Center(background, tabsView(m.overlayTab, m.width, m.height, body), m.width, m.height)
+	}
+	if m.workflowDetailsOpen {
+		return Center(background, workflowMapDetailsView(m.currentWorkflowMap(), m.workflowMapSelection, m.width, m.height), m.width, m.height)
 	}
 	return background
 }

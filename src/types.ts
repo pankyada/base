@@ -198,6 +198,67 @@ export interface TelemetryEvent {
   claim_fallback?: string
 }
 
+export type WorkflowMapAvailability =
+  | { state: 'available' }
+  | { state: 'empty' }
+  | { state: 'partial'; reason: 'retention_overflow' | 'event_gap' }
+  | { state: 'unavailable'; reason: 'unsupported' | 'not_retained' | 'server_restarted' }
+
+export interface WorkflowMapScope { run_id: string; session_id: string; profile: string }
+export interface WorkflowMapAttempt {
+  attempt_id: string
+  pass_id: string
+  parent_pass_id?: string
+  playbook: string
+  stage: Stage
+  attempt: number
+  intensity: Intensity
+  tier: Tier
+  model: string
+  state: 'running' | 'done' | 'escalated' | 'skipped' | 'failed' | 'cancelled' | 'budget_exceeded'
+  cost_usd?: number
+  duration_ms?: number
+  contract_ok?: boolean
+  explore?: boolean
+}
+export interface WorkflowMapTransition {
+  transition_id: string
+  from_attempt_id?: string
+  to_attempt_id?: string
+  kind: 'start' | 'continue' | 'retry' | 'promote' | 'fail_back' | 'reroute' | 'skip' | 'claim_reentry' | 'terminal'
+}
+export interface WorkflowMapAdvice {
+  advice_id: string
+  kind: 'route' | 'edge' | 'claim_check'
+  mode: 'shadow' | 'enforce'
+  applied: boolean
+  action?: string
+  summary?: string
+}
+export interface WorkflowMapObservation {
+  event_id: string
+  revision: number
+  kind: 'pass_started' | 'attempt_started' | 'attempt_updated' | 'transition' | 'advice' | 'terminal'
+  scope: WorkflowMapScope
+  pass_id?: string
+  attempt?: WorkflowMapAttempt
+  transition?: WorkflowMapTransition
+  advice?: WorkflowMapAdvice
+  terminal?: 'completed' | 'failed' | 'cancelled' | 'budget_exceeded' | 'interrupted'
+}
+export type WorkflowMapObservationInput = Omit<WorkflowMapObservation, 'revision'>
+export interface WorkflowMapSnapshot {
+  version: 1
+  scope: WorkflowMapScope
+  revision: number
+  availability: WorkflowMapAvailability
+  terminal?: WorkflowMapObservation['terminal']
+  attempts: WorkflowMapAttempt[]
+  transitions: WorkflowMapTransition[]
+  advice: WorkflowMapAdvice[]
+  retained_from_revision?: number
+}
+
 export interface StageEvent extends Omit<TelemetryEvent, 'kind'> {
   kind: 'stage'
   stage: Stage
@@ -339,6 +400,7 @@ export type ClientMessage =
   | { type: 'board_post'; subject: string; body: string; to?: string[] }
   | { type: 'attach'; session_id: string; mode: 'observe' | 'control'; request_id?: string }
   | { type: 'runtime_subscribe'; session_id: string; after_seq?: number; request_id?: string }
+  | { type: 'workflow_map'; scope: WorkflowMapScope; after_revision?: number }
   | { type: 'mission_list' }
   | { type: 'mission_create'; outcome: string; constraints?: string[]; criteria: Array<{ id: string; description: string; kind: string; expected?: unknown }> }
   | { type: 'mission_human'; mission_id: string; criterion_id: string; revision: number }
@@ -376,6 +438,7 @@ export type ServerMessage =
   | { type: 'standup'; standup_id: string; phase: 'open' | 'answered' | 'closed'; subject: string; expected: string[]; answered: string[]; run_id?: string }
   | { type: 'fleet_snapshot'; frames: AgentFrame[]; states: { agent_id: string; tool?: string; since: number; state: 'running' | 'waiting_approval' | 'waiting_input'; spend_usd: number; tools: number }[]; board: BulletinPostWire[]; stage?: Stage; queue: { id: string; kind: 'tool_prompt' | 'input_request'; agent_id?: string }[]; feed?: string[]; run_id?: string }
   | { type: 'runtime'; snapshot: SessionRuntimeWire; request_id?: string }
+  | { type: 'workflow_map'; snapshot?: WorkflowMapSnapshot; observation?: WorkflowMapObservation }
   | { type: 'mission'; mission: MissionWire; receipts?: unknown[] }
   | { type: 'receipt'; receipt: unknown }
   | { type: 'challenge'; challenge: ChallengeWire }

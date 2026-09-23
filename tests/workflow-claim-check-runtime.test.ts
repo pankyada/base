@@ -129,9 +129,12 @@ describe('runWorkflow verify claim-check (roadmap #31 phase 5, PT-080)', () => {
     const shadowProfile = profile({ decision_layer: { model: 'jev-test', features: { claim_check: 'shadow', workflow_routing: 'disabled' } } })
     const runtime = new DecisionRuntimeService({ provider: claimsProvider({ sequence: [0.9] }), model: 'jev-test' })
     const session1 = createSession(shadowProfile.name, `claim-shadow-${Math.random()}`)
-    const events1 = baseEvents()
+    const observations: any[] = []
+    const events1 = baseEvents({ onWorkflowMap: (value: any) => observations.push(value) })
     const withShadow = fakeLoop()
-    await runWorkflow('bugfix', shadowProfile, session1, context(shadowProfile, session1, runtime, events1), events1, openaiFixed(), new AbortController().signal, { loop: withShadow.loop })
+    const shadowContext = context(shadowProfile, session1, runtime, events1)
+    shadowContext.runId = 'run-map-claim-shadow'
+    await runWorkflow('bugfix', shadowProfile, session1, shadowContext, events1, openaiFixed(), new AbortController().signal, { loop: withShadow.loop })
 
     const disabledProfile = profile({ decision_layer: undefined })
     const session2 = createSession(disabledProfile.name, `claim-disabled-parity-${Math.random()}`)
@@ -145,6 +148,8 @@ describe('runWorkflow verify claim-check (roadmap #31 phase 5, PT-080)', () => {
     expect(claimEvents.length).toBe(1)
     expect(claimEvents[0].claim_verdict).toBe('pass')
     expect(claimEvents[0].claim_applied).toBe(false)
+    expect(observations.some(value => value.kind === 'advice' && value.advice.kind === 'claim_check' && value.advice.mode === 'shadow' && value.advice.action === 'pass' && value.advice.applied === false)).toBe(true)
+    expect(observations.some(value => value.kind === 'transition' && value.transition.kind === 'claim_reentry')).toBe(false)
   })
 
   it('enforce, supported claim: proceeds to accepted, one claim_check event, not applied', async () => {
@@ -172,9 +177,12 @@ describe('runWorkflow verify claim-check (roadmap #31 phase 5, PT-080)', () => {
     const p = profile()
     const runtime = new DecisionRuntimeService({ provider: claimsProvider({ sequence: [0.1, 0.9] }), model: 'jev-test' })
     const session = createSession(p.name, `claim-retry-${Math.random()}`)
-    const events = baseEvents()
+    const observations: any[] = []
+    const events = baseEvents({ onWorkflowMap: (value: any) => observations.push(value) })
     const { loop, calls } = fakeLoop()
-    await runWorkflow('bugfix', p, session, context(p, session, runtime, events), events, openaiFixed(), new AbortController().signal, { loop })
+    const runContext = context(p, session, runtime, events)
+    runContext.runId = 'run-map-claim-reentry'
+    await runWorkflow('bugfix', p, session, runContext, events, openaiFixed(), new AbortController().signal, { loop })
 
     const stages = stagesOf(calls)
     expect(stages.filter(s => s === 'build').length).toBe(2)
@@ -187,6 +195,8 @@ describe('runWorkflow verify claim-check (roadmap #31 phase 5, PT-080)', () => {
     expect(claimEvents[0].claim_applied).toBe(true)
     expect(claimEvents[1].claim_verdict).toBe('pass')
     expect(claimEvents[1].claim_applied).toBe(false)
+    expect(observations.some(value => value.kind === 'advice' && value.advice.kind === 'claim_check' && value.advice.action === 'retry' && value.advice.applied === true)).toBe(true)
+    expect(observations.some(value => value.kind === 'transition' && value.transition.kind === 'claim_reentry')).toBe(true)
 
     const outcomeEvents = readTelemetryLines().filter(e => e.kind === 'outcome')
     const accepted = outcomeEvents.find(e => e.verdict === 'accepted')

@@ -1,6 +1,6 @@
 ---
 name: writing
-description: Structured writing workflow
+description: Use to draft, revise, or structure prose and documents for a defined audience, including changelogs and correspondence. Not for software changes, dataset analysis, security assessments, or work where source research is the main task.
 stages: [recon, plan, design, build, verify, review]
 task_classes: [draft, changelog, email, docs]
 defaults:

@@ -18,8 +18,10 @@ import type {
   MissionWire,
   ChallengeWire,
   UsageMetadataWire,
+  WorkflowMapScope,
 } from './protocol'
 import type { Artifact, ExecutionResult, InputRequestKind, UIMessage, WorkspaceTab } from './types'
+import { applyWorkflowMapFrame, type WorkflowMapClientState } from './workflowMap'
 
 export interface StageView {
   stage: Stage
@@ -39,6 +41,7 @@ export interface NoticeView {
 export interface RunLane {
   messages: UIMessage[]
   stages: StageView[]
+  workflowMap?: WorkflowMapClientState
   stats?: { tokensIn: number; tokensOut: number; costUsd: number }
   status?: 'running' | 'done' | 'error' | 'budget_exceeded' | 'cancelled' | 'failed'
 }
@@ -152,10 +155,18 @@ function withLane(state: State, runId: string | undefined, update: (current: Run
   return { ...state, runs: { ...(state.runs ?? {}), [runId]: update(current) } }
 }
 
-function appendToken(messages: UIMessage[], content: string): UIMessage[] {
+function appendToken(messages: UIMessage[], content: string, runId?: string): UIMessage[] {
   const last = messages.at(-1)
-  if (last?.role === 'agent') return [...messages.slice(0, -1), { ...last, content: `${last.content ?? ''}${content}` }]
-  return [...messages, { id: id(), role: 'agent', content }]
+  if (last?.role === 'agent') return [...messages.slice(0, -1), { ...last, runId: runId ?? last.runId, content: `${last.content ?? ''}${content}` }]
+  return [...messages, { id: id(), role: 'agent', content, runId }]
+}
+
+function linkRunToPendingTurn(messages: UIMessage[], runId: string): UIMessage[] {
+  const index = messages.findLastIndex(message => message.role === 'user' && !message.runId)
+  if (index < 0) return messages
+  const next = [...messages]
+  next[index] = { ...next[index], runId }
+  return next
 }
 
 function applyMessageToLane(state: State, runId: string | undefined, update: (messages: UIMessage[]) => UIMessage[]): State {
@@ -195,10 +206,11 @@ export function reducer(state: State, action: Action): State {
       switch (msg.type) {
         case 'turn_start': {
           const current = lane(state, msg.run_id)
-          return { ...state, busy: true, activeRunId: msg.run_id, runs: { ...(state.runs ?? {}), [msg.run_id]: { ...current, status: 'running' } } }
+          const messages = linkRunToPendingTurn(state.messages, msg.run_id)
+          return { ...state, messages, busy: true, activeRunId: msg.run_id, runs: { ...(state.runs ?? {}), [msg.run_id]: { ...current, status: 'running' } } }
         }
-        case 'token': return applyMessageToLane(state, msg.run_id, messages => appendToken(messages, msg.content))
-        case 'tool_start': return applyMessageToLane(state, msg.run_id, messages => [...messages, { id: id(), role: 'tool-call', toolCallID: msg.id, name: msg.name, input: msg.input, status: 'running' }])
+        case 'token': return applyMessageToLane(state, msg.run_id, messages => appendToken(messages, msg.content, msg.run_id))
+        case 'tool_start': return applyMessageToLane(state, msg.run_id, messages => [...messages, { id: id(), role: 'tool-call', toolCallID: msg.id, name: msg.name, input: msg.input, status: 'running', runId: msg.run_id }])
         case 'tool_parked': return applyMessageToLane(state, msg.run_id, messages => {
           const next = [...messages]
           const index = next.findLastIndex(item => item.role === 'tool-call' && item.toolCallID === msg.id && item.status === 'running')
@@ -257,6 +269,14 @@ export function reducer(state: State, action: Action): State {
           const view: StageView = { stage: msg.stage, intensity: msg.intensity, tier: msg.tier, model: msg.model, state: msg.state, costUsd: msg.cost_usd }
           const next = { ...state, stages: [...(state.stages ?? []), view] }
           return withLane(next, msg.run_id, current => ({ ...current, stages: [...current.stages, view] }))
+        }
+        case 'workflow_map': {
+          const scope: WorkflowMapScope | undefined = msg.snapshot?.scope ?? msg.observation?.scope
+          if (!scope || scope.session_id !== state.sessionId || scope.profile !== state.profile) return state
+          const current = lane(state, scope.run_id)
+          const result = applyWorkflowMapFrame(current.workflowMap, msg, scope)
+          if (!result.state || result.state === current.workflowMap) return state
+          return withLane(state, scope.run_id, laneState => ({ ...laneState, workflowMap: result.state }))
         }
         case 'plan': return { ...state, plan: msg.content }
         case 'pending': return { ...state, pending: msg.pending }

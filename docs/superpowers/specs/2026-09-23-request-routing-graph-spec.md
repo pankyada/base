@@ -76,6 +76,7 @@ workflow:
   playbook: generic            # fallback/primary when router is off or unsure
   router:
     candidates: [coding, data, writing, research, generic]
+    catch_all: [generic]       # optional; default [] preserves existing selection
     domain_threshold: 0.5      # Noul p above which a playbook is "in"
     ask_threshold: 0.7         # ambiguity Noul p above which we clarify (0.6 over-asked in live eval)
     max_reroutes: 1
@@ -86,6 +87,8 @@ workflow:
       medium:  { plan: 2, design: 1, verify: 2, review: 1 }
       large:   { plan: 3, design: 2, verify: 2, review: 2 }
 ```
+
+`router.catch_all` names catch-all playbooks among the configured candidates; omitted or `[]` leaves domain selection unchanged. It also excludes catch-all playbooks as reroute drift targets in §5.4 while a specific (non-catch-all) playbook is active.
 
 Absent `router` ⇒ router disabled regardless of feature modes. Presets merge *under* existing `min_intensity`/`max_intensity` clamps (`clampIntensity`).
 
@@ -129,7 +132,7 @@ type RouteDecision =
 Rules, in order:
 1. `ambiguous > ask_threshold` and clarifications remaining ⇒ `ask`.
 2. `continues_previous > 0.5` and session route exists ⇒ reuse session route's primary playbook.
-3. Playbooks with `domain > domain_threshold`, sorted by p desc. None ⇒ `[workflow.playbook]`.
+3. Select configured candidates with `domain >` their effective threshold: the adaptive per-playbook `domainThresholds[name]` override when present, otherwise `domain_threshold`. If any qualifying candidate is outside `router.catch_all`, remove qualifying catch-all candidates before sorting by p descending and capping at two. If only catch-all candidates qualify, keep them; if none qualify, use `[workflow.playbook]`. With `catch_all` omitted or empty, preserve existing selection. This rule does not alter clarification, session-route reuse, fallback, or scale selection. For reroute drift selection, exclude catch-all targets while a specific (non-catch-all) playbook is active.
 4. `scale` = argmax level; `intensityFloor` = `scale_presets[scale]` with recon forced ≥ 1.
 5. On a near-tie between scale levels (top two within 0.15), choose the **larger** (misroute cost is asymmetric: under-planning costs more than over-planning).
 

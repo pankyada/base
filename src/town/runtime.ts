@@ -177,6 +177,7 @@ export function createTownRuntime(options: TownRuntimeOptions): TownRuntimeStart
       userId: input.user,
       userMessage: input.task.prompt,
       runId: input.runId,
+      onSessionCreated: (sessionId: string) => options.runStore.update(input.runId, { session_id: sessionId }),
       events: eventsFor(input.user, input.task, input.store, profile, input.runId, input.sessionId),
       channels: channels(profile),
       pendingInputs: options.pendingStore,

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createReadApiHandler, decodeCursor, encodeCursor } from '../src/server/read-api.js'
 import { createRestHandler } from '../src/server/rest.js'
 import { DatasetStore } from '../src/datasets/store.js'
+import { aggregateRouting } from '../src/analysis/routing.js'
 
 const profile = { name: 'test', artifact_dir: '/tmp/test', triggers: { cron: '0 8 * * *', watch: [{ name: 'watch', path: '/tmp' }], poll: [{ name: 'poll', every: '5m', probe: { tool: 'Read' }, cursor_path: 'id' }] } } as any
 
@@ -90,6 +91,47 @@ describe('read API routes', () => {
 
   it('round-trips opaque cursors', () => {
     expect(decodeCursor(encodeCursor({ file: 'a.jsonl', offset: 42 }))).toEqual({ file: 'a.jsonl', offset: 42 })
+  })
+
+  it('keeps legacy routing cells and adds server-wide filtered graph scope', async () => {
+    const source = [
+      { ts: '2026-09-20T12:00:00Z', session: 's-a', profile: 'alpha', kind: 'route', route_mode: 'shadow', route_decision_kind: 'run', route_playbooks: ['coding'], route_applied: false },
+      { ts: '2026-09-20T12:00:00Z', session: 's-a', profile: 'alpha', kind: 'stage', task_id: 't-a', stage_id: 'a', stage: 'build', tier: 'cheap', task_class: 'bugfix', blast_radius: 'module', state: 'done', cost_usd: 0.1 },
+      { ts: '2026-09-22T12:00:00Z', session: 's-b', profile: 'beta', kind: 'route', route_mode: 'enforce', route_decision_kind: 'run', route_playbooks: ['data'], route_applied: true },
+      { ts: '2026-09-23T12:00:00Z', session: 's-a', profile: 'alpha', kind: 'route', route_mode: 'shadow', route_decision_kind: 'run', route_playbooks: ['research'], route_applied: false },
+    ] as any[]
+    const profiles = new Map<string, any>([
+      ['alpha', { ...profile, name: 'alpha', workflow: { router: { domain_threshold: 0.4, ask_threshold: 0.7 } } }],
+      ['beta', { ...profile, name: 'beta' }],
+    ])
+    const handler = createReadApiHandler({ defaultProfile: profile, profiles, queryEvents: () => source as any })
+    const routingServer = createServer((req, res) => { void handler(req, res) })
+    await new Promise<void>(resolve => routingServer.listen(0, resolve))
+    const url = `http://127.0.0.1:${(routingServer.address() as AddressInfo).port}/stats/routing?profile=alpha&since=2026-09-20T00:00:00Z&until=2026-09-21T00:00:00Z`
+    try {
+      const response = await fetch(url)
+      const result = await response.json() as any
+      const filtered = source.slice(0, 2)
+      expect(response.status).toBe(200)
+      expect(result.cells).toEqual(aggregateRouting(filtered as any).cells)
+      expect(result).toMatchObject({
+        routeGraph: { hasData: true, playbooks: { coding: { routed: 1, applied: 0 } } },
+        scope: { server_wide: true, profile: 'alpha', since: '2026-09-20T00:00:00Z', until: '2026-09-21T00:00:00Z', sample_count: 2 },
+      })
+      expect(result.routeGraph.playbooks).not.toHaveProperty('data')
+    } finally { await new Promise<void>(resolve => routingServer.close(() => resolve())) }
+  })
+
+  it('returns empty legacy and graph shapes with insufficient suggestions', async () => {
+    const handler = createReadApiHandler({ defaultProfile: profile, queryEvents: () => [] })
+    const routingServer = createServer((req, res) => { void handler(req, res) })
+    await new Promise<void>(resolve => routingServer.listen(0, resolve))
+    try {
+      const result = await (await fetch(`http://127.0.0.1:${(routingServer.address() as AddressInfo).port}/stats/routing`)).json() as any
+      expect(result).toMatchObject({ cells: {}, routeGraph: { hasData: false }, scope: { server_wide: true, sample_count: 0 } })
+      expect(result.suggestions.global_domain_threshold.kind).toBe('insufficient')
+      expect(result.suggestions.ask_threshold.kind).toBe('insufficient')
+    } finally { await new Promise<void>(resolve => routingServer.close(() => resolve())) }
   })
 
   it('exposes channel binding status without channel configuration secrets', async () => {

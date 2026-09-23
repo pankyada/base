@@ -56,6 +56,7 @@ pointer to what replaced them.
 | [25](#adr-25) | Stratify, explore, and shadow-run to beat selection bias | ✅ | routing |
 | [26](#adr-26) | Artifact-based stage handoff, never transcript-based | ✅ | routing |
 | [27](#adr-27) | Recon is a hard gate | ✅ | routing |
+| [89](#adr-89) | Execution maps are bounded live observations, not inferred history | ✅ | routing |
 | [28](#adr-28) | Harness/product boundary rule, enforced in CI | ✅ | boundary |
 | [29](#adr-29) | Channels are transports, not integrations | 📋 | channels |
 | [30](#adr-30) | Opaque identity + round-tripped `correlation_id` | 📋 | channels |
@@ -1313,3 +1314,27 @@ every Jev path falls back to today's behavior; each phase ships shadow first.
 Multi-domain runs sequentially in v1. Enforce mode is not recommended until live
 evidence (PT-082). Spec: `superpowers/specs/2026-09-23-request-routing-graph-spec.md`.
 
+### ADR-89
+
+**Execution maps are bounded live observations, not inferred history** — ✅
+
+*Context:* A workflow map must show the path a runner actually took. Existing
+`Session.workflow_route` can describe a shadow recommendation, WebSocket
+`stage` frames omit task/stage-attempt identity, and telemetry is aggregate
+evidence rather than an ordered run ledger. Reconstructing a map from any of
+them would turn advice or incomplete signals into false execution history.
+
+*Decision:* The runner emits additive, identity-bearing workflow observations at
+the control-flow sites that execute or close a pass/attempt/transition. A
+server-owned in-process projection accepts only its exact
+`run_id`/`session_id`/`profile` scope, uses monotonic revisions and event IDs,
+and retains only the finite PT-084 limits. It may replay while the process owns
+that projection; after restart it reports map history unavailable. Snapshots
+and advice expose truncation, gaps, terminal/interrupted state, and
+shadow/applied distinction explicitly. Routing aggregates remain separate,
+scoped read-only statistics.
+
+*Consequences:* The map cannot claim a path for flat-loop work, old runs, old
+servers, or restarted processes. It adds no durable map store, routing policy,
+execution engine, provider call, or client authority. PT-085 implements the
+contract in `superpowers/specs/2026-09-23-workflow-map-spec.md`.

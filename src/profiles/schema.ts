@@ -253,6 +253,7 @@ const WorkflowSchema = z.object({
   // docs/superpowers/specs/2026-09-23-request-routing-graph-spec.md §3.
   router: z.object({
     candidates: z.array(z.string()).optional(),
+    catch_all: z.array(z.string()).default([]),
     domain_threshold: z.number().min(0).max(1).default(0.5),
     ask_threshold: z.number().min(0).max(1).default(0.7), // 0.7 per PT-082 live eval (0.6 over-asked)
     max_reroutes: z.number().int().min(0).default(1),

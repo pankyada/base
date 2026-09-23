@@ -20,7 +20,7 @@ func helpView(keys KeyMap, width, height int) string {
 		StAccentB.Render("◆ HARNESS KEYS"), "",
 		sectionHeader("composer", inner), helpBinding(keys.Send), helpBinding(keys.Newline), helpBinding(keys.HistoryUp), helpBinding(keys.HistoryDown), helpBinding(keys.Cancel),
 		"",
-		sectionHeader("transcript", inner), helpBinding(keys.PageUp), helpBinding(keys.PageDown), helpBinding(keys.HalfPageUp), helpBinding(keys.HalfPageDown), helpBinding(keys.ExpandAll), "end  bottom",
+		sectionHeader("transcript", inner), helpBinding(keys.PageUp), helpBinding(keys.PageDown), helpBinding(keys.HalfPageUp), helpBinding(keys.HalfPageDown), helpBinding(keys.ExpandAll), helpBinding(keys.WorkflowMap), "end  bottom",
 		"",
 		sectionHeader("panels", inner), helpBinding(keys.Overlay), helpBinding(keys.Rail), helpBinding(keys.AcceptCompletion), helpBinding(keys.Palette),
 		"",

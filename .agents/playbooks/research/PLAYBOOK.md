@@ -1,6 +1,6 @@
 ---
 name: research
-description: Evidence-first research workflow
+description: Use to answer questions through source gathering, evidence assessment, and synthesis with checked claims. Not for implementing software, analyzing a supplied dataset, security audits, or routine document drafting.
 stages: [recon, plan, design, build, verify, review]
 task_classes: [question, literature, synthesis]
 defaults:

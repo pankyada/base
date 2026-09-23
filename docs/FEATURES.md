@@ -30,7 +30,7 @@ Purpose: one runtime and set of contracts every client can understand and depend
 | CORE-08 | Safety and human control | ACLs, approval modes, provenance, budgets, deferred asks, rehearsal, cancellation, undo and audit | Existing; client operational handling partial |
 | CORE-09 | Multi-agent execution | Delegation, agent-as-tool, profiles, concurrent runs, handoffs and collaboration contracts for agents sharing or separating workspaces | Existing delegation foundation; new Orchestrator requirements proposed |
 | CORE-10 | Background work and channels | Schedules, watch/poll, webhooks, durable runs, inbound/outbound channels and voice interfaces | Existing; multi-profile/audio acceptance partial |
-| CORE-11 | Evidence, artifacts and observability | Usage/cost, telemetry, missions/receipts, artifact lineage/refresh, replay, evaluations and correction gates | Existing foundations; live acceptance gaps |
+| CORE-11 | Evidence, artifacts and observability | Usage/cost, telemetry, missions/receipts, artifact lineage/refresh, replay, evaluations and correction gates | PT-085 adds bounded observed workflow maps and scoped routing aggregates with local Core/Web/TUI validation; live routing-quality acceptance remains PT-082 |
 | CORE-12 | Installation and compatibility | CLI, init/doctor, platform packaging, migration/version evidence, documentation and extension boundaries | Existing; platform/delivery acceptance partial |
 
 Authentication belongs here conceptually. Current repository instruction excludes adding product authentication/authorization; a future account/RBAC project needs explicit scope revision. Provider OAuth and existing transport safeguards remain within current scope.
@@ -43,7 +43,7 @@ Authentication belongs here conceptually. Current repository instruction exclude
 | TUI-02 | Coding workspace | File/context attachments, local shell, diffs, project/git/task context | Interactive execution and project context use the TUI launch CWD (PT-047); installed-binary acceptance PT-013 |
 | TUI-03 | Human decisions | Approvals, input requests, deferred inbox, plans, rehearsal and undo | Existing |
 | TUI-04 | Session and runtime controls | Sessions/projects, profiles, provider/model/effort selection, memory and skills | Session CWD survives profile switch and is restored on resume (PT-047); effort controls planned and installed acceptance PT-013 |
-| TUI-05 | Terminal interaction and health | Keyboard palette, focus/navigation, themes/density, cost/context, reconnect and setup handoff | Existing; recovery/platform acceptance partial |
+| TUI-05 | Terminal interaction and health | Keyboard palette, focus/navigation, themes/density, cost/context, reconnect and setup handoff | Conditional workflow map/details delivered in PT-085 with Go and real-PTY checks; recovery/platform acceptance remains partial |
 
 ## 3. Web Chat — coding and general agentic work
 
@@ -52,7 +52,7 @@ Authentication belongs here conceptually. Current repository instruction exclude
 | CHAT-01 | Reliable agent conversation | Streaming, input/context attachments, interruption, unsent/error recovery and transcript history | Partial |
 | CHAT-02 | Coding and task workspace | Tool timeline, file/diff/terminal output, plans/todos, artifacts and project context | Existing foundation; complete coding journey needs acceptance |
 | CHAT-03 | Session and agent configuration | Project/session navigation, profile/model/effort controls, memory/skills discovery | Partial; effort planned |
-| CHAT-04 | Review and control | Approvals, questions, rehearsal, undo, evidence and outcome review | Existing foundation; reliability gaps |
+| CHAT-04 | Review and control | Approvals, questions, rehearsal, undo, evidence and outcome review | Conditional per-turn observed workflow map delivered in PT-085 with deterministic browser checks; broader live acceptance remains |
 | CHAT-05 | Workspace continuity | Reload/reconnect, identity consistency, persistent preferences, export and responsive/accessibility behavior | Partial |
 
 ## 4. Analyst Workbench — data to verified output
@@ -71,7 +71,7 @@ Authentication belongs here conceptually. Current repository instruction exclude
 |---|---|---|---|
 | OPS-01 | Fleet/run supervision | Servers/profiles/runs, lifecycle, blocked/waiting/failed states, cancellation and recovery | Partial; fleet breadth proposed |
 | OPS-02 | Human-action centre | Durable approval queue, deferred asks, expiration, acknowledgments, undo and escalations | Partial |
-| OPS-03 | Cost, performance and budgets | Spend/model mix, tool outcomes/latency, workflow effectiveness, budget limits and alerts | Partial |
+| OPS-03 | Cost, performance and budgets | Spend/model mix, tool outcomes/latency, workflow effectiveness, budget limits and alerts | PT-085 adds selected-run workflow map plus separate server-wide profile/time routing aggregates and suggestions; broader live acceptance remains partial |
 | OPS-04 | Audit and evidence | Provenance/taint review, action history, missions/receipts, replay/evaluation entry points | Existing foundation; integrated operator workflow partial |
 | OPS-05 | Configuration and service health | Profiles/providers, skills, channels, triggers, connection/health diagnostics and configuration visibility | Partial; administration expansion proposed |
 

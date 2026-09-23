@@ -82,6 +82,27 @@ describe('decideRoute (roadmap #31 phase 2, spec §5.2)', () => {
     }
   })
 
+  it('empty catch_all preserves the existing route decision exactly', () => {
+    const input = signals({ domain: { coding: 0.9, generic: 0.8 }, scale: { trivial: 0, small: 1, medium: 0, large: 0 } })
+    expect(decideRoute(input, config, 'generic', 1)).toEqual(
+      decideRoute(input, { ...config, catch_all: [] }, 'generic', 1),
+    )
+  })
+
+  it('rule 3: qualifying specific playbook removes qualifying catch-all candidates', () => {
+    const withCatchAll: RouterConfig = { ...config, catch_all: ['generic'] }
+    const decision = decideRoute(signals({ domain: { generic: 0.99, coding: 0.7, data: 0.65 }, scale: { trivial: 0, small: 1, medium: 0, large: 0 } }), withCatchAll, 'generic', 1)
+    expect(decision.kind).toBe('run')
+    if (decision.kind === 'run') expect(decision.playbooks).toEqual(['coding', 'data'])
+  })
+
+  it('rule 3: catch-all remains eligible when no specific candidate clears its own threshold', () => {
+    const withCatchAll: RouterConfig = { ...config, catch_all: ['generic'], domainThresholds: { coding: 0.8 } }
+    const decision = decideRoute(signals({ domain: { generic: 0.9, coding: 0.7 }, scale: { trivial: 0, small: 1, medium: 0, large: 0 } }), withCatchAll, 'generic', 1)
+    expect(decision.kind).toBe('run')
+    if (decision.kind === 'run') expect(decision.playbooks).toEqual(['generic'])
+  })
+
   it('rule 4: scale is the argmax level', () => {
     const decision = decideRoute(signals({ domain: { coding: 0.9 }, scale: { trivial: 0.1, small: 0.1, medium: 0.7, large: 0.1 } }), config, 'generic', 1)
     expect(decision.kind).toBe('run')

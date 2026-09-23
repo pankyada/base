@@ -22,6 +22,8 @@ export interface WorkspaceTab {
 
 export interface UIMessage {
   id: string
+  /** Server-owned run link used to attach execution evidence to the originating turn. */
+  runId?: string
   role: 'user' | 'agent' | 'tool-prompt' | 'tool-call'
   content?: string
   name?: string

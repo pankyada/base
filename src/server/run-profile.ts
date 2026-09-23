@@ -15,6 +15,7 @@ import { buildSystemPrompt, refreshMemoryPrompt, restoreBaselineMemoryPrompt } f
 import { loadAgentTools } from '../agents/loader.js'
 import { runAgentLoop } from '../loop/agent-loop.js'
 import { runWorkflow } from '../workflow/runner.js'
+import { workflowMapProjection } from '../workflow/map.js'
 import { recordUsage } from '../usage/ledger.js'
 import type { UsageDelta } from '../usage/ledger.js'
 import { sanitizeUserId } from '../session/user-paths.js'
@@ -54,6 +55,8 @@ export interface RunProfileOptions {
   signal?: AbortSignal
   channels?: ChannelRuntime
   runId?: string
+  /** Called once the exact run session identity is known, before workflow execution starts. */
+  onSessionCreated?: (sessionId: string) => void
   pendingInputs?: PendingStore
   session?: Session
   resume?: { toolCallId: string; answer: string }
@@ -101,6 +104,19 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
   const attemptBudget = new SharedAttemptBudget(profile.model.auth === 'codex_oauth' ? profile.model.codex.max_model_calls_per_run : 1024)
   const mcpEntries = await createMcpClients(profile)
   const session = opts.session ?? createSession(profile.name, user)
+  try { opts.onSessionCreated?.(session.id) } catch { /* observers cannot affect workflow execution */ }
+  const workflowMapScope = opts.runId ? { run_id: opts.runId, session_id: session.id, profile: profile.name } : undefined
+  if (workflowMapScope) workflowMapProjection.begin(workflowMapScope)
+  const runEvents: AgentLoopEvents = workflowMapScope ? {
+    ...events,
+    onWorkflowMap: input => {
+      // Scope comes from the run-profile owner, never from runner payload data.
+      const accepted = workflowMapProjection.accept({ ...input, scope: workflowMapScope })
+      if (accepted) {
+        try { events.onWorkflowMap?.({ ...input, scope: workflowMapScope }) } catch { /* observer failures cannot alter execution */ }
+      }
+    },
+  } : events
   const usageBefore = { ...session.usage }
 
   try {
@@ -162,7 +178,7 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
 
     const context: ToolContext = {
       profile, session, workingDir: profile.working_dir, memory, skills, mcpEntries,
-      events, openai, provider, attemptBudget, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2, channels,
+      events: runEvents, openai, provider, attemptBudget, signal, delegateDepth: 0, agentTools, maxDepth: profile.max_depth ?? 2, channels,
       pendingInputs: opts.pendingInputs, runId: opts.runId, unattended: opts.unattended, budget: opts.budget, taintSources: opts.initialTaintSources,
       agentFrame: opts.agentFrame ?? createRootFrame(profile.name, session.id),
       protocolVersion: opts.protocolVersion,
@@ -181,12 +197,16 @@ export async function runProfileOnce(opts: RunProfileOptions): Promise<RunProfil
     context.provider = bindRunProvider(provider, context)
 
     if (profile.workflow?.enabled) {
-      await runWorkflow(userMessage, profile, session, context, events, openai as any, signal)
+      await runWorkflow(userMessage, profile, session, context, runEvents, openai as any, signal)
     } else {
-      await runAgentLoop(userMessage, profile, session, context, events, openai, signal, {
+      await runAgentLoop(userMessage, profile, session, context, runEvents, openai, signal, {
         appendUser: opts.appendUser ?? true,
         resumeApproval: opts.resumeApproval,
       })
+    }
+
+    if (workflowMapScope && workflowMapProjection.snapshot(workflowMapScope)?.revision === 0) {
+      workflowMapProjection.completeEmpty(workflowMapScope)
     }
 
     // AgentLoop reports interruption through its session-end callback and

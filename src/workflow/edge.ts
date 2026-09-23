@@ -63,8 +63,9 @@ export function resolveEdgeAction(judgment: EdgeJudgment, opts: { rerouteAllowed
   return { kind: 'done' }
 }
 
-export function rerouteAllowed(opts: { routerConfigured: boolean; requestRoutingMode?: 'disabled' | 'shadow' | 'enforce'; maxDriftP: number; domainThreshold: number; reroutesUsed: number; maxReroutes: number }): boolean {
-  return opts.routerConfigured && opts.requestRoutingMode === 'enforce' && opts.maxDriftP > opts.domainThreshold && opts.reroutesUsed < opts.maxReroutes
+export function rerouteAllowed(opts: { routerConfigured: boolean; requestRoutingMode?: 'disabled' | 'shadow' | 'enforce'; target?: string; currentPlaybook?: string; catchAll?: string[]; maxDriftP: number; domainThreshold: number; reroutesUsed: number; maxReroutes: number }): boolean {
+  const catchAllDrift = opts.target !== undefined && opts.catchAll?.includes(opts.target) && !opts.catchAll.includes(opts.currentPlaybook ?? '')
+  return opts.routerConfigured && opts.requestRoutingMode === 'enforce' && !catchAllDrift && opts.maxDriftP > opts.domainThreshold && opts.reroutesUsed < opts.maxReroutes
 }
 
 /**

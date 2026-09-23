@@ -49,7 +49,8 @@ import { listModels, validateModelEffort } from '../models/registry.js'
 import { project } from '../context/projection.js'
 import { contextWindowFor, estimateTokens } from '../context/estimator.js'
 import type { AgentLoopEvents, ToolContext, ToolDefinition } from '../tools/types.js'
-import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type EffortCapability, type InputRequestKind, type UsageMetadataWire } from '../types.js'
+import { ClientMessage, ServerMessage, PROTOCOL_VERSION, type EffortCapability, type InputRequestKind, type UsageMetadataWire, type WorkflowMapScope, type WorkflowMapObservationInput } from '../types.js'
+import { workflowMapProjection } from '../workflow/map.js'
 import { handleProjectMessage } from './project-handlers.js'
 import { listUndoEntries, undoNotice } from './undo-handlers.js'
 import { ChannelRuntime } from '../channels/runtime.js'
@@ -146,6 +147,8 @@ async function main() {
   const channels = channelsByProfile.get(profile.name)!
   const originPolicy = loadOriginPolicy()
   const runStore = new RunStore()
+  const workflowMaps = workflowMapProjection
+  const serverStartedAt = Date.now()
   const pendingStore = new PendingStore()
   const abortRegistry = new Map<string, AbortController>()
   const wireInbound = (runtime: ChannelRuntime) => runtime.onInbound(async route => {
@@ -180,7 +183,7 @@ async function main() {
       onSessionEnd: () => {}, onStats: () => {},
     }
     try {
-      const result = await runProfileOnce({ profile: routeProfile, userId: route.binding.user, userMessage: route.message.text, events, channels: runtime, runId, pendingInputs: pendingStore, signal: abort.signal, unattended: true, initialTaintSources: route.trusted ? undefined : [`unpaired channel: ${route.channel}`] })
+      const result = await runProfileOnce({ profile: routeProfile, userId: route.binding.user, userMessage: route.message.text, events, channels: runtime, runId, onSessionCreated: sessionId => runStore.update(runId, { session_id: sessionId }), pendingInputs: pendingStore, signal: abort.signal, unattended: true, initialTaintSources: route.trusted ? undefined : [`unpaired channel: ${route.channel}`] })
       abortRegistry.delete(runId)
       runStore.update(runId, { status: 'completed', session_id: result.session.id, finished_at: new Date().toISOString() })
       if (result.finalText) await runtime.send(route.binding.user, route.channel, { text: result.finalText })
@@ -233,6 +236,8 @@ async function main() {
       events: { onToken: () => {}, onToolStart: () => {}, onToolEnd: () => {}, onToolPrompt: async () => false, onSessionEnd: () => {}, onStats: () => {} },
       channels: channelsByProfile.get(stalledProfile.name),
       pendingInputs: pendingStore,
+      runId: run.id,
+      onSessionCreated: sessionId => runStore.update(run.id, { session_id: sessionId }),
       unattended: true,
     })
       .then(r => runStore.update(run.id, { status: 'completed', session_id: r.session.id, finished_at: new Date().toISOString() }))
@@ -337,8 +342,46 @@ async function main() {
   const sessionRuntimes = new SessionRuntimeRegistry()
   const recoverableApprovals = new RecoverableApprovalRegistry()
   const runtimePeers = new Map<string, Set<WebSocket>>()
+  const workflowMapPeers = new Map<string, Map<WebSocket, WorkflowMapScope>>()
+  const workflowMapSubscriptions = new Map<WebSocket, Map<string, WorkflowMapScope>>()
   const addRuntimePeer = (sessionId: string, socket: WebSocket): void => { const peers = runtimePeers.get(sessionId) ?? new Set<WebSocket>(); peers.add(socket); runtimePeers.set(sessionId, peers) }
   const removeRuntimePeer = (sessionId: string, socket: WebSocket): void => { const peers = runtimePeers.get(sessionId); peers?.delete(socket); if (peers?.size === 0) runtimePeers.delete(sessionId) }
+  const removeWorkflowMapSubscription = (socket: WebSocket, runId: string): void => {
+    const peers = workflowMapPeers.get(runId)
+    peers?.delete(socket)
+    if (peers?.size === 0) workflowMapPeers.delete(runId)
+    const subscriptions = workflowMapSubscriptions.get(socket)
+    subscriptions?.delete(runId)
+    if (subscriptions?.size === 0) workflowMapSubscriptions.delete(socket)
+  }
+  const addWorkflowMapPeer = (scope: WorkflowMapScope, socket: WebSocket): void => {
+    let subscriptions = workflowMapSubscriptions.get(socket)
+    if (!subscriptions) { subscriptions = new Map(); workflowMapSubscriptions.set(socket, subscriptions) }
+    // A socket can recover its recent chat turns, but an idle socket cannot
+    // accumulate an unbounded number of selected-run subscriptions.
+    subscriptions.delete(scope.run_id)
+    subscriptions.set(scope.run_id, { ...scope })
+    while (subscriptions.size > 32) removeWorkflowMapSubscription(socket, subscriptions.keys().next().value!)
+    const peers = workflowMapPeers.get(scope.run_id) ?? new Map<WebSocket, WorkflowMapScope>()
+    peers.set(socket, { ...scope })
+    workflowMapPeers.set(scope.run_id, peers)
+  }
+  const removeWorkflowMapPeer = (socket: WebSocket): void => {
+    for (const runId of [...(workflowMapSubscriptions.get(socket)?.keys() ?? [])]) removeWorkflowMapSubscription(socket, runId)
+  }
+  const removeWorkflowMapRunPeers = (runId: string): void => {
+    for (const socket of [...(workflowMapPeers.get(runId)?.keys() ?? [])]) removeWorkflowMapSubscription(socket, runId)
+  }
+  workflowMaps.subscribe(observation => {
+    const frame: ServerMessage = { type: 'workflow_map', observation }
+    for (const [peer, peerScope] of workflowMapPeers.get(observation.scope.run_id) ?? []) {
+      if (peer.readyState === peer.OPEN && peerScope.run_id === observation.scope.run_id && peerScope.session_id === observation.scope.session_id && peerScope.profile === observation.scope.profile) {
+        try { peer.send(JSON.stringify(frame)) } catch { removeWorkflowMapSubscription(peer, observation.scope.run_id) }
+      }
+    }
+    if (observation.kind === 'terminal') removeWorkflowMapRunPeers(observation.scope.run_id)
+  })
+  workflowMaps.subscribeCompletion(scope => removeWorkflowMapRunPeers(scope.run_id))
   const runtimeCleanupTimer = setInterval(() => { sessionRuntimes.cleanup(); recoverableApprovals.cleanup() }, 30_000)
   runtimeCleanupTimer.unref()
 
@@ -575,6 +618,9 @@ async function main() {
           peer.send(JSON.stringify({ type: 'runtime', snapshot: { ...runtime, controller: runtime.controller ? { id: runtime.controller.id, expires_at: runtime.controller.expires_at } : undefined, gap: false } } satisfies ServerMessage))
         }
       }
+    }
+    const sendDirect = (msg: ServerMessage): void => {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
     }
 
     const missionStore = () => new MissionStore(userId)
@@ -991,6 +1037,39 @@ async function main() {
         if (!target) { send({ type: 'error', message: 'session not found or belongs to another user', ...correlation }); return }
         const sub = target.subscribe(msg.after_seq ?? 0)
         send({ type: 'runtime', snapshot: { ...sub.snapshot, controller: sub.snapshot.controller ? { id: sub.snapshot.controller.id, expires_at: sub.snapshot.controller.expires_at } : undefined, gap: sub.gap }, ...correlation })
+        return
+      }
+
+      if (msg.type === 'workflow_map') {
+        const scope = (msg as any).scope as WorkflowMapScope | undefined
+        if (!scope || typeof scope.run_id !== 'string' || typeof scope.session_id !== 'string' || typeof scope.profile !== 'string' ||
+            !scope.run_id || !scope.session_id || !scope.profile ||
+            (msg.after_revision !== undefined && (!Number.isSafeInteger(msg.after_revision) || msg.after_revision < 0))) {
+          send({ type: 'error', message: 'invalid workflow map scope or cursor' })
+          return
+        }
+        const selectedRun = runStore.get(scope.run_id)
+        if (!selectedRun || selectedRun.user !== userId || selectedRun.session_id !== scope.session_id || selectedRun.profile !== scope.profile) {
+          send({ type: 'error', message: 'workflow map scope mismatch' })
+          return
+        }
+        const recovery = workflowMaps.recover(scope, msg.after_revision)
+        if (recovery.mode === 'rejected') {
+          send({ type: 'error', message: 'invalid workflow map recovery cursor' })
+          return
+        }
+        if (recovery.mode === 'snapshot') {
+          const snapshot = recovery.snapshot
+          if ((selectedRun.status === 'running' || selectedRun.status === 'waiting_input') && snapshot.terminal === undefined) addWorkflowMapPeer(scope, ws)
+          if (snapshot.availability.state === 'unavailable' && snapshot.availability.reason === 'not_retained' && Date.parse(selectedRun.started_at) < serverStartedAt) {
+            sendDirect({ type: 'workflow_map', snapshot: workflowMaps.snapshot(scope, 'server_restarted') })
+          } else {
+            sendDirect({ type: 'workflow_map', snapshot })
+          }
+        } else {
+          if (selectedRun.status === 'running' || selectedRun.status === 'waiting_input') addWorkflowMapPeer(scope, ws)
+          for (const observation of recovery.events) sendDirect({ type: 'workflow_map', observation })
+        }
         return
       }
 
@@ -1594,9 +1673,11 @@ async function main() {
         let terminalReason: string | undefined
         sendForRun({ type: 'turn_start' })
         runStore.create({
-          id: runId, profile: connectionProfile.name, user: userId, trigger: 'stream',
+          id: runId, profile: connectionProfile.name, user: userId, session_id: session.id, trigger: 'stream',
           input: msg.content, status: 'running', started_at: new Date().toISOString(),
         })
+        const workflowMapScope: WorkflowMapScope = { run_id: runId, session_id: session.id, profile: connectionProfile.name }
+        workflowMaps.begin(workflowMapScope)
         const runJournal: RunJournal = newJournal({ user: userId, session_id: session.id, profile: connectionProfile.name, config_fingerprint: hashArguments({ profile: connectionProfile.name, model: connectionModel, approval: approvalMode }), mode: 'live-branch' })
         const replayStore = new ReplayStore(userId)
         const effects = new Map<string, EffectReceipt>()
@@ -1622,6 +1703,7 @@ async function main() {
           onToolParked: (id, n, i, agentId) => sendForRun({ type: 'tool_parked', id, name: n, input: i, ...(agentId ? { agent_id: agentId } : {}) }),
           onToolPrompt: (id, n, i, risk, reason, agentId) => requestToolApproval(sendForRun, id, n, i, risk, reason, agentId),
           onSessionEnd: (id) => {
+            workflowMaps.completeEmpty(workflowMapScope)
             voiceOutput?.end()
             saveSession(session)
             const status = runSignal.aborted ? 'cancelled' : terminalStatus
@@ -1675,6 +1757,13 @@ async function main() {
             sendForRun({ type: 'ui_render', surface, ...(agentId ? { agent_id: agentId } : {}) })
           }),
           onStage: (stage, intensity, tier, model, state, cost_usd, agentId) => sendForRun({ type: 'stage', stage, intensity, tier, model, state, cost_usd, ...(agentId ? { agent_id: agentId } : {}) }),
+          onWorkflowMap: (observation: WorkflowMapObservationInput) => {
+            workflowMaps.begin(workflowMapScope)
+            const accepted = workflowMaps.accept(observation)
+            if (accepted) {
+              sendForRun({ type: 'workflow_map', observation: accepted })
+            }
+          },
         }
         await ensureMcpClients()
         const agentTools = await loadAgentTools(connectionProfile)
@@ -1760,6 +1849,7 @@ async function main() {
 
     ws.on('close', () => {
       openSockets.delete(ws)
+      removeWorkflowMapPeer(ws)
       const keepForApprovalRecovery = pendingApprovals.size > 0
       if (!keepForApprovalRecovery) {
         abortController.abort()

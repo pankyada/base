@@ -2,9 +2,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { buildScopedUrl, type RequestScope } from '../../lib/scopedRequest'
 import { fetchScopedRemote, type RemoteData } from '../../lib/remoteData'
+import type { WorkflowMapScope } from '../../lib/protocol'
 import { Unavailable } from '../chrome/Unavailable'
 
-export interface RunRow { id: string; status: string; tokens?: number; costUsd?: number; model?: string; input?: unknown; trigger?: string; started_at?: string; profile?: string; error?: string }
+export interface RunRow { id: string; status: string; tokens?: number; costUsd?: number; model?: string; input?: unknown; trigger?: string; started_at?: string; profile?: string; session_id?: string; error?: string }
+export function workflowMapScopeForRun(row: RunRow): WorkflowMapScope | undefined {
+  return row.session_id && row.profile ? { run_id: row.id, session_id: row.session_id, profile: row.profile } : undefined
+}
 export function cancelRunUrl(baseUrl: string, id: string): string { return `${baseUrl.replace(/\/$/, '')}/runs/${encodeURIComponent(id)}` }
 export function runsUrl(baseUrl: string, scope: RequestScope = {}): string { return buildScopedUrl(baseUrl, '/runs', scope) }
 export function runStatusLabel(status: string): string { return status === 'waiting_input' ? 'waiting for input' : status.replace('_', ' ') }
@@ -30,7 +34,7 @@ export function mergeRunEvent(rows: RunRow[], event: { type: string; run_id?: st
 
 interface RunsBody { runs?: RunRow[] }
 
-export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [], refreshToken = 0 }: { baseUrl: string; scope?: RequestScope; refreshToken?: number; onCancel?: (id: string) => void; liveEvents?: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }[] }) {
+export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [], refreshToken = 0, selectedRunId, onSelectRun }: { baseUrl: string; scope?: RequestScope; refreshToken?: number; onCancel?: (id: string) => void; liveEvents?: { type: string; run_id?: string; tokens_in?: number; tokens_out?: number; cost_usd?: number; status?: string; reason?: string }[]; selectedRunId?: string; onSelectRun?: (row: RunRow) => void }) {
   const [remote, setRemote] = useState<RemoteData<RunsBody>>({ status: 'loading' })
   const [rows, setRows] = useState<RunRow[]>([])
   const scopeRef = useRef(scope)
@@ -69,10 +73,10 @@ export function RunBoard({ baseUrl, scope = {}, onCancel, liveEvents = [], refre
       {group.rows.length ? group.rows.map(row => {
         const title = runInputTitle(row.input)
         const statusClass = row.status.replace(/[^a-z0-9-]/gi, '-')
-        return <article key={row.id} className={`run-row run-row--${statusClass}`} data-run-status={row.status}>
+        return <article key={row.id} className={`run-row run-row--${statusClass}`} data-run-status={row.status} aria-current={selectedRunId === row.id ? 'true' : undefined}>
           <span className="run-row__signal" aria-hidden="true" />
           <div className="run-row__main">{title ? <p className="run-row__input" title={title}>{title}</p> : null}
-            <div className="run-row__identity"><strong title={row.id}>{row.id}</strong><span className="run-row__status">{runStatusLabel(row.status)}</span></div>
+            <div className="run-row__identity"><strong title={row.id}>{row.id}</strong><span className="run-row__status">{runStatusLabel(row.status)}</span>{onSelectRun ? <button className="run-row__select" type="button" aria-label={`Select run ${row.id} for workflow map`} aria-pressed={selectedRunId === row.id} onClick={() => onSelectRun(row)}>Map</button> : null}</div>
             {row.error ? <p className="run-row__error">{row.error}</p> : null}
             <div className="run-row__telemetry">{row.trigger ? <span>{row.trigger}</span> : null}{row.profile ? <span>{row.profile}</span> : null}{row.model ? <span>{row.model}</span> : null}{typeof row.tokens === 'number' ? <span>{row.tokens.toLocaleString()} tokens</span> : null}{typeof row.costUsd === 'number' ? <span>${row.costUsd.toFixed(4)}</span> : null}</div>
           </div>

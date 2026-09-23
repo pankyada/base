@@ -138,3 +138,27 @@ func TestDecodeRevampServerMessages(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeWorkflowMapFrames(t *testing.T) {
+	observation, err := DecodeServer([]byte(`{"type":"workflow_map","observation":{"event_id":"event-2","revision":2,"kind":"transition","scope":{"run_id":"run-1","session_id":"session-1","profile":"coding"},"transition":{"transition_id":"edge-1","from_attempt_id":"attempt-1","to_attempt_id":"attempt-2","kind":"retry"}}}`))
+	if err != nil || observation.WorkflowMapObservation == nil || observation.WorkflowMapObservation.Revision != 2 || observation.WorkflowMapObservation.Transition == nil || observation.WorkflowMapObservation.Transition.Kind != "retry" {
+		t.Fatalf("observation=%+v err=%v", observation, err)
+	}
+	snapshot, err := DecodeServer([]byte(`{"type":"workflow_map","snapshot":{"version":1,"scope":{"run_id":"run-1","session_id":"session-1","profile":"coding"},"revision":4,"availability":{"state":"partial","reason":"event_gap"},"attempts":[{"attempt_id":"attempt-1","pass_id":"pass-1","playbook":"coding","stage":"build","attempt":1,"intensity":2,"tier":"balanced","model":"fixture","state":"done","cost_usd":0}],"transitions":[],"advice":[]}}`))
+	if err != nil || snapshot.WorkflowMapSnapshot == nil || snapshot.WorkflowMapSnapshot.Revision != 4 || snapshot.WorkflowMapSnapshot.Attempts[0].CostUSD == nil || *snapshot.WorkflowMapSnapshot.Attempts[0].CostUSD != 0 {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+	}
+}
+
+func TestEncodeWorkflowMapRecoveryRequest(t *testing.T) {
+	scope := WorkflowMapScope{RunID: "run-1", SessionID: "session-1", Profile: "coding"}
+	var after uint64 = 7
+	got, err := json.Marshal(WorkflowMap(scope, &after))
+	if err != nil || string(got) != `{"type":"workflow_map","scope":{"run_id":"run-1","session_id":"session-1","profile":"coding"},"after_revision":7}` {
+		t.Fatalf("encoded=%s err=%v", got, err)
+	}
+	got, err = json.Marshal(WorkflowMap(scope, nil))
+	if err != nil || string(got) != `{"type":"workflow_map","scope":{"run_id":"run-1","session_id":"session-1","profile":"coding"}}` {
+		t.Fatalf("snapshot request encoded=%s err=%v", got, err)
+	}
+}

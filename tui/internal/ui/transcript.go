@@ -12,6 +12,8 @@ import (
 // write, or task run.
 type Turn struct {
 	Role           string // "user" | "agent" | "local" | "memory" | "task"
+	RunID          string // server-owned run identity; workflow maps attach only to this turn
+	WorkflowMap    *WorkflowMapState
 	TaskID         string // task turns only — the task whose output Text mirrors
 	Text           string // user content, or streamed agent text
 	Time           string
@@ -201,6 +203,11 @@ func (tr Transcript) RenderWithHitMap(width, frame int) (string, []HitRow) {
 					row++
 				}
 			}
+		}
+		if t.WorkflowMap != nil && t.WorkflowMap.Visible() {
+			mapLine := renderWorkflowMapCompact(t.WorkflowMap, turnWidth)
+			parts = append(parts, mapLine)
+			row += lipgloss.Height(mapLine)
 		}
 		if t.Tokens > 0 || t.Elapsed != "" || t.Cost > 0 {
 			footerStyle := StFaint

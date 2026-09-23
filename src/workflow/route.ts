@@ -22,6 +22,8 @@ export interface RouteSignals {
 }
 
 export interface RouterConfig {
+  /** Playbooks that should only be selected when no specific candidate qualifies. */
+  catch_all?: string[]
   domain_threshold: number
   ask_threshold: number
   max_reroutes: number
@@ -81,7 +83,8 @@ export function nextScale(scale: Scale): Scale {
  * Policy rules in order (spec §5.2):
  * 1. ambiguous > ask_threshold and clarifications remaining => ask.
  * 2. continues_previous > 0.5 and a session route exists => reuse its playbook.
- * 3. Domain filter: playbooks with domain > domain_threshold, sorted desc, capped at 2.
+ * 3. Domain filter: playbooks with domain > domain_threshold, sorted desc, capped at 2;
+ *    qualifying catch-all playbooks are removed when any specific candidate qualifies.
  *    None qualify => fall back to `[fallbackPlaybook]`.
  * 4. scale = argmax level (ties within TIE_MARGIN => larger level).
  * 5. intensityFloor = scale_presets[scale], recon forced >= 1.
@@ -109,8 +112,11 @@ export function decideRoute(
     }
   }
 
-  const inDomain = Object.entries(signals.domain)
+  const qualifying = Object.entries(signals.domain)
     .filter(([name, p]) => p > (config.domainThresholds?.[name] ?? config.domain_threshold))
+  const hasSpecificCandidate = qualifying.some(([name]) => !config.catch_all?.includes(name))
+  const inDomain = qualifying
+    .filter(([name]) => !hasSpecificCandidate || !config.catch_all?.includes(name))
     .sort((a, b) => b[1] - a[1])
     .map(([name]) => name)
     .slice(0, 2)

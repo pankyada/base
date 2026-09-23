@@ -1,6 +1,6 @@
 ---
 name: security
-description: Reproducible security review workflow
+description: Use to assess security risks, reproduce suspected weaknesses, and report findings with clear scope and evidence. Not for general software development, routine data analysis, broad research, or unrelated writing.
 stages: [recon, plan, design, build, verify, review]
 task_classes: [audit, finding, repro]
 defaults:

@@ -186,6 +186,14 @@ func (f *harnessFixture) tail() string {
 }
 
 func startFixture(t *testing.T) *harnessFixture {
+	return startFixtureWithWorkflowMap(t, false)
+}
+
+func startWorkflowMapFixture(t *testing.T) *harnessFixture {
+	return startFixtureWithWorkflowMap(t, true)
+}
+
+func startFixtureWithWorkflowMap(t *testing.T, workflowMap bool) *harnessFixture {
 	t.Helper()
 	root := t.TempDir()
 	repo := repoRoot(t)
@@ -226,6 +234,49 @@ func startFixture(t *testing.T) *harnessFixture {
 	if err := os.WriteFile(filepath.Join(tuiHome, ".harness", "config.json"), []byte(seedConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	workflowConfig := ""
+	providerScript := ""
+	if workflowMap {
+		workflowConfig = `workflow:
+  enabled: true
+  playbook: pty-map
+  min_intensity: { recon: 1, plan: 0, design: 0, build: 1, verify: 0, review: 0 }
+  max_intensity: { recon: 1, plan: 0, design: 0, build: 1, verify: 0, review: 0 }
+`
+		playbookDir := filepath.Join(root, ".agents", "playbooks", "pty-map")
+		if err := os.MkdirAll(playbookDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		playbook := "---\nname: pty-map\ndescription: isolated PTY workflow-map acceptance\nstages: [recon, build]\ntask_classes: [general]\ndefaults:\n  general: { recon: 1, build: 1 }\n---\n\n## recon\n### L1\nRequired artifact sections: ``\nExit criteria: fixture observed\n\n## build\n### L1\nRequired artifact sections: ``\nExit criteria: fixture observed\n"
+		if err := os.WriteFile(filepath.Join(playbookDir, "PLAYBOOK.md"), []byte(playbook), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		providerScript = filepath.Join(root, "workflow-map-provider.mjs")
+		providerSource := `import { createServer } from 'node:http'
+const port = Number(process.env.CLIENT_ACCEPTANCE_PROVIDER_PORT || 0)
+const server = createServer((req, res) => {
+  if (req.url?.endsWith('/models')) {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ id: 'fixture-model' }] }))
+    return
+  }
+  if (!req.url?.endsWith('/chat/completions')) { res.writeHead(404); res.end(); return }
+  let body = ''
+  req.on('data', chunk => { body += chunk.toString() })
+  req.on('end', () => setTimeout(() => {
+    res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close', 'cache-control': 'no-cache' })
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'fixture complete' } }] }) + '\n\n')
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: {} }], usage: { prompt_tokens: 2, completion_tokens: 2 } }) + '\n\n')
+    res.end('data: [DONE]\n\n')
+  }, 4000))
+})
+server.listen(port, '127.0.0.1')
+process.on('SIGTERM', () => server.close(() => process.exit(0)))
+`
+		if err := os.WriteFile(providerScript, []byte(providerSource), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	f := &harnessFixture{
 		root:         root,
@@ -255,7 +306,7 @@ tools:
   builtin:
     Bash: prompt
     AskUser: allow
-`, f.providerPort, promptPath, artifactDir, root)
+%s`, f.providerPort, promptPath, artifactDir, root, workflowConfig)
 	if err := os.WriteFile(filepath.Join(profilesDir, "fixture-p.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +316,10 @@ tools:
 		t.Skip("node not available on PATH; skipping live PTY acceptance")
 	}
 
-	f.provider = exec.Command(nodeBin, filepath.Join(repo, "scripts", "client-acceptance-provider.mjs"))
+	if providerScript == "" {
+		providerScript = filepath.Join(repo, "scripts", "client-acceptance-provider.mjs")
+	}
+	f.provider = exec.Command(nodeBin, providerScript)
 	f.provider.Dir = repo
 	f.provider.Env = append(os.Environ(), "CLIENT_ACCEPTANCE_PROVIDER_PORT="+fmt.Sprint(f.providerPort))
 	stdout, _ := f.provider.StdoutPipe()
@@ -556,4 +610,62 @@ func TestLiveApprovalRecoveryOverReconnect(t *testing.T) {
 	if t.Failed() {
 		t.Logf("fixture logs (tail):\n%s", f.tail())
 	}
+}
+
+func TestWorkflowMapPTYCompactDetailsCloseAndReconnect(t *testing.T) {
+	if os.Getenv("HARNESS_TUI_PTY") != "1" {
+		t.Skip("set HARNESS_TUI_PTY=1 to run the isolated workflow-map PTY acceptance test")
+	}
+	binPath := buildTUIBinary(t)
+	f := startWorkflowMapFixture(t)
+	defer f.stop()
+	proxy := newSeveringProxy(t, fmt.Sprintf("127.0.0.1:%d", f.harnessPort))
+	defer proxy.close()
+	tui := launchTUI(t, f, binPath, proxy.port(), "pty-map-user")
+	defer tui.close()
+
+	waitForOn(t, tui, f, 20*time.Second, "TUI online against isolated workflow fixture", func() bool {
+		return strings.Contains(tui.screen(), "● online")
+	})
+	tui.send("WF_MAP_PTY\r")
+	waitForOn(t, tui, f, 20*time.Second, "compact actual workflow path", func() bool {
+		screen := tui.screen()
+		return strings.Contains(screen, "MAP observed") && strings.Contains(screen, "recon#1")
+	})
+	if screen := tui.screen(); !strings.Contains(screen, "entry → recon#1") {
+		t.Fatalf("compact map did not show the observed entry edge:\n%s", screen)
+	}
+	mark := tui.mark()
+	tui.send("\x07") // ctrl+g: documented workflow-map details key
+	waitForOn(t, tui, f, 5*time.Second, "details expansion through the real PTY", func() bool {
+		return strings.Contains(tui.since(mark), "WORKFLOW MAP · OBSERVED PATH")
+	})
+	closeMark := tui.mark()
+	tui.send("\x1b")
+	waitForOn(t, tui, f, 5*time.Second, "Escape to close details and return to compact map", func() bool {
+		screen := tui.since(closeMark)
+		return strings.Contains(screen, "MAP observed") && !strings.Contains(screen, "WORKFLOW MAP · OBSERVED PATH")
+	})
+
+	// The fake provider holds the active stage request for four seconds. Cut
+	// only the TUI's proxied socket during that window; the harness and its
+	// in-process map projection remain alive for scoped recovery.
+	severMark := tui.mark()
+	proxy.sever()
+	waitForOn(t, tui, f, 10*time.Second, "workflow-map TUI connection to go offline", func() bool {
+		return strings.Contains(tui.screen(), "● offline") || strings.Contains(tui.screen(), "disconnected")
+	})
+	waitForOn(t, tui, f, 20*time.Second, "workflow-map TUI reconnect and run restoration", func() bool {
+		screen := tui.since(severMark)
+		return strings.Contains(screen, "● online") && strings.Contains(screen, "restored")
+	})
+	waitForOn(t, tui, f, 15*time.Second, "the same run's workflow map after reconnect recovery", func() bool {
+		screen := tui.since(severMark)
+		return strings.Contains(screen, "MAP observed") && strings.Contains(screen, "recon#1")
+	})
+	mark = tui.mark()
+	tui.send("\x07")
+	waitForOn(t, tui, f, 5*time.Second, "recovered map details through the real PTY", func() bool {
+		return strings.Contains(tui.since(mark), "WORKFLOW MAP · OBSERVED PATH")
+	})
 }

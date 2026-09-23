@@ -188,6 +188,9 @@ type ServerMessage struct {
 	Mission   json.RawMessage  `json:"mission,omitempty"`
 	Receipt   json.RawMessage  `json:"receipt,omitempty"`
 	Runtime   *RuntimeSnapshot `json:"snapshot,omitempty"`
+
+	WorkflowMapSnapshot    *WorkflowMapSnapshot    `json:"-"`
+	WorkflowMapObservation *WorkflowMapObservation `json:"observation,omitempty"`
 }
 
 // RuntimeSnapshot is the bounded recovery projection. Actionable IDs alone
@@ -195,6 +198,77 @@ type ServerMessage struct {
 type RuntimeSnapshot struct {
 	SessionID  string              `json:"session_id"`
 	Actionable []RecoverablePrompt `json:"actionable,omitempty"`
+}
+
+// WorkflowMapScope mirrors WorkflowMapScope in src/types.ts. Every value is
+// required: a run id alone is not enough to associate observed execution with
+// a TUI turn.
+type WorkflowMapScope struct {
+	RunID     string `json:"run_id"`
+	SessionID string `json:"session_id"`
+	Profile   string `json:"profile"`
+}
+
+type WorkflowMapAvailability struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type WorkflowMapAttempt struct {
+	AttemptID    string   `json:"attempt_id"`
+	PassID       string   `json:"pass_id"`
+	ParentPassID string   `json:"parent_pass_id,omitempty"`
+	Playbook     string   `json:"playbook"`
+	Stage        string   `json:"stage"`
+	Attempt      int      `json:"attempt"`
+	Intensity    int      `json:"intensity"`
+	Tier         string   `json:"tier"`
+	Model        string   `json:"model"`
+	State        string   `json:"state"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
+	DurationMS   *int64   `json:"duration_ms,omitempty"`
+	ContractOK   *bool    `json:"contract_ok,omitempty"`
+	Explore      bool     `json:"explore,omitempty"`
+}
+
+type WorkflowMapTransition struct {
+	TransitionID  string `json:"transition_id"`
+	FromAttemptID string `json:"from_attempt_id,omitempty"`
+	ToAttemptID   string `json:"to_attempt_id,omitempty"`
+	Kind          string `json:"kind"`
+}
+
+type WorkflowMapAdvice struct {
+	AdviceID string `json:"advice_id"`
+	Kind     string `json:"kind"`
+	Mode     string `json:"mode"`
+	Applied  bool   `json:"applied"`
+	Action   string `json:"action,omitempty"`
+	Summary  string `json:"summary,omitempty"`
+}
+
+type WorkflowMapObservation struct {
+	EventID    string                 `json:"event_id"`
+	Revision   uint64                 `json:"revision"`
+	Kind       string                 `json:"kind"`
+	Scope      WorkflowMapScope       `json:"scope"`
+	PassID     string                 `json:"pass_id,omitempty"`
+	Attempt    *WorkflowMapAttempt    `json:"attempt,omitempty"`
+	Transition *WorkflowMapTransition `json:"transition,omitempty"`
+	Advice     *WorkflowMapAdvice     `json:"advice,omitempty"`
+	Terminal   string                 `json:"terminal,omitempty"`
+}
+
+type WorkflowMapSnapshot struct {
+	Version              int                     `json:"version"`
+	Scope                WorkflowMapScope        `json:"scope"`
+	Revision             uint64                  `json:"revision"`
+	Availability         WorkflowMapAvailability `json:"availability"`
+	Terminal             string                  `json:"terminal,omitempty"`
+	Attempts             []WorkflowMapAttempt    `json:"attempts"`
+	Transitions          []WorkflowMapTransition `json:"transitions"`
+	Advice               []WorkflowMapAdvice     `json:"advice"`
+	RetainedFromRevision *uint64                 `json:"retained_from_revision,omitempty"`
 }
 
 type RecoverablePrompt struct {
@@ -210,6 +284,19 @@ type RecoverablePrompt struct {
 func DecodeServer(raw []byte) (ServerMessage, error) {
 	var m ServerMessage
 	err := json.Unmarshal(raw, &m)
+	if err != nil {
+		return m, err
+	}
+	if m.Type == "workflow_map" {
+		var envelope struct {
+			Snapshot *WorkflowMapSnapshot `json:"snapshot"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return m, err
+		}
+		m.WorkflowMapSnapshot = envelope.Snapshot
+		m.Runtime = nil // the shared JSON key "snapshot" belongs to this message's typed snapshot
+	}
 	return m, err
 }
 
@@ -255,6 +342,8 @@ func (pendingAnswerMsg) isClientMessage()    {}
 func (undoListMsg) isClientMessage()         {}
 func (undoApplyMsg) isClientMessage()        {}
 func (runtimeSubscribeMsg) isClientMessage() {}
+
+func (workflowMapRequestMsg) isClientMessage() {}
 
 func Hello(userID string, profile ...string) ClientMessage {
 	msg := helloMsg{Type: "hello", UserID: userID, ProtocolVersion: ProtocolVersion}
@@ -443,6 +532,18 @@ type runtimeSubscribeMsg struct {
 
 func RuntimeSubscribe(sessionID string) ClientMessage {
 	return runtimeSubscribeMsg{Type: "runtime_subscribe", SessionID: sessionID}
+}
+
+type workflowMapRequestMsg struct {
+	Type          string           `json:"type"`
+	Scope         WorkflowMapScope `json:"scope"`
+	AfterRevision *uint64          `json:"after_revision,omitempty"`
+}
+
+// WorkflowMap requests a scoped map recovery. A nil revision asks the server
+// for its authoritative snapshot; a value asks for retained events after it.
+func WorkflowMap(scope WorkflowMapScope, afterRevision *uint64) ClientMessage {
+	return workflowMapRequestMsg{Type: "workflow_map", Scope: scope, AfterRevision: afterRevision}
 }
 
 type inputResponseMsg struct {

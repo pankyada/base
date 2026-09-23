@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Shell } from '../../components/chrome/Shell'
 import { useSharedHarnessWS } from '../../components/chrome/SocketProvider'
-import { RunBoard } from '../../components/ops/RunBoard'
+import { RunBoard, workflowMapScopeForRun, type RunRow } from '../../components/ops/RunBoard'
 import { Inbox } from '../../components/ops/Inbox'
 import { UndoDrawer } from '../../components/ops/UndoDrawer'
 import { Observability } from '../../components/ops/Observability'
@@ -18,6 +18,9 @@ import { buildScopedUrl } from '../../lib/scopedRequest'
 import { fetchBatch, fetchRemote, type RemoteData } from '../../lib/remoteData'
 import { sendFailureReason } from '../../hooks/useHarnessWS'
 import { Unavailable } from '../../components/chrome/Unavailable'
+import { WorkflowMap } from '../../components/turn/WorkflowMap'
+import { applyWorkflowMapFrame, sameWorkflowMapScope, type WorkflowMapClientState } from '../../lib/workflowMap'
+import type { WorkflowMapScope } from '../../lib/protocol'
 
 interface ChannelStatus { name: string; transport: string; binding: 'paired' | 'open' | 'unbound' | 'off'; degraded?: string }
 type Reads = { pending: { pending?: PendingInput[] }; channels: { channels?: ChannelStatus[] }; metrics: unknown; usage: unknown; routing: unknown }
@@ -42,13 +45,108 @@ function OpsContent() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [actionError, setActionError] = useState<string>()
   const [activeStation, setActiveStation] = useState<'audit' | 'telemetry' | 'undo' | 'skills' | 'channels'>('audit')
+  const [selectedRun, setSelectedRun] = useState<RunRow>()
+  const [selectedMap, setSelectedMap] = useState<WorkflowMapClientState>()
+  const [selectedMapStatus, setSelectedMapStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle')
+  const [selectedMapReason, setSelectedMapReason] = useState<string>()
+  const selectedMapGapRequests = useRef(new Set<string>())
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const refreshNow = useRef<() => void>(() => {})
   const scopeKey = `${userId}\u0000${profile ?? ''}`
   const currentScope = useRef(scopeKey)
   currentScope.current = scopeKey
+  const selectedMapCache = useRef(new Map<string, WorkflowMapClientState>())
+  const selectedMapRef = useRef<{ key: string; state?: WorkflowMapClientState }>({ key: '' })
+  const selectedScope = useMemo(() => selectedRun ? workflowMapScopeForRun(selectedRun) : undefined, [selectedRun?.id, selectedRun?.session_id, selectedRun?.profile])
+  const selectedMapKey = selectedRun ? JSON.stringify([selectedRun.id, selectedRun.session_id ?? '', selectedRun.profile ?? '']) : ''
+  const selectedMapKeyRef = useRef(selectedMapKey)
+  selectedMapKeyRef.current = selectedMapKey
+  const selectedScopeRef = useRef<WorkflowMapScope | undefined>(selectedScope)
+  selectedScopeRef.current = selectedScope
+  const selectedOwnerScope = useRef(scopeKey)
+
+  useEffect(() => {
+    if (selectedOwnerScope.current === scopeKey) return
+    selectedOwnerScope.current = scopeKey
+    selectedMapCache.current.clear()
+    selectedMapRef.current = { key: '' }
+    selectedMapKeyRef.current = ''
+    selectedScopeRef.current = undefined
+    selectedMapGapRequests.current.clear()
+    setSelectedRun(undefined)
+    setSelectedMap(undefined)
+    setSelectedMapStatus('idle')
+    setSelectedMapReason(undefined)
+  }, [scopeKey])
   const missionMessage = [...events].reverse().find(event => event.type === 'mission')
   const receiptMessage = [...events].reverse().find(event => event.type === 'receipt')
+
+  const selectRun = (row: RunRow) => {
+    const nextScope = workflowMapScopeForRun(row)
+    const key = JSON.stringify([row.id, row.session_id ?? '', row.profile ?? ''])
+    selectedMapKeyRef.current = key
+    selectedScopeRef.current = nextScope
+    const cached = selectedMapCache.current.get(key)
+    selectedMapRef.current = { key, state: cached }
+    setSelectedRun(row)
+    setSelectedMap(cached)
+    setSelectedMapStatus(cached ? 'ready' : nextScope ? 'loading' : 'unavailable')
+    setSelectedMapReason(nextScope ? undefined : 'This run has no retained session identity (not retained).')
+  }
+
+  useEffect(() => subscribe(message => {
+    if (message.type !== 'workflow_map') return
+    const incomingScope = message.snapshot?.scope ?? message.observation?.scope
+    const currentScope = selectedScopeRef.current
+    if (!incomingScope || !currentScope || !sameWorkflowMapScope(incomingScope, currentScope)) return
+    const key = selectedMapKeyRef.current
+    const current = selectedMapCache.current.get(key)
+    const result = applyWorkflowMapFrame(current, message, currentScope)
+    if (!result.state || result.state === current) return
+    selectedMapCache.current.set(key, result.state)
+    while (selectedMapCache.current.size > 32) selectedMapCache.current.delete(selectedMapCache.current.keys().next().value!)
+    selectedMapRef.current = { key, state: result.state }
+    setSelectedMap(result.state)
+    setSelectedMapStatus('ready')
+    setSelectedMapReason(undefined)
+  }), [subscribe])
+
+  useEffect(() => {
+    if (!selectedRun) { setSelectedMapStatus('idle'); return }
+    if (!selectedScope) {
+      setSelectedMapStatus('unavailable')
+      setSelectedMapReason('This run has no retained session identity (not retained).')
+      return
+    }
+    if (status !== 'open') { if (!selectedMapRef.current.state) setSelectedMapStatus('loading'); return }
+    const key = selectedMapKey
+    const cached = selectedMapCache.current.get(key)
+    if (cached) { setSelectedMap(cached); setSelectedMapStatus('ready') }
+    else setSelectedMapStatus('loading')
+    setSelectedMapReason(undefined)
+    if (cached?.needsRecovery) return
+    const result = send({ type: 'workflow_map', scope: selectedScope, ...(cached ? { after_revision: cached.snapshot.revision } : {}) })
+    if (!result.ok && !cached) {
+      setSelectedMapStatus('unavailable')
+      setSelectedMapReason(sendFailureReason(result))
+      return
+    }
+    const timer = setTimeout(() => {
+      if (selectedMapKeyRef.current !== key || selectedMapCache.current.has(key)) return
+      setSelectedMapStatus('unavailable')
+      setSelectedMapReason('No map response from this server (unsupported or unavailable).')
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [selectedMapKey, selectedScope, send, status])
+
+  useEffect(() => {
+    if (status !== 'open') { selectedMapGapRequests.current.clear(); return }
+    if (!selectedScope || !selectedMap?.needsRecovery) return
+    const key = `${selectedMapKey}\u0000snapshot`
+    if (selectedMapGapRequests.current.has(key)) return
+    const result = send({ type: 'workflow_map', scope: selectedScope })
+    if (result.ok) selectedMapGapRequests.current.add(key)
+  }, [selectedMap?.needsRecovery, selectedMap?.snapshot.revision, selectedMapKey, selectedScope, send, status])
 
   useEffect(() => {
     let disposed = false
@@ -184,7 +282,15 @@ function OpsContent() {
     <div className="ops-dispatch-grid">
       <div className="ops-workspace">
         <div className="ops-mission-strip"><MissionCard mission={missionMessage?.type === 'mission' ? missionMessage.mission as MissionWire : undefined} receipt={receiptMessage?.type === 'receipt' ? receiptMessage.receipt : undefined} /></div>
-        <RunBoard baseUrl={base} scope={scope} refreshToken={refreshTick} onCancel={id => { void cancel(id) }} />
+        <RunBoard baseUrl={base} scope={scope} refreshToken={refreshTick} onCancel={id => { void cancel(id) }} selectedRunId={selectedRun?.id} onSelectRun={selectRun} />
+        <section className="ops-selected-run" aria-label="Selected run workflow map" data-testid="ops-selected-workflow-map">
+          <header className="ops-selected-run__head"><h3>Selected run execution</h3>{selectedRun ? <code title={selectedRun.id}>{selectedRun.id}</code> : null}</header>
+          {!selectedRun ? <p className="ops-selected-run__empty">Select a run to inspect its observed workflow.</p>
+            : selectedMap ? <WorkflowMap key={selectedMap.snapshot.scope.run_id} snapshot={selectedMap.snapshot} defaultExpanded title="Observed execution" />
+              : selectedMapStatus === 'loading' ? <p className="ops-selected-run__state" role="status" data-state="loading">Requesting this run’s map…</p>
+                : selectedMapStatus === 'unavailable' ? <p className="ops-selected-run__state" role="status" data-state="unavailable">Map unavailable · {selectedMapReason ?? 'not retained'}</p>
+                  : null}
+        </section>
       </div>
       <aside className="ops-intervention-rail" aria-label="Human interventions">
         <header className="ops-rail-heading"><div><span className="ops-station-label">03 / Intervention</span><h2>Decision queue</h2></div><span className="ops-queue-count" aria-label={decisionCountKnown ? `${decisionCount} outstanding decisions` : 'Decision count unavailable'}>{decisionCount}</span></header>

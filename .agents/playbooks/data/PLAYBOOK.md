@@ -1,6 +1,6 @@
 ---
 name: data
-description: Reproducible data workflow
+description: Use to inspect, analyze, transform, or report on structured data with reproducible queries or calculations. Not for implementing software, broad research without a dataset, security review, or general writing.
 stages: [recon, plan, design, build, verify, review]
 task_classes: [analysis, report, transform]
 defaults:

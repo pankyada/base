@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createJevProvider } from '../src/decisions/jev.js'
 import { createWorkflowDecisionAdvisor, WorkflowDecisionControlError } from '../src/decisions/workflow.js'
+import { listPlaybooks } from '../src/workflow/playbook.js'
 import { decideRoute, type RouteSignals, type RouterConfig, type Scale, type SessionRoute } from '../src/workflow/route.js'
 import { DecisionLayerSchema } from '../src/decisions/types.js'
 
@@ -34,16 +35,9 @@ const json = process.argv.includes('--json')
 const signalsOutIndex = process.argv.indexOf('--signals-out')
 const signalsOut = signalsOutIndex >= 0 ? process.argv[signalsOutIndex + 1] : undefined
 const keyEnv = 'TYPESAFE_API_KEY'
-const PLAYBOOKS = [
-  { name: 'coding', description: 'Software change workflow' },
-  { name: 'data', description: 'Reproducible data workflow' },
-  { name: 'generic', description: 'Safe generic workflow' },
-  { name: 'research', description: 'Evidence-first research workflow' },
-  { name: 'security', description: 'Reproducible security review workflow' },
-  { name: 'writing', description: 'Structured writing workflow' },
-]
+const PLAYBOOKS = listPlaybooks().map(({ name, description }) => ({ name, description }))
 
-const routerConfig: RouterConfig = { domain_threshold: 0.5, ask_threshold: 0.7, max_reroutes: 1, max_clarifications: 1 }
+const routerConfig: RouterConfig & { catch_all: string[] } = { domain_threshold: 0.5, ask_threshold: 0.7, max_reroutes: 1, max_clarifications: 1, catch_all: ['generic'] }
 
 type Row = { id: string; kind: 'ask' | 'run'; playbooks: string[]; scale: Scale | null; expected_kind: 'ask' | 'run'; expected_playbooks: string[]; expected_scale: Scale | null; match: boolean; fallback?: string; signals?: RouteSignals }
 
