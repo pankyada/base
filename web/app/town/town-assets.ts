@@ -4,10 +4,13 @@ import { buildingSpec, TEMPLE_SITE, type BuildingForm, type TownBuildingAppearan
 
 export type TownTreeKind = 'palmyra' | 'broadleaf'
 export type TownAnimalKind = 'cattle' | 'goat' | 'chicken'
-export type TownPropKind = 'pot' | 'basket' | 'grain-jar' | 'well' | 'cart' | 'low-wall'
+export type TownPropKind =
+  | 'pot' | 'basket' | 'grain-jar' | 'well' | 'cart' | 'low-wall'
+  | 'awning' | 'bench' | 'workstation' | 'tool-rack' | 'queue-board' | 'question-pennant' | 'archive-shelf' | 'archive-crate'
+  | 'crop-row' | 'grove' | 'irrigation-channel' | 'pond'
 
 export interface TownAssetLibrary {
-  createHouse(form: BuildingForm, seed: number | string, appearance?: TownBuildingAppearance): THREE.Group
+  createHouse(form: BuildingForm, seed: number | string, appearance?: TownBuildingAppearance, active?: boolean): THREE.Group
   createPavilion(seed: number | string): THREE.Group
   createTemple(seed: number | string): THREE.Group
   createTree(kind: TownTreeKind, seed: number | string): THREE.Group
@@ -321,7 +324,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     void latch
   }
 
-  function createHouse(form: BuildingForm, seed: number | string, appearance?: TownBuildingAppearance): THREE.Group {
+  function createHouse(form: BuildingForm, seed: number | string, appearance?: TownBuildingAppearance, active = Boolean(appearance)): THREE.Group {
     const rng = randomFor(seed)
     const spec = buildingSpec(form)
     const width = spec.width, depth = spec.depth
@@ -418,7 +421,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     })
     let crown: THREE.Group | undefined
     let crownVariant: number | undefined
-    const setAppearance = (next?: TownBuildingAppearance): void => {
+    const setAppearance = (next?: TownBuildingAppearance, active = Boolean(next)): void => {
       if (!next) {
         for (const [item, material] of originalMaterials) item.material = material
         if (crown) crown.visible = false
@@ -433,18 +436,20 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       activeWall.userData.townAssetRole = 'house-wall'
       activeRoof.userData.townAssetRole = 'house-roof'
       for (const item of originalMaterials.keys()) item.material = item.userData.assetRole === 'house-wall' ? activeWall : activeRoof
-      const variant = ((Math.trunc(next.variant) % 6) + 6) % 6
+      const variant = ((Math.trunc(next.variant) % 16) + 16) % 16
       if (!crown || crownVariant !== variant) {
         if (crown) group.remove(crown)
         crown = addActiveBuildingCrown(group, form, seed, next, width, depth)
         crownVariant = variant
       }
-      crown.traverse(object => {
-        const item = object as THREE.Mesh
-        if (item.isMesh && item.userData.assetRole === 'house-wall') item.material = activeWall
-        if (item.isMesh && item.userData.assetRole === 'house-roof') item.material = activeRoof
-      })
-      crown.visible = true
+      if (crown) {
+        crown.traverse(object => {
+          const item = object as THREE.Mesh
+          if (item.isMesh && item.userData.assetRole === 'house-wall') item.material = activeWall
+          if (item.isMesh && item.userData.assetRole === 'house-roof') item.material = activeRoof
+        })
+        crown.visible = true
+      }
       group.scale.set(1, boundedHeight, 1)
       group.updateMatrixWorld(true)
       const extent = new THREE.Box3().setFromObject(group)
@@ -452,19 +457,20 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       group.scale.z = Math.min(1, spec.depth / (2 * Math.max(Math.abs(extent.min.z), Math.abs(extent.max.z), .01)))
       group.updateMatrixWorld(true)
       group.userData.appearance = { ...next, heightScale: boundedHeight }
-      group.userData.assetIdentity = { kind: 'active-project', variant }
+      group.userData.assetIdentity = { kind: active ? 'active-project' : 'project-house', variant, theme: next.theme }
     }
     group.userData.setAppearance = setAppearance
-    if (appearance) setAppearance(appearance)
+    if (appearance) setAppearance(appearance, active)
     return group
   }
 
   function addActiveBuildingCrown(owner: THREE.Group, form: BuildingForm, seed: number | string, appearance: TownBuildingAppearance, width: number, depth: number): THREE.Group {
     const group = new THREE.Group()
-    group.name = 'active-project-roof-identity'
+    group.name = 'project-house-roof-theme'
     owner.add(group)
     const rng = randomFor(`${seed}:active-roof`)
-    const variant = ((Math.trunc(appearance.variant) % 6) + 6) % 6
+    const variant = ((Math.trunc(appearance.variant) % 16) + 16) % 16
+    const family = variant % 7
     const span = Math.min(width, depth)
     const top = form === 'courtyard-compound' ? 4.42 : form === 'courtyard-house' ? 4.32 : 4.22
     const jitter = .88 + rng() * .24
@@ -476,7 +482,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     const identityBlock = (w: number, h: number, d: number, x: number, y: number, z: number, material: THREE.Material, rotationY = 0, castShadow = true) => {
       const item = mesh(boxGeometry(1, 1, 1), material, group, new THREE.Vector3(x, y, z), new THREE.Euler(0, rotationY, 0), new THREE.Vector3(w, h, d), castShadow)
       item.userData.assetRole = material.userData.townAssetRole
-      if (item.userData.assetRole === 'house-roof') item.userData.assetFeature = 'active-office-roof'
+      if (item.userData.assetRole === 'house-roof') item.userData.assetFeature = 'project-house-theme-roof'
       return item
     }
 
@@ -484,13 +490,13 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       const body = mesh(cylinderGeometry(.025, 1, 1, 4), roof, group,
         new THREE.Vector3(x, y + height / 2, z), new THREE.Euler(0, Math.PI / 4, 0),
         new THREE.Vector3(w / Math.SQRT2, height, d / Math.SQRT2), true)
-      body.userData.assetFeature = 'active-office-roof'
+      body.userData.assetFeature = 'project-house-theme-roof'
       body.userData.assetRole = 'house-roof'
     }
     const roofSpanX = Math.min(width - .35, span * .82) * jitter
     const roofSpanZ = Math.min(depth - .35, span * .70) * (.96 + rng() * .08)
 
-    if (variant === 0) {
+    if (family === 0) {
       // Long-ridge workshop: a raised ventilated clerestory follows the roof axis.
       const lanternW = Math.max(.78, roofSpanX * (.58 + rng() * .13))
       const lanternD = Math.min(.68, roofSpanZ * .40)
@@ -498,7 +504,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       identityBlock(lanternW + .20, .10, lanternD + .18, 0, top + .43, 0, trim, 0, false)
       for (const side of [-1, 1]) identityBlock(.07, .23, lanternD + .10, side * lanternW * .35, top + .51, 0, roof, 0, false)
       pyramid(0, 0, lanternW + .3, lanternD + .26, .36, top + .48)
-    } else if (variant === 1) {
+    } else if (family === 1) {
       // Stepped upper hall, with a separate raised storey and a crown roof.
       const hallW = Math.max(.8, roofSpanX * (.52 + rng() * .12))
       const hallD = Math.max(.72, roofSpanZ * (.53 + rng() * .12))
@@ -506,11 +512,11 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       identityBlock(hallW, .48 * jitter, hallD, 0, top + .34 * jitter, 0, wall)
       identityBlock(hallW + .28, .12, hallD + .28, 0, top + .62 * jitter, 0, roof, 0, false)
       pyramid(0, 0, hallW + .18, hallD + .18, .50 * jitter, top + .67 * jitter)
-    } else if (variant === 2) {
+    } else if (family === 2) {
       // Hipped courtyard roof with a broad eave and high, compact peak.
       identityBlock(roofSpanX, .13, roofSpanZ, 0, top + .04, 0, wall, 0, false)
       pyramid((rng() - .5) * .12, (rng() - .5) * .12, roofSpanX * .76, roofSpanZ * .78, .78 * jitter, top + .1)
-    } else if (variant === 3) {
+    } else if (family === 3) {
       // Twin gabled atelier roofs: two unequal ridges make a memorable paired silhouette.
       const gap = roofSpanX * (.20 + rng() * .05)
       const halfW = Math.max(.56, (roofSpanX - gap) * .50)
@@ -520,7 +526,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
         identityBlock(halfW + .16, .10, roofSpanZ * .80, x, top + .06, 0, trim, 0, false)
         pyramid(x, (rng() - .5) * .08, halfW, roofSpanZ * .76, .62 * scale, top + .1)
       }
-    } else if (variant === 4) {
+    } else if (family === 4) {
       // Raised lantern roof with open-looking light slots and a four-sided cap.
       const lanternW = Math.max(.76, roofSpanX * (.48 + rng() * .1))
       const lanternD = Math.max(.65, roofSpanZ * (.48 + rng() * .08))
@@ -531,7 +537,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
         identityBlock(lanternW * .26, .25, .035, side * lanternW * .22, top + .39 * jitter, -lanternD / 2 - .02, dark(), 0, false)
       }
       pyramid(0, 0, lanternW + .24, lanternD + .24, .44 * jitter, top + .72 * jitter)
-    } else {
+    } else if (family === 5) {
       // Compact corner tower; its seeded position and proportions vary per identity.
       const sideX = rng() > .5 ? 1 : -1
       const sideZ = rng() > .5 ? 1 : -1
@@ -542,8 +548,29 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       identityBlock(towerW + .14, .11, towerD + .14, x, top + .05, z, trim, 0, false)
       identityBlock(towerW, .65 * jitter, towerD, x, top + .38 * jitter, z, wall)
       pyramid(x, z, towerW + .20, towerD + .20, .60 * jitter, top + .70 * jitter)
+    } else {
+      // Broad open pavilion with four posts and a floating canopy.
+      const canopyW = roofSpanX * .86
+      const canopyD = roofSpanZ * .88
+      for (const sideX of [-1, 1]) for (const sideZ of [-1, 1]) {
+        identityBlock(.12, .72, .12, sideX * canopyW * .38, top + .42, sideZ * canopyD * .37, wall)
+      }
+      identityBlock(canopyW, .13, canopyD, 0, top + .84, 0, roof)
+      pyramid(0, 0, canopyW * .84, canopyD * .84, .38 * jitter, top + .9)
     }
-    group.userData.activeRoofIdentity = { variant, roofVariation: Number(jitter.toFixed(3)) }
+    if (variant >= 7) {
+      const x = width * .27
+      const z = -depth * .24
+      const w = Math.max(.48, width * .18)
+      const d = Math.max(.48, depth * .19)
+      identityBlock(w, .53, d, x, top + .33, z, wall)
+      pyramid(x, z, w + .16, d + .16, .41, top + .6)
+    }
+    if (variant >= 14) {
+      identityBlock(width * .68, .12, .25, 0, top + .12, depth * .35, roof)
+      for (const side of [-1, 1]) identityBlock(.12, .50, .12, side * width * .28, top + .32, depth * .35, wall)
+    }
+    group.userData.houseRoofTheme = { variant, roofVariation: Number(jitter.toFixed(3)) }
     return group
   }
 
@@ -1168,6 +1195,15 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     group.userData.assetKind = 'prop'
     group.userData.propKind = kind
     group.userData.seed = String(seed)
+    const footprints: Partial<Record<TownPropKind, [number, number, number]>> = {
+      awning: [3.6, 2.1, 2.65], bench: [1.9, .68, 1.2], workstation: [2.1, 1.35, 1.65],
+      'tool-rack': [1.1, .55, 1.72], 'queue-board': [1.45, .34, 1.98], 'question-pennant': [.84, .52, 2.45],
+      'archive-shelf': [1.6, .62, 1.95], 'archive-crate': [.95, .85, .85],
+      'crop-row': [2.8, 1.25, .82], grove: [3.4, 3.4, 3.5],
+      'irrigation-channel': [4, 1.05, .5], pond: [2.8, 2.2, .36],
+    }
+    const footprint = footprints[kind]
+    if (footprint) group.userData.assetDimensions = { width: footprint[0], depth: footprint[1], height: footprint[2] }
     if (kind === 'pot' || kind === 'grain-jar') {
       const jar = kind === 'grain-jar'
       const material = mat(`vessel-${jar ? 'jar' : 'pot'}-${Math.floor(rng() * 3)}`, [0x9c6747, 0xb1784d, 0x80553e][Math.floor(rng() * 3)], .97)
@@ -1212,6 +1248,170 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       for (const side of [-1, 1]) block(group, .09, .09, 1.70, side * .30, .25, .90, timber(0), -.04 * side, false)
       block(group, .10, .11, 1.70, 0, .25, .90, timber(0), .02, false)
       void rng
+    } else if (kind === 'awning') {
+      const wood = timber(Math.floor(rng() * color.wood.length))
+      const cloth = [mat('awning-indigo', 0x526b62, .96), mat('awning-madder', 0xa7543b, .96), mat('awning-unbleached-cotton', 0xd6c49c, .98)]
+      const width = 3.5, depth = 2.0, eaveY = 2.13
+      for (const x of [-1.58, 1.58]) for (const z of [-.82, .82]) {
+        block(group, .13, eaveY, .13, x, eaveY / 2, z, wood)
+        block(group, .23, .10, .23, x, eaveY + .02, z, timber(1), 0, false)
+      }
+      block(group, width, .12, .14, 0, eaveY, -.82, wood)
+      block(group, width, .12, .14, 0, eaveY, .82, wood)
+      // Narrow cloth bands make the shade read as a handwoven market awning.
+      for (let index = 0; index < 9; index += 1) {
+        const stripeWidth = width / 9 + .008
+        const x = (index - 4) * width / 9
+        const slope = index % 2 ? -.035 : .035
+        block(group, stripeWidth, .075, depth, x, 2.46 + slope, 0, cloth[(index + Math.floor(rng() * cloth.length)) % cloth.length], 0, false)
+      }
+      block(group, width + .04, .09, .16, 0, 2.38, .98, wood, 0, false)
+    } else if (kind === 'bench') {
+      const wood = timber(Math.floor(rng() * color.wood.length))
+      const seatY = .52 + rng() * .035
+      for (const x of [-.76, .76]) {
+        block(group, .13, seatY, .13, x, seatY / 2, 0, wood)
+        block(group, .10, .54, .10, x, .91, -.20, timber(0))
+        block(group, .20, .10, .62, x, .14, 0, timber(1), 0, false)
+      }
+      for (let index = 0; index < 4; index += 1) block(group, 1.82, .095, .13, 0, seatY, -.22 + index * .145, index % 2 ? wood : timber(1), 0, false)
+      block(group, 1.74, .11, .14, 0, .93, -.20, wood, -.08, false)
+      for (const x of [-.55, 0, .55]) block(group, .09, .48, .09, x, .71, -.20, timber(1), -.08, false)
+    } else if (kind === 'workstation') {
+      const wood = timber(Math.floor(rng() * color.wood.length))
+      block(group, 1.9, .14, 1.15, 0, .91, 0, wood)
+      for (const x of [-.78, .78]) for (const z of [-.42, .42]) block(group, .12, .86, .12, x, .46, z, timber(1))
+      block(group, 1.58, .11, .11, 0, .35, -.40, timber(0), 0, false)
+      // Work surface carries a small mallet, chisel and a coil of measuring cord.
+      block(group, .52, .16, .30, -.46, 1.06, .04, stone(1), .08, false)
+      block(group, .34, .055, .08, .42, 1.02, -.12, brass(), .18, false)
+      block(group, .10, .33, .10, .56, 1.18, -.12, timber(0), .18, false)
+      mesh(torusGeometry(.16, .025, 5, 14), timber(1), group, new THREE.Vector3(.18, 1.04, .30), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+      block(group, .42, .08, .22, .52, 1.05, .28, mat('workstation-wood-shavings', 0xc3a46e, .99), -.12, false)
+    } else if (kind === 'tool-rack') {
+      const wood = timber(0)
+      for (const x of [-.43, .43]) block(group, .10, 1.65, .10, x, .825, 0, wood)
+      for (const y of [.22, .72, 1.28, 1.64]) block(group, 1.0, .10, .13, 0, y, 0, timber(1))
+      const toolMetal = mat('forged-tool-iron', 0x51483a, .7, .16)
+      for (let index = 0; index < 4; index += 1) {
+        const x = -.30 + index * .20
+        block(group, .055, .60 + rng() * .18, .055, x, 1.07, .10, timber(index % 3), (rng() - .5) * .10, false)
+        block(group, .32, .07, .065, x + (index % 2 ? .04 : -.04), 1.37, .10, toolMetal, (index % 2 ? 1 : -1) * .20, false)
+      }
+      block(group, .25, .075, .12, -.20, .29, .02, brass(), 0, false)
+      block(group, .19, .06, .10, .19, .29, .02, stone(1), 0, false)
+    } else if (kind === 'queue-board') {
+      const wood = timber(1), darkBoard = mat('queue-board-writing-surface', 0x3f4235, .98)
+      block(group, 1.33, 1.24, .12, 0, 1.15, 0, wood)
+      block(group, 1.12, .94, .035, 0, 1.12, .078, darkBoard, 0, false)
+      for (const x of [-.59, .59]) {
+        block(group, .09, 1.87, .09, x, .94, -.03, timber(0))
+        block(group, .17, .11, .22, x, .06, -.03, stone(1), 0, false)
+      }
+      block(group, 1.42, .20, .20, 0, 1.86, 0, timber(0))
+      // Pale chalk strokes suggest numbered turns and open questions without text glyphs.
+      for (let index = 0; index < 4; index += 1) {
+        const y = .80 + index * .20
+        block(group, .50 + rng() * .14, .035, .018, -.22 + rng() * .11, y, .105, mat(`queue-chalk-${index % 2}`, index % 2 ? 0xe2d6b3 : 0xc8a96e, .99), 0, false)
+      }
+      for (let index = 0; index < 3; index += 1) block(group, .055, .055, .025, .43, .80 + index * .20, .11, brass(), 0, false)
+    } else if (kind === 'question-pennant') {
+      const flagShape = new THREE.Shape()
+      flagShape.moveTo(0, 0); flagShape.lineTo(.49, 0); flagShape.lineTo(.40, -.21); flagShape.lineTo(.49, -.43); flagShape.lineTo(0, -.43); flagShape.closePath()
+      const flagGeometry = geometry('question-pennant-cloth', () => new THREE.ShapeGeometry(flagShape))
+      block(group, .12, 2.30, .12, -.31, 1.15, 0, timber(0))
+      block(group, .20, .12, .20, -.31, .08, 0, stone(1), 0, false)
+      block(group, .76, .08, .07, .08, 2.20, 0, timber(1), 0, false)
+      const clothMesh = mesh(flagGeometry, mat('question-pennant-cloth', 0xc29343, .96), group, new THREE.Vector3(-.22, 2.13, .045), undefined, undefined, false)
+      clothMesh.userData.assetFeature = 'question-pennant'
+      mesh(torusGeometry(.068, .028, 5, 12), brass(), group, new THREE.Vector3(.015, 1.98, .09), undefined, undefined, false)
+      block(group, .05, .10, .05, .015, 1.85, .09, brass(), 0, false)
+      round(group, .03, .015, 1.77, .09, brass(), [1, 1, 1], false)
+    } else if (kind === 'archive-shelf') {
+      const frame = timber(0), leaf = mat('palm-leaf-manuscript', 0x9d865c, .99)
+      for (const x of [-.67, .67]) block(group, .11, 1.78, .38, x, .89, 0, frame)
+      for (const y of [.08, .62, 1.18, 1.74]) block(group, 1.48, .10, .52, 0, y, 0, timber(1))
+      for (const level of [0, 1, 2]) {
+        const count = level === 2 ? 3 : 4
+        for (let index = 0; index < count; index += 1) {
+          const width = .24 + rng() * .09
+          const x = (index - (count - 1) / 2) * .31
+          const y = .27 + level * .55
+          block(group, width, .31, .34, x, y, .01, leaf, (rng() - .5) * .04, false)
+          block(group, width * .70, .035, .018, x, y, .19, mat(`manuscript-tie-${index % 2}`, 0x774538, .94), 0, false)
+        }
+      }
+      block(group, 1.60, .13, .62, 0, 1.84, 0, frame)
+    } else if (kind === 'archive-crate') {
+      const wood = timber(1)
+      block(group, .82, .63, .70, 0, .38, 0, wood)
+      for (const z of [-.36, .36]) for (let index = 0; index < 4; index += 1) {
+        block(group, .80, .10, .07, 0, .15 + index * .15, z, timber(index % 2), 0, false)
+      }
+      for (const x of [-.39, .39]) block(group, .07, .68, .73, x, .39, 0, timber(0), 0, false)
+      block(group, .88, .10, .76, 0, .76, 0, timber(0), -.06, false)
+      block(group, .25, .15, .025, 0, .44, .404, mat('archive-crate-seal', 0xb68a4b, .62, .16), 0, false)
+    } else if (kind === 'crop-row') {
+      const stalk = mat('young-paddy-stalk', 0x58733f, .98)
+      const blade = mat('young-paddy-leaf', 0x76904c, .98)
+      const grain = mat('paddy-panicle', 0xc2a454, .98)
+      const rows = 4
+      for (let row = 0; row < rows; row += 1) {
+        const z = (row - (rows - 1) / 2) * .25
+        for (let index = 0; index < 8; index += 1) {
+          const x = (index - 3.5) * .29 + (rng() - .5) * .06
+          const height = .43 + rng() * .24
+          block(group, .035, height, .035, x, height / 2, z, stalk, (rng() - .5) * .12, false)
+          for (const side of [-1, 1]) {
+            const bladeHeight = .38 + rng() * .12
+            block(group, .035, bladeHeight, .035, x + side * .10, bladeHeight / 2 + .02, z + side * .035, blade, side * (.34 + rng() * .20), false)
+          }
+          if (rng() > .25) round(group, .045, x + .025, height + .055, z, grain, [.72, 1.5, .72], false)
+        }
+      }
+    } else if (kind === 'grove') {
+      const bark = mat('areca-bark', 0x72583b, .99)
+      const leaf = [mat('areca-leaf-deep', 0x4f6e3d, 1), mat('areca-leaf-sunlit', 0x71864a, 1)]
+      const positions = [[-.72, -.62], [.58, -.48], [-.10, .60], [.82, .62]] as const
+      positions.forEach(([x, z], index) => {
+        const height = 2.35 + rng() * .72
+        const lean = (rng() - .5) * .18
+        cylinderBetween(group, new THREE.Vector3(x, .12, z), new THREE.Vector3(x + lean, height + .12, z), .11, .075, bark, 7, false)
+        round(group, .12, x + lean, height + .12, z, mat('areca-crown', 0x9c7c43, .95), [1, .62, 1], false)
+        for (let frond = 0; frond < 6; frond += 1) {
+          const angle = frond * Math.PI / 3 + index * .4
+          const length = .92 + rng() * .18
+          const segment = block(group, length, .055, .07, x + lean + Math.cos(angle) * length * .42, height + .06 - length * .27, z + Math.sin(angle) * length * .42, leaf[frond % 2], -angle, false)
+          segment.rotation.z = -.48 + rng() * .12
+        }
+      })
+    } else if (kind === 'irrigation-channel') {
+      const bank = stone(1), edge = mat('canal-cut-earth', 0x8e7954, .99), water = mat('irrigation-water', 0x628d89, .36, .04)
+      block(group, 4.0, .17, .82, 0, .085, 0, edge, 0, false)
+      block(group, 4.0, .12, .56, 0, .15, 0, water, 0, false)
+      for (const z of [-.38, .38]) {
+        block(group, 4.0, .16, .20, 0, .18, z, bank, 0, false)
+        for (let index = 0; index < 7; index += 1) {
+          const x = (index - 3) * .57
+          block(group, .055 + rng() * .05, .20 + rng() * .12, .045, x, .29, z * 1.28, edge, (rng() - .5) * .08, false)
+        }
+      }
+    } else if (kind === 'pond') {
+      const water = mat('village-pond-water', 0x648d88, .31, .06)
+      const shore = [stone(0), stone(1), mat('pond-shore-earth', 0x8a805d, .99)]
+      mesh(cylinderGeometry(1.0, 1.0, .10, 24), water, group, new THREE.Vector3(0, .08, 0), undefined, new THREE.Vector3(1.30, 1, .98), false)
+      for (let index = 0; index < 16; index += 1) {
+        const angle = index * Math.PI * 2 / 16 + (rng() - .5) * .11
+        const radius = .78 + rng() * .12
+        const x = Math.cos(angle) * radius * 1.18, z = Math.sin(angle) * radius * .88
+        const size = .16 + rng() * .07
+        round(group, size, x, .18, z, shore[index % shore.length], [1.35, .48 + rng() * .3, .9], false)
+      }
+      for (let index = 0; index < 3; index += 1) {
+        const x = -.72 + index * .17, z = .17 + index * .24
+        round(group, .12, x, .145, z, mat(`pond-lily-${index % 2}`, index % 2 ? 0x6f8245 : 0x87904e, .95), [1.4, .18, 1], false)
+        round(group, .045, x, .18, z, mat('pond-lily-flower', 0xe0c47d, .83), [1, .45, 1], false)
+      }
     } else {
       const length = 2.4 + rng() * .35
       for (let index = 0; index < 4; index += 1) {

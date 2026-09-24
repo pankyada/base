@@ -13,7 +13,8 @@ export interface TrackedFileSize {
 
 export type BuildingForm = 'veranda-house' | 'tamil-workshop' | 'courtyard-house' | 'courtyard-compound' | 'neutral-workshop'
 export interface BuildingSpec { label: string; width: number; depth: number; lotWidth: number; lotDepth: number }
-export interface TownBuildingAppearance { variant: number; wallColor: number; roofColor: number; heightScale: number }
+export const TOWN_HOUSE_THEMES = ['Lantern workshop', 'Stepped hall', 'Courtyard crown', 'Twin atelier', 'Sky lantern', 'Corner tower', 'Open pavilion', 'Double lantern', 'Archive hall', 'Garden court', 'Split atelier', 'High lantern', 'Watch tower', 'Long pavilion', 'Civic office', 'River lodge'] as const
+export interface TownBuildingAppearance { variant: number; theme: typeof TOWN_HOUSE_THEMES[number]; wallColor: number; roofColor: number; heightScale: number }
 
 /** One architectural site contract shared by layout, roads, focus, and the asset. */
 export const TEMPLE_SITE = Object.freeze({
@@ -47,10 +48,34 @@ export function buildingForm(size?: TrackedFileSize): BuildingForm {
 
 export const buildingSpec = (form: BuildingForm): BuildingSpec => FORM_SPECS[form]
 
-export interface LayoutProject extends ActivityProject { id: string; size?: TrackedFileSize }
+export interface LayoutProject extends ActivityProject { id: string; path?: string; display?: { name?: string; description?: string }; size?: TrackedFileSize }
+export const TOWN_CLUSTERS = ['Smart home', 'Personal assistant', 'Harness engineering', 'Ontology and data analysis', 'Agent experiments', 'Documents and knowledge', 'Creative media', 'Mobile apps', 'Finance and property', 'Infrastructure', 'Security tools', 'Enterprise AI', 'Open source lab', 'Desktop utilities', 'Commercial apps', 'Miscellaneous'] as const
+export type TownCluster = typeof TOWN_CLUSTERS[number]
+/** Classification uses only discovered path/name text, never inferred runtime activity. */
+export function projectCluster(project: { id: string; path?: string; display?: { name?: string; description?: string } }): TownCluster {
+  const name = `${project.id} ${project.display?.name ?? ''}`.toLowerCase()
+  const text = `${project.path ?? ''} ${name} ${project.display?.description ?? ''}`.toLowerCase()
+  if (/smartomate|ha-dashboard|home.?assistant|smart.?home|home.?automation|zigbee|esphome|\bmatter\b/.test(text)) return 'Smart home'
+  if (/chatur|reachy|voicepipe|companion|personal.?assistant|agentcanvas|opencode|voiceassist|thevoiceproject|life-os|nanoclaw|speech.?recognition/.test(text)) return 'Personal assistant'
+  if (/\bbase(?:-v[\d.]+)?\b|harness|orchestrat|workflow|repotown/.test(name)) return 'Harness engineering'
+  if (/ontolog|knowledge.?graph|data.?analys|analytics|graphify|semantic|share-custom-data|\bkarta\b/.test(text)) return 'Ontology and data analysis'
+  if (/buyersagent|property|cashflow|finance|\brisk\b/.test(text)) return 'Finance and property'
+  if (/doc-agent|doc-to-rule|\bdocument\b|\bpresentation\b|skills-collection/.test(text)) return 'Documents and knowledge'
+  if (/security|trojan|pktools|pcd-situs/.test(text)) return 'Security tools'
+  if (/dev-agent|\baoa\b|genui-a2a|multimodal|bonsai|\bopenator\b|aitools|agents?-presentation/.test(text)) return 'Agent experiments'
+  if (/mobileapps|chat-app|\bexpo\b|mobile/.test(text)) return 'Mobile apps'
+  if (/design|canvas|image|video|music|creative|studio|marvellerse/.test(text)) return 'Creative media'
+  if (/infra|devops|deploy|server|network|monitor|pipeline/.test(name)) return 'Infrastructure'
+  if (/\bcba\b|\bsoe\b|ai-data-strategy/.test(text)) return 'Enterprise AI'
+  if (/mac-manager|notificator|local-skills-manager|\bmitra\b/.test(text)) return 'Desktop utilities'
+  if (/xpandedge|commercial|product.?suite/.test(text)) return 'Commercial apps'
+  if (/opensourcethis|bifrost|trifrost|frosty/.test(text)) return 'Open source lab'
+  return 'Miscellaneous'
+}
 export interface TownRoadPoint { x: number; z: number }
 export interface TownPosition extends TownRoadPoint {
   id: string
+  cluster: TownCluster
   radius: number
   angle: number
   band: 'active' | 'pinned' | 'recent' | 'established' | 'quiet' | 'unknown'
@@ -66,6 +91,18 @@ export interface TownLayout extends Map<string, TownPosition> {
   roads: TownRoadPoint[][]
   trees: TownRoadPoint[]
   terrainRadius: number
+  islands: Array<{ cluster: TownCluster; x: number; z: number; radius: number; sign: TownRoadPoint }>
+}
+
+/** Stable, overview-visible grove anchors selected from road-clear scenery cells. */
+export function townGroveSites(trees: TownRoadPoint[], limit = 24, radius = 128): TownRoadPoint[] {
+  const cap = Math.max(0, Math.min(24, Math.floor(limit)))
+  if (!cap) return []
+  return trees
+    .filter(point => Math.hypot(point.x, point.z) <= radius)
+    .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z) || a.x - b.x || a.z - b.z)
+    .slice(0, cap)
+    .map(point => ({ x: point.x, z: point.z }))
 }
 
 const NOMINAL_RADIUS = { active: 14, pinned: 22, recent: 31, established: 74, quiet: 120, unknown: 172 } as const
@@ -103,11 +140,13 @@ const ACTIVE_WALL_PALETTE = [0xc77952, 0xd8a65c, 0x9d5945, 0xb9653e, 0xe0bd7e, 0
 const ACTIVE_ROOF_PALETTE = [0x66483b, 0x824738, 0x635444, 0x514b43, 0x96543b, 0x695747, 0x774e42, 0x4f554b, 0x81553d, 0x63503c, 0x8c4b3e, 0x555047] as const
 
 /** Stable identity-only appearance. Activity controls whether the scene applies it. */
-export function projectBuildingAppearance(id: string): TownBuildingAppearance {
+export function projectBuildingAppearance(id: string, cluster?: TownCluster): TownBuildingAppearance {
   const identity = hash(id)
   const wall = hash(`${id}:wall`), roof = hash(`${id}:roof`), height = hash(`${id}:height`)
+  const variant = cluster ? TOWN_CLUSTERS.indexOf(cluster) : identity % TOWN_HOUSE_THEMES.length
   return {
-    variant: identity % 6,
+    variant,
+    theme: TOWN_HOUSE_THEMES[variant],
     wallColor: ACTIVE_WALL_PALETTE[wall % ACTIVE_WALL_PALETTE.length],
     roofColor: ACTIVE_ROOF_PALETTE[roof % ACTIVE_ROOF_PALETTE.length],
     heightScale: .9 + (height / 0xffff_ffff) * .45,
@@ -242,22 +281,32 @@ function addGridLine(network: Set<string>, from: TownRoadPoint, to: TownRoadPoin
   return line
 }
 
-function environmentTrees(placements: TownPosition[]): TownRoadPoint[] {
+function environmentTrees(placements: TownPosition[], roads: TownRoadPoint[][]): TownRoadPoint[] {
   const trees: TownRoadPoint[] = []
   const maxRadius = Math.max(40, ...placements.map(item => item.radius + Math.hypot(item.lotWidth, item.lotDepth) / 2))
-  // Scatter a bounded grove through open farm and village clearings, rather than
-  // making one evenly spaced ring at the map edge.
-  for (let index = 0; index < 4_000 && trees.length < 44; index++) {
+  // Put most greenery inside the normal Town overview and reserve a smaller
+  // outer scattering for the surveyed repositories beyond the central town.
+  for (let index = 0; index < 8_000 && trees.length < 84; index++) {
     const random = randomFor(hash(`kaveri-tree-${index}`))
     const angle = random() * Math.PI * 2
-    const radius = 19 + Math.sqrt(random()) * (maxRadius + 30)
+    const outerRadius = index % 3 === 0 ? maxRadius + 30 : Math.min(maxRadius + 30, 122)
+    const radius = 19 + Math.sqrt(random()) * Math.max(1, outerRadius - 19)
     const point = {
       x: roundGrid(Math.cos(angle) * radius + (random() - .5) * 5),
       z: roundGrid(Math.sin(angle) * radius + (random() - .5) * 5),
     }
     if (templeEdgeDistance(point) < TEMPLE_SITE.clearance + 4) continue
     if (placements.some(item => Math.abs(point.x - item.x) < item.lotWidth / 2 + 12 && Math.abs(point.z - item.z) < item.lotDepth / 2 + 12)) continue
-    if (trees.some(tree => Math.hypot(point.x - tree.x, point.z - tree.z) < 14)) continue
+    // Route the public paths first, then reserve a generous tree-free shoulder
+    // around every segment so denser scenery cannot strand a project entrance.
+    if (roads.some(route => route.slice(1).some((end, segment) => {
+      const start = route[segment]!
+      const dx = end.x - start.x, dz = end.z - start.z
+      const lengthSquared = dx * dx + dz * dz
+      const along = lengthSquared ? Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSquared)) : 0
+      return Math.hypot(point.x - (start.x + along * dx), point.z - (start.z + along * dz)) < 8
+    }))) continue
+    if (trees.some(tree => Math.hypot(point.x - tree.x, point.z - tree.z) < 10.5)) continue
     if (HISTORICAL_DISCOVERY_SITES.some(site => circleDistance(point, site) < site.radius + 8)) continue
     trees.push(point)
   }
@@ -265,12 +314,7 @@ function environmentTrees(placements: TownPosition[]): TownRoadPoint[] {
 }
 
 function routeLots(placements: TownPosition[]): { roads: TownRoadPoint[][]; trees: TownRoadPoint[]; terrainRadius: number } {
-  const trees = environmentTrees(placements)
-  const sceneExtent = Math.max(
-    18,
-    ...placements.map(item => item.radius + Math.hypot(item.lotWidth, item.lotDepth) / 2),
-    ...trees.map(tree => Math.hypot(tree.x, tree.z)),
-  )
+  const sceneExtent = Math.max(18, 152, ...placements.map(item => item.radius + Math.hypot(item.lotWidth, item.lotDepth) / 2))
   const outer = Math.ceil((sceneExtent + 16) / GRID_STEP) * GRID_STEP
   const network = new Set<string>()
   const roads = [
@@ -280,16 +324,17 @@ function routeLots(placements: TownPosition[]): { roads: TownRoadPoint[][]; tree
     addGridLine(network, { x: -outer, z: outer }, { x: -outer, z: -outer }),
   ]
   const gridLimit = outer + 160
-  const centralRoute = connectToRoadNetwork(TEMPLE_SITE.entrance, network, placements, trees, gridLimit)
+  const centralRoute = connectToRoadNetwork(TEMPLE_SITE.entrance, network, placements, [], gridLimit)
   for (const point of centralRoute) network.add(cellKey(point))
   roads.push(centralRoute)
   for (const item of placements) {
     const entrance = entranceFor(item)
     item.entrance = entrance
-    item.road = connectToRoadNetwork(entrance, network, placements, trees, gridLimit)
+    item.road = connectToRoadNetwork(entrance, network, placements, [], gridLimit)
     for (const point of item.road) network.add(cellKey(point))
     roads.push(item.road)
   }
+  const trees = environmentTrees(placements, roads)
   return { roads, trees, terrainRadius: outer + 120 }
 }
 
@@ -298,43 +343,51 @@ function routeLots(placements: TownPosition[]): { roads: TownRoadPoint[][]; tree
  * Survey or successful pin change; ordinary task/snapshot updates keep this map.
  */
 export function layoutProjects(projects: LayoutProject[], activeIds: ReadonlySet<string>, pinnedIds: ReadonlySet<string>, now = Date.now()): TownLayout {
-  const buckets: Record<TownPosition['band'], LayoutProject[]> = { active: [], pinned: [], recent: [], established: [], quiet: [], unknown: [] }
-  for (const project of projects) buckets[bandByAge(project, activeIds.has(project.id), pinnedIds.has(project.id), now)].push(project)
+  const buckets = new Map<TownCluster, LayoutProject[]>(TOWN_CLUSTERS.map(cluster => [cluster, []]))
+  for (const project of projects) buckets.get(projectCluster(project))!.push(project)
   const placed: TownPosition[] = []
-  for (const band of BAND_ORDER) {
-    const pending = buckets[band].sort((a, b) => a.id.localeCompare(b.id))
-    // Each inactive band begins beyond the whole property envelope of the
-    // previous districts, so a dense active ring cannot swallow quiet repos.
-    const previousDistrictEnvelope = INNER_DISTRICT_BANDS.has(band) ? 0
-      : Math.max(0, ...placed.map(item => item.radius + Math.hypot(item.lotWidth, item.lotDepth) / 2))
+  const islands: TownLayout['islands'] = []
+  const islandSites: TownRoadPoint[] = [
+    { x: -210, z: -210 }, { x: -70, z: -210 }, { x: 70, z: -210 }, { x: 210, z: -210 },
+    { x: -210, z: -70 }, { x: -70, z: -70 }, { x: 70, z: -70 }, { x: 210, z: -70 },
+    { x: -210, z: 70 }, { x: -70, z: 70 }, { x: 70, z: 70 }, { x: 210, z: 70 },
+    { x: -210, z: 210 }, { x: 210, z: 210 },
+    { x: -70, z: 210 }, { x: 70, z: 210 },
+  ]
+  for (const [index, cluster] of TOWN_CLUSTERS.entries()) {
+    const pending = buckets.get(cluster)!.sort((a, b) => {
+      const left = bandByAge(a, activeIds.has(a.id), pinnedIds.has(a.id), now)
+      const right = bandByAge(b, activeIds.has(b.id), pinnedIds.has(b.id), now)
+      return BAND_ORDER.indexOf(left) - BAND_ORDER.indexOf(right) || a.id.localeCompare(b.id)
+    })
+    if (!pending.length) continue
+    const center = islandSites[index]!
+    const clusterPlaced: TownPosition[] = []
     for (const project of pending) {
       const form = buildingForm(project.size)
       const spec = buildingSpec(form)
+      const band = bandByAge(project, activeIds.has(project.id), pinnedIds.has(project.id), now)
       const item: TownPosition = {
-        id: project.id, x: 0, z: 0, radius: 0, angle: 0, band, form,
+        id: project.id, cluster, x: 0, z: 0, radius: 0, angle: 0, band, form,
         footprintWidth: spec.width, footprintDepth: spec.depth,
         lotWidth: spec.lotWidth, lotDepth: spec.lotDepth, entrance: { x: 0, z: 0 }, road: [],
       }
       const pitch = Math.max(item.lotWidth, item.lotDepth) + PROPERTY_CLEARANCE
       const radialJitter = Math.max(4, pitch * .72)
       const lotRadius = Math.hypot(item.lotWidth, item.lotDepth) / 2
-      const minimumRadius = INNER_DISTRICT_BANDS.has(band)
-        ? NOMINAL_RADIUS[band]
-        : Math.max(NOMINAL_RADIUS[band], previousDistrictEnvelope + INACTIVE_DISTRICT_GAP + lotRadius)
       let found = false
       for (let ring = 0; ring < 20_000 && !found; ring++) {
         const random = randomFor(hash(`${project.id}:ring:${ring}`))
-        const radius = minimumRadius + random() * radialJitter + ring * Math.max(8, pitch * .72)
+        const radius = 5 + random() * radialJitter + ring * Math.max(8, pitch * .72)
         const capacity = Math.max(16, Math.ceil((2 * Math.PI * Math.max(radius, pitch)) / pitch))
         const phase = random() * Math.PI * 2 + ring * 2.399963229728653
         for (let step = 0; step < capacity; step++) {
           const variedRadius = radius + (random() - .5) * Math.min(5, pitch * .24)
-          const candidateRadius = INNER_DISTRICT_BANDS.has(band) ? variedRadius : Math.max(minimumRadius, variedRadius)
           const angle = phase + (step / capacity) * Math.PI * 2 + (random() - .5) * (Math.PI * 2 / capacity) * .52
-          item.x = Math.cos(angle) * candidateRadius
-          item.z = Math.sin(angle) * candidateRadius
-          item.radius = candidateRadius
-          item.angle = angle
+          item.x = center.x + Math.cos(angle) * variedRadius
+          item.z = center.z + Math.sin(angle) * variedRadius
+          item.radius = Math.hypot(item.x, item.z)
+          item.angle = Math.atan2(item.z, item.x)
           if (!clearsTemple(item) || !clearsDiscoveries(item)) continue
           if (placed.some(other => edgeGap(item, other) < PROPERTY_CLEARANCE - 1e-7)) continue
           found = true
@@ -343,20 +396,34 @@ export function layoutProjects(projects: LayoutProject[], activeIds: ReadonlySet
       }
       if (!found) throw new Error(`could not place Town project ${project.id}`)
       placed.push(item)
+      clusterPlaced.push(item)
     }
+    const radius = Math.max(26, ...clusterPlaced.map(item => Math.hypot(item.x - center.x, item.z - center.z) + Math.hypot(item.lotWidth, item.lotDepth) / 2 + 5))
+    const signRadius = radius - 9
+    const sign = Array.from({ length: 16 }, (_, index) => {
+      const angle = index * Math.PI * 2 / 16
+      const point = { x: center.x + Math.cos(angle) * signRadius, z: center.z + Math.sin(angle) * signRadius }
+      const nearest = Math.min(...clusterPlaced.map(item => {
+        const dx = Math.max(0, Math.abs(point.x - item.x) - item.lotWidth / 2)
+        const dz = Math.max(0, Math.abs(point.z - item.z) - item.lotDepth / 2)
+        return Math.hypot(dx, dz)
+      }))
+      return { ...point, nearest, index }
+    }).sort((left, right) => right.nearest - left.nearest || left.index - right.index)[0]!
+    islands.push({ cluster, ...center, radius, sign: { x: sign.x, z: sign.z } })
   }
   const layout = new Map(placed.map(item => [item.id, item])) as TownLayout
   const environment = routeLots(placed)
   layout.roads = environment.roads
   layout.trees = environment.trees
   layout.terrainRadius = environment.terrainRadius
+  layout.islands = islands
   return layout
 }
 
-/** Bounds the default town view to active, pinned and recent districts only. */
+/** Frame the complete archipelago so every named island is discoverable. */
 export function townCentralDistrictRadius(positions: Iterable<TownPosition>): number {
   return Math.max(50, ...[...positions]
-    .filter(item => INNER_DISTRICT_BANDS.has(item.band))
     .map(item => item.radius + Math.hypot(item.lotWidth, item.lotDepth) / 2))
 }
 

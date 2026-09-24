@@ -801,6 +801,12 @@ as the dispatch gate are confirmed. Detailed layout/rendering,
 team lifetime, workspace/merge policy, quota freshness/reservation/limits and product
 placement are now frozen in the [PT-052 build specification](superpowers/specs/2026-09-13-orchestrator-town-spec.md). PT-052 implementation, bounded provider-bridge compatibility and live runtime/browser evidence are recorded; user landscape acceptance remains PT-053 and headless queue wake/account-specific catalog reconciliation remain PT-054. No release or deployment follows this evidence. See [ORCH features](FEATURES.md#7-multi-agent-orchestrator--collaborative-agent-workspace) and [task tracker](PRODUCT_STATE.md).
 
+2026-09-24: PT-109 adds a user-approved Web-only portal from Town into a non-coding
+Cosmic Observatory. Three bounded local file collections become orbital worlds with
+search, previews and return-camera restoration. [Specification](superpowers/specs/2026-09-24-observatory-spec.md)
+and [local evidence](superpowers/reports/2026-09-24-observatory.md) distinguish implementation
+from PT-111 user visual/embedded-PDF acceptance. No Core discovery change or deployment.
+
 ## Active implementation track — Core uplift
 
 ✅ Core local implementation and corrective acceptance complete through PT-030/PT-037

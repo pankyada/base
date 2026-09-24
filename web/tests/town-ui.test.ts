@@ -57,13 +57,18 @@ describe('Town saved viewpoints', () => {
     const position = { set: vi.fn() }
     const target = { set: vi.fn() }
     const update = vi.fn()
-    const controls = { object: { position }, target, update } as unknown as Parameters<typeof applyTownSavedView>[0]
-    const view = { position: [166.62, 54.07, 202.06] as [number, number, number], target: [-8.52, 1, 26.92] as [number, number, number] }
+    const updateProjectionMatrix = vi.fn()
+    const object = { position, far: 1200, updateProjectionMatrix }
+    const controls = { object, target, update, maxDistance: 380 } as unknown as Parameters<typeof applyTownSavedView>[0]
+    const view = { position: [92.41, 689.61, 276.42] as [number, number, number], target: [0, 1, 0] as [number, number, number] }
 
     applyTownSavedView(controls, view)
 
     expect(position.set).toHaveBeenCalledWith(...view.position)
     expect(target.set).toHaveBeenCalledWith(...view.target)
+    expect(controls.maxDistance).toBeGreaterThan(Math.hypot(view.position[0]-view.target[0],view.position[1]-view.target[1],view.position[2]-view.target[2]))
+    expect(object.far).toBeGreaterThan(1200)
+    expect(updateProjectionMatrix).toHaveBeenCalledOnce()
     expect(update).toHaveBeenCalledOnce()
   })
 })

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { createTownAssetLibrary } from '../app/town/town-assets'
-import { buildingSpec, TEMPLE_SITE, type TownBuildingAppearance } from '../app/town/town-model'
+import { buildingSpec, TEMPLE_SITE, TOWN_HOUSE_THEMES, type TownBuildingAppearance } from '../app/town/town-model'
 
 function localBounds(group: THREE.Group): THREE.Box3 {
   group.updateMatrixWorld(true)
@@ -26,7 +26,7 @@ function featureBounds(group: THREE.Group, feature: string): THREE.Box3[] {
 }
 
 const appearance = (variant: number, heightScale = 1, wallColor = 0xc77952, roofColor = 0x66483b): TownBuildingAppearance => ({
-  variant, wallColor, roofColor, heightScale,
+  variant, theme: TOWN_HOUSE_THEMES[variant % TOWN_HOUSE_THEMES.length]!, wallColor, roofColor, heightScale,
 })
 
 describe('town asset library', () => {
@@ -62,26 +62,26 @@ describe('town asset library', () => {
     library.dispose()
   })
 
-  it('gives active offices six different roof families, stable colors and bounded measured footprints', () => {
+  it('gives offices seven different architectural roof families, stable colors and bounded measured footprints', () => {
     const library = createTownAssetLibrary()
     const form = 'tamil-workshop'
     const spec = buildingSpec(form)
-    const variants = Array.from({ length: 6 }, (_, variant) => library.createHouse(
+    const variants = Array.from({ length: 7 }, (_, variant) => library.createHouse(
       form,
       `active-office-${variant}`,
-      appearance(variant, .96 + variant * .07, [0xc77952, 0xd8a65c, 0x9d5945, 0xb9653e, 0xe0bd7e, 0x98644e][variant], [0x66483b, 0x824738, 0x635444, 0x514b43, 0x96543b, 0x695747][variant]),
+      appearance(variant, .96 + variant * .06, [0xc77952, 0xd8a65c, 0x9d5945, 0xb9653e, 0xe0bd7e, 0x98644e, 0xc58a61][variant], [0x66483b, 0x824738, 0x635444, 0x514b43, 0x96543b, 0x695747, 0x774e42][variant]),
     ))
     const silhouettes = variants.map(group => {
-      const roofs = featureBounds(group, 'active-office-roof')
+      const roofs = featureBounds(group, 'project-house-theme-roof')
       return {
         maxY: localBounds(group).max.y,
         roofCount: roofs.length,
         roofSizes: roofs.map(box => [box.getSize(new THREE.Vector3()).x, box.getSize(new THREE.Vector3()).z].map(value => value.toFixed(2)).join(':')).sort().join('|'),
       }
     })
-    expect(variants.map(group => group.userData.assetIdentity.variant)).toEqual([0, 1, 2, 3, 4, 5])
-    expect(new Set(silhouettes.map(item => `${item.roofCount}/${item.roofSizes}`)).size).toBeGreaterThanOrEqual(5)
-    expect(new Set(silhouettes.map(item => item.maxY.toFixed(2))).size).toBe(6)
+    expect(variants.map(group => group.userData.assetIdentity.variant)).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(new Set(silhouettes.map(item => `${item.roofCount}/${item.roofSizes}`)).size).toBeGreaterThanOrEqual(6)
+    expect(new Set(silhouettes.map(item => item.maxY.toFixed(2))).size).toBeGreaterThanOrEqual(6)
     for (const group of variants) {
       const box = localBounds(group)
       expect(box.getSize(new THREE.Vector3()).x).toBeLessThanOrEqual(spec.width + .02)
@@ -95,9 +95,10 @@ describe('town asset library', () => {
       expect(materialColors).toContain(group.userData.appearance.roofColor)
     }
 
-    const inactive = library.createHouse(form, 'active-office-0')
-    expect(inactive.userData.appearance).toBeUndefined()
-    expect(inactive.userData.assetIdentity).toBeUndefined()
+    const inactive = library.createHouse(form, 'active-office-0', appearance(0), false)
+    expect(inactive.userData.appearance.theme).toBe('Lantern workshop')
+    expect(inactive.userData.assetIdentity.kind).toBe('project-house')
+    expect(featureBounds(inactive, 'project-house-theme-roof').length).toBeGreaterThan(0)
     expect(inactive.scale.y).toBe(1)
     library.dispose()
   })
@@ -146,5 +147,60 @@ describe('town asset library', () => {
     library.dispose()
     expect(disposed).toEqual(owned)
     expect(() => library.createTemple('after-dispose')).toThrow('Town asset library has been disposed')
+  })
+
+  it('builds the added workshop, civic and field props deterministically inside their declared footprints', () => {
+    const kinds = [
+      'awning', 'bench', 'workstation', 'tool-rack', 'queue-board', 'archive-shelf', 'archive-crate',
+      'crop-row', 'grove', 'irrigation-channel', 'pond',
+    ] as const
+    const firstLibrary = createTownAssetLibrary()
+    const secondLibrary = createTownAssetLibrary()
+    for (const kind of kinds) {
+      const first = firstLibrary.createProp(kind, `deterministic-${kind}`)
+      const second = secondLibrary.createProp(kind, `deterministic-${kind}`)
+      const bounds = localBounds(first)
+      const declared = first.userData.assetDimensions as { width: number; depth: number; height: number }
+      const size = bounds.getSize(new THREE.Vector3())
+      expect(first.userData.propKind).toBe(kind)
+      expect(bounds.min.y, `${kind} ground clearance`).toBeGreaterThanOrEqual(-.001)
+      expect(size.x, `${kind} width`).toBeLessThanOrEqual(declared.width + .02)
+      expect(size.z, `${kind} depth`).toBeLessThanOrEqual(declared.depth + .02)
+      expect(size.y, `${kind} height`).toBeLessThanOrEqual(declared.height + .02)
+      expect(size.x).toBeGreaterThan(.1)
+      expect(size.z).toBeGreaterThan(.1)
+      const signature = (group: THREE.Group) => meshes(group).map(item => {
+        item.geometry.computeBoundingBox()
+        const box = item.geometry.boundingBox!
+        const material = Array.isArray(item.material) ? item.material[0] : item.material
+        return [
+          item.position.toArray().map(value => value.toFixed(4)).join(','),
+          [item.rotation.x, item.rotation.y, item.rotation.z].map(value => value.toFixed(4)).join(','),
+          item.scale.toArray().map(value => value.toFixed(4)).join(','),
+          box.getSize(new THREE.Vector3()).toArray().map(value => value.toFixed(4)).join(','),
+          Array.from(item.geometry.attributes.position.array).map(value => Number(value.toFixed(4))).join(','),
+          material.name,
+          (material as THREE.MeshStandardMaterial).color?.getHexString(),
+        ].join('|')
+      })
+      expect(signature(first)).toEqual(signature(second))
+    }
+    firstLibrary.dispose()
+    secondLibrary.dispose()
+  })
+
+  it('varies seeded field detail and releases its merged mesh buffers', () => {
+    const library = createTownAssetLibrary()
+    const first = library.createProp('crop-row', 'field-a')
+    const second = library.createProp('crop-row', 'field-b')
+    const vertexData = (group: THREE.Group) => meshes(group).map(item => Array.from(item.geometry.attributes.position.array).map(value => Number(value.toFixed(3))))
+    expect(vertexData(first)).not.toEqual(vertexData(second))
+    const merged = meshes(first).filter(item => item.userData.assetBatch).map(item => item.geometry)
+    expect(merged.length).toBeGreaterThan(0)
+    const disposed = new Set<THREE.BufferGeometry>()
+    for (const geometry of merged) geometry.addEventListener('dispose', () => disposed.add(geometry))
+    library.releaseAsset(first)
+    expect(disposed.size).toBe(merged.length)
+    library.dispose()
   })
 })

@@ -4,10 +4,13 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
-import type { BuildingForm, TownBuildingAppearance, TownLayout, TownPosition, TownRoadPoint } from './town-model'
-import { projectBuildingAppearance, TEMPLE_SITE, townCentralDistrictRadius, townOverviewDistance } from './town-model'
+import type { BuildingForm, TownBuildingAppearance, TownCluster, TownLayout, TownPosition, TownRoadPoint } from './town-model'
+import { projectBuildingAppearance, TEMPLE_SITE, townCentralDistrictRadius, townGroveSites, townOverviewDistance } from './town-model'
 import { createTownAssetLibrary } from './town-assets'
-import { HISTORICAL_REFERENCES, nightLampSites, projectAgentPresence, TOWN_DEFAULT_CAMERA_POSITION_DIRECTION, TOWN_MOON_DIRECTION, townCommunicationMarker, townLayoutStamp, townSceneLighting, workerAnimation, type AgentPresence, type TownAgentRecord, type TownCommunicationMessage, type TownMode, type TownTaskRecord } from './town-world-model'
+import { createTownBillboardLibrary, type TownBillboard } from './town-billboards'
+import type { ObservatoryReturnView } from './town-portal-state'
+import { townCameraDistance, townCameraFarPlane, townCameraMaxDistance } from './town-camera-state'
+import { HISTORICAL_REFERENCES, nightLampSites, projectAgentPresence, townBillboardSlides, townFrontagePlan, TOWN_DEFAULT_CAMERA_POSITION_DIRECTION, TOWN_MOON_DIRECTION, townCommunicationMarker, townLayoutStamp, townSceneLighting, workerAnimation, type AgentPresence, type TownAgentRecord, type TownBillboardSlide, type TownCommunicationMessage, type TownMode, type TownTaskRecord } from './town-world-model'
 
 export interface TownSceneProject {
   id: string
@@ -29,6 +32,7 @@ interface Props {
   mode: TownMode
   labelsVisible: boolean
   reducedMotion: boolean
+  liveConnected: boolean
   onSelect: (id: string) => void
   onSelectAgent: (person: AgentPresence) => void
   onSelectDiscovery: (id: string) => void
@@ -36,6 +40,8 @@ interface Props {
   onReady: (controls: OrbitControls) => void
   onFocusReady: (focus: ((id: string) => void) | null) => void
   onOverviewReady: (overview: (() => void) | null) => void
+  onEnterObservatory?: () => void
+  initialViewPose?: Pick<ObservatoryReturnView, 'position' | 'target'> | null
 }
 
 const TILE_SIZE = 200
@@ -242,11 +248,14 @@ export function TownScene(props: Props) {
   const labelsRef = useRef<CSS2DObject[]>([])
   const controlsRef = useRef<OrbitControls | null>(null)
   const workerGroupsRef = useRef(new Map<string, THREE.Group>())
+  const frontageAssetsRef = useRef(new Map<string, { stamp: string; assets: THREE.Group[] }>())
   const communicationMarkersRef = useRef(new Map<string, CSS2DObject>())
   const buildingsRef = useRef(new Map<string, THREE.Group>())
   const assetsRef = useRef<ReturnType<typeof createTownAssetLibrary> | null>(null)
   const resourcesRef = useRef<Set<THREE.BufferGeometry>>(new Set())
   const materialsRef = useRef<Set<THREE.Material>>(new Set())
+  const billboardsRef = useRef(new Map<TownCluster, TownBillboard>())
+  const billboardSlidesRef = useRef(new Map<TownCluster, TownBillboardSlide[]>())
 
   useEffect(() => {
     const element = host.current
@@ -260,6 +269,7 @@ export function TownScene(props: Props) {
     const materials = materialsRef.current = new Set()
     const labels: CSS2DObject[] = labelsRef.current = []
     const library = assetsRef.current = createTownAssetLibrary()
+    const billboardLibrary = createTownBillboardLibrary()
     const placement = initial.layout
     const currentProjects = initial.projects
     const maxRadius = Math.max(50, ...[...placement.values()].map(item => item.radius + Math.hypot(item.lotWidth, item.lotDepth) / 2))
@@ -268,16 +278,21 @@ export function TownScene(props: Props) {
     const direction = new THREE.Vector3(TOWN_DEFAULT_CAMERA_POSITION_DIRECTION.x, TOWN_DEFAULT_CAMERA_POSITION_DIRECTION.y, TOWN_DEFAULT_CAMERA_POSITION_DIRECTION.z).normalize()
     const overviewPose = () => {
       const width = Math.max(1, element.clientWidth), height = Math.max(1, element.clientHeight)
-      const distance = townOverviewDistance(viewRadius, width, height)
+      const distance = townOverviewDistance(viewRadius, width, height) * (width > height ? .88 : 1)
       return { position: new THREE.Vector3(0, 1, 0).addScaledVector(direction, distance), distance }
     }
     const initialPose = overviewPose()
-    const fog = new THREE.Fog(initialLighting.sky, Math.max(220, maxRadius * .8), Math.max(1200, initialPose.distance + maxRadius * 2.2))
+    const retainedPose = element.dataset.sceneHadProjects === 'true' ? cameraPoseFrom(element.dataset.cameraPose) : undefined
+    const restoredDistance = state.current.initialViewPose
+      ? townCameraDistance(state.current.initialViewPose.position, state.current.initialViewPose.target)
+      : retainedPose?.position.distanceTo(retainedPose.target) ?? 0
+    const farPlane = townCameraFarPlane(initialPose.distance, maxRadius, restoredDistance)
+    const fog = new THREE.Fog(initialLighting.sky, Math.max(220, initialPose.distance + maxRadius * 1.5, restoredDistance + maxRadius * 1.5), Math.max(1200, farPlane))
     scene.fog = fog; fogRef.current = fog
-    const camera = new THREE.PerspectiveCamera(44, Math.max(1, element.clientWidth) / Math.max(1, element.clientHeight), .2, Math.max(2200, initialPose.distance + maxRadius * 4))
+    const camera = new THREE.PerspectiveCamera(44, Math.max(1, element.clientWidth) / Math.max(1, element.clientHeight), .2, farPlane)
     scene.add(camera)
-    const retainedPose = cameraPoseFrom(element.dataset.cameraPose)
-    camera.position.copy(retainedPose?.position ?? initialPose.position)
+    element.dataset.sceneHadProjects = String(currentProjects.length > 0)
+    camera.position.copy(state.current.initialViewPose ? new THREE.Vector3(...state.current.initialViewPose.position) : retainedPose?.position ?? initialPose.position)
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.4))
     renderer.shadowMap.enabled = true
@@ -304,6 +319,23 @@ export function TownScene(props: Props) {
       tiles.push(tile); scene.add(tile)
     }
 
+    const islandColors = [0x829d83, 0xb4a083, 0x87949d, 0x9b99b1, 0xb49b83, 0x92a595, 0xa8a595, 0x8e9a9d, 0xb3a48a, 0x98a89c, 0x9b9290, 0xaaa183, 0x929f8c, 0xa39182, 0x9ba7ac, 0xaaa48e]
+    placement.islands?.forEach((island, index) => {
+      const shore = new THREE.Mesh(new THREE.CircleGeometry(island.radius + 2.5, 64), sceneMaterial(0xc3b692, materials, { roughness: 1 }))
+      const land = new THREE.Mesh(new THREE.CircleGeometry(island.radius, 64), sceneMaterial(islandColors[index]!, materials, { roughness: 1 }))
+      resources.add(shore.geometry); resources.add(land.geometry)
+      shore.rotation.x = land.rotation.x = -Math.PI / 2
+      shore.position.set(island.x, -.045, island.z)
+      land.position.set(island.x, -.035, island.z)
+      shore.receiveShadow = land.receiveShadow = true
+      scene.add(shore, land)
+      const billboard = billboardLibrary.create(island.cluster)
+      billboard.group.position.set(island.sign.x, 0, island.sign.z)
+      billboard.update(townBillboardSlides({ cluster: island.cluster, layout: placement, agents: initial.agents, tasks: initial.tasks, messages: initial.messages, userId: initial.userId, liveConnected: initial.liveConnected })[0]!)
+      scene.add(billboard.group)
+      billboardsRef.current.set(island.cluster, billboard)
+    })
+
     const fieldOuter = Math.max(90, ...[...placement.values()].map(item => item.radius + Math.max(item.lotWidth, item.lotDepth) / 2)) + 44
     const fieldSites = Array.from({ length: 5 }, (_, index) => {
       const angle = -.7 + index * 2.399963229728653 + (seedOf(`field-angle-${index}`) / 4_294_967_296 - .5) * .12
@@ -320,10 +352,20 @@ export function TownScene(props: Props) {
     for (const geometry of [fieldGeometry, bundGeometry, waterGeometry, tankBankGeometry]) resources.add(geometry)
     fieldSites.forEach((site, index) => {
       const field = addMesh(scene, fieldGeometry, fieldMaterial, site.x, .02, site.z, resources)
-      field.rotation.x = -Math.PI / 2; field.rotation.y = index * .24
+      field.rotation.set(-Math.PI / 2, 0, -index * .24)
       for (let row = -1; row <= 1; row++) {
         const bund = addMesh(scene, bundGeometry, bundMaterial, site.x, .12, site.z + row * 7.1, resources)
         bund.rotation.y = index * .24
+      }
+      // Broad planted patches make the irrigated plots read as working fields
+      // from the town overview instead of bare green rectangles.
+      for (let row = 0; row < 2; row++) for (let column = 0; column < 3; column++) {
+        const crop = library.createProp('crop-row', seedOf(`paddy-${index}-${row}-${column}`))
+        crop.position.set(site.x + (column - 1) * 7.6, .04, site.z + (row ? 4.2 : -4.2))
+        crop.rotation.y = index * .24
+        crop.scale.set(2.25, 1.5, 1.8)
+        crop.userData.ambientScenery = true
+        scene.add(crop)
       }
     })
     const tankSite = { x: fieldSites[1].x + 31, z: fieldSites[1].z - 5 }
@@ -332,10 +374,27 @@ export function TownScene(props: Props) {
     const tank = addMesh(scene, waterGeometry, waterMaterial, tankSite.x, .08, tankSite.z, resources)
     tank.rotation.x = -Math.PI / 2
     for (let channel = 0; channel < fieldSites.length; channel++) {
-      const channelGeometry = new THREE.BoxGeometry(38, .08, 1.3)
-      resources.add(channelGeometry)
-      const water = addMesh(scene, channelGeometry, waterMaterial, fieldSites[channel].x + (channel === 1 ? -18 : 18), .05, fieldSites[channel].z + 14, resources)
-      water.rotation.y = channel * .38
+      const waterway = library.createProp('irrigation-channel', seedOf(`irrigation-channel-${channel}`))
+      waterway.position.set(fieldSites[channel]!.x + (channel === 1 ? -18 : 18), .02, fieldSites[channel]!.z + 14)
+      waterway.rotation.y = channel * .38
+      waterway.scale.set(8.5, 1, 1.4)
+      waterway.userData.ambientScenery = true
+      scene.add(waterway)
+    }
+    for (let index = 0; index < fieldSites.length; index++) {
+      const grove = library.createProp('grove', seedOf(`field-grove-${index}`))
+      grove.position.set(fieldSites[index]!.x + (index % 2 ? -27 : 27), 0, fieldSites[index]!.z + (index % 2 ? 24 : -24))
+      grove.rotation.y = seedOf(`field-grove-turn-${index}`) / 4_294_967_296 * Math.PI * 2
+      grove.scale.set(2.6, 2.1, 2.6)
+      grove.userData.ambientScenery = true
+      scene.add(grove)
+      if (index % 2 === 0) {
+        const pond = library.createProp('pond', seedOf(`field-pond-${index}`))
+        pond.position.set(fieldSites[index]!.x - 28, .01, fieldSites[index]!.z + 25)
+        pond.scale.set(3.4, 1, 3.4)
+        pond.userData.ambientScenery = true
+        scene.add(pond)
+      }
     }
     fieldSites.forEach((site, index) => {
       const kind = index % 2 ? 'well' : 'cart'
@@ -368,18 +427,52 @@ export function TownScene(props: Props) {
     hallLabel.addEventListener('click', event => { event.stopPropagation(); state.current.onSelectHall() })
     const hallTag = new CSS2DObject(hallLabel); hallTag.position.set(0, TEMPLE_SITE.maxHeight + 1.2, 0); hallTag.visible = initial.labelsVisible; hall.add(hallTag); labels.push(hallTag)
 
+    const observatoryPortal = new THREE.Group()
+    observatoryPortal.name = 'cosmic-observatory-portal'
+    observatoryPortal.position.set(TEMPLE_SITE.maxX + TEMPLE_SITE.clearance + 8, 0, 0)
+    const portalGold = sceneMaterial(0xd9c27d, materials, { metalness: .72, roughness: .32, emissive: 0x4d3d16, emissiveIntensity: .55 })
+    const portalGlow = new THREE.MeshBasicMaterial({ color: 0x8cd7eb, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false })
+    materials.add(portalGlow)
+    const portalColumns = new THREE.BoxGeometry(.72, 7.2, .82)
+    resources.add(portalColumns)
+    for (const x of [-4.1, 4.1]) {
+      const column = new THREE.Mesh(portalColumns, portalGold)
+      column.position.set(x, 3.6, 0); column.castShadow = true; column.userData.observatoryPortal = true
+      observatoryPortal.add(column)
+    }
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(4.1, .48, 10, 32, Math.PI), portalGold)
+    resources.add(arch.geometry); arch.position.set(0, 7.2, 0); arch.castShadow = true; arch.userData.observatoryPortal = true
+    observatoryPortal.add(arch)
+    const portalSurface = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 7.1), portalGlow)
+    resources.add(portalSurface.geometry); portalSurface.position.set(0, 3.65, -.12); portalSurface.userData.observatoryPortal = true
+    observatoryPortal.add(portalSurface)
+    const threshold = new THREE.Mesh(new THREE.BoxGeometry(9.4, .22, 2.2), portalGold)
+    resources.add(threshold.geometry); threshold.position.set(0, .11, .3); threshold.userData.observatoryPortal = true
+    observatoryPortal.add(threshold); scene.add(observatoryPortal)
+    const portalLabelNode = document.createElement('button')
+    portalLabelNode.type = 'button'
+    portalLabelNode.className = 'town-observatory-label'
+    portalLabelNode.textContent = 'Cosmic Observatory'
+    portalLabelNode.setAttribute('aria-label', 'Enter Cosmic Observatory')
+    portalLabelNode.addEventListener('click', event => { event.stopPropagation(); state.current.onEnterObservatory?.() })
+    const portalLabel = new CSS2DObject(portalLabelNode)
+    portalLabel.position.set(0, 11.25, 0); observatoryPortal.add(portalLabel); labels.push(portalLabel)
+
     const buildings = buildingsRef.current = new Map<string, THREE.Group>()
     for (const project of [...currentProjects].sort((a, b) => a.id.localeCompare(b.id))) {
       const property = placement.get(project.id)
       if (!property) continue
-      const activeAppearance = initial.activeProjectIds.has(project.id) ? projectBuildingAppearance(project.id) : undefined
-      const house = library.createHouse(property.form as BuildingForm, seedOf(project.id), activeAppearance)
+      const appearance = projectBuildingAppearance(project.id, property.cluster)
+      const isActive = initial.activeProjectIds.has(project.id)
+      const house = library.createHouse(property.form as BuildingForm, seedOf(project.id), appearance, isActive)
       house.name = `Town office ${project.id}`
       house.position.set(property.x, 0, property.z)
       house.rotation.y = Math.atan2(property.entrance.x - property.x, property.entrance.z - property.z)
       house.userData.projectId = project.id
       house.userData.form = property.form
-      house.userData.activeAppearance = Boolean(activeAppearance)
+      house.userData.activeAppearance = isActive
+      house.userData.houseTheme = appearance.theme
+      house.userData.cluster = property.cluster
       const markerGeometry = new THREE.RingGeometry(Math.max(property.footprintWidth, property.footprintDepth) * .68, Math.max(property.footprintWidth, property.footprintDepth) * .73, 36)
       const markerMaterial = sceneMaterial(0x8b6b27, materials, { side: THREE.DoubleSide, transparent: true, opacity: .76, emissive: 0x5c471f, emissiveIntensity: .22 })
       const marker = new THREE.Mesh(markerGeometry, markerMaterial)
@@ -391,24 +484,11 @@ export function TownScene(props: Props) {
 
       const name = document.createElement('button')
       name.type = 'button'; name.className = 'town-map-label'; name.textContent = project.display.name
-      name.setAttribute('aria-label', `Open ${project.display.name} project board`)
+      name.title = `${project.display.name} · ${property.cluster} · ${appearance.theme}`
+      name.setAttribute('aria-label', `Open ${project.display.name} project board · ${property.cluster} · ${appearance.theme} house`)
       name.dataset.projectId = project.id
       name.addEventListener('click', event => { event.stopPropagation(); state.current.onSelect(project.id) })
       const label = new CSS2DObject(name); label.position.set(0, property.form === 'courtyard-compound' ? 8.8 : 7.2, 0); label.visible = initial.labelsVisible; house.add(label); labels.push(label)
-      const sign = library.createProp('low-wall', seedOf(`sign-${project.id}`))
-      sign.position.set(property.lotWidth / 2 - 1.8, 0, -property.lotDepth / 2 + 1.4)
-      house.add(sign)
-      const pot = library.createProp('grain-jar', seedOf(`jar-${project.id}`))
-      pot.position.set(-property.lotWidth / 2 + 1.8, 0, -property.lotDepth / 2 + 1.5)
-      house.add(pot)
-      const basket = library.createProp('basket', seedOf(`basket-${project.id}`))
-      basket.position.set(property.lotWidth / 2 - 1.0, 0, 0)
-      house.add(basket)
-      if (seedOf(project.id) % 3 === 0) {
-        const cart = library.createProp('cart', seedOf(`cart-${project.id}`))
-        cart.position.set(0, 0, -property.lotDepth / 2 + 1.45)
-        house.add(cart)
-      }
       for (const side of [-1, 1]) {
         const porchLamp = library.createLamp(seedOf(`porch-lamp-${project.id}-${side}`))
         porchLamp.scale.setScalar(.72)
@@ -429,6 +509,14 @@ export function TownScene(props: Props) {
       const kind = index % 3 === 0 ? 'palmyra' : 'broadleaf'
       const asset = library.createTree(kind, seedOf(`tree-${index}`))
       asset.position.set(tree.x, 0, tree.z); scene.add(asset)
+    })
+    const innerGroveSites = townGroveSites(trees)
+    innerGroveSites.forEach((site, index) => {
+      const grove = library.createProp('grove', seedOf(`roadside-grove-${index}`))
+      grove.position.set(site.x, 0, site.z)
+      grove.scale.setScalar(1.25)
+      grove.userData.ambientScenery = true
+      scene.add(grove)
     })
 
     const animals: Array<'cattle' | 'goat' | 'chicken'> = ['cattle', 'goat', 'chicken', 'goat', 'chicken', 'cattle', 'chicken', 'goat', 'chicken']
@@ -468,6 +556,7 @@ export function TownScene(props: Props) {
     for (let index = 0; index < 12; index++) {
       const cloud = makeCloud(index, resources, materials)
       cloud.position.set((index % 4 - 1.5) * 210 + (index % 3) * 20, 65 + (index % 3) * 12, (Math.floor(index / 4) - 1) * 230)
+      cloud.scale.setScalar(.52)
       cloud.userData.homeX = cloud.position.x
       clouds.push(cloud); scene.add(cloud)
     }
@@ -487,9 +576,8 @@ export function TownScene(props: Props) {
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true; controls.dampingFactor = .085; controls.minDistance = 13
-    const retainedDistance = retainedPose?.position.distanceTo(retainedPose.target) ?? 0
-    controls.maxDistance = Math.max(380, initialPose.distance * 1.3, retainedDistance * 1.1); controls.maxPolarAngle = Math.PI * .47
-    controls.target.copy(retainedPose?.target ?? new THREE.Vector3(0, 1, 0)); controlsRef.current = controls; state.current.onReady(controls)
+    controls.maxDistance = townCameraMaxDistance(initialPose.distance, restoredDistance); controls.maxPolarAngle = Math.PI * .47
+    controls.target.copy(state.current.initialViewPose ? new THREE.Vector3(...state.current.initialViewPose.target) : retainedPose?.target ?? new THREE.Vector3(0, 1, 0)); controlsRef.current = controls; state.current.onReady(controls)
     const rememberCamera = () => {
       const target = controls.target, p = camera.position
       element.dataset.cameraPose = `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}:${target.x.toFixed(2)},${target.y.toFixed(2)},${target.z.toFixed(2)}`
@@ -517,8 +605,17 @@ export function TownScene(props: Props) {
       }
       const building = buildings.get(id)
       if (!building) return
-      const offset = new THREE.Vector3(building.position.x, 1, building.position.z).sub(controls.target)
-      controls.target.add(offset); camera.position.add(offset); controls.update()
+      const cluster = placement.get(id)?.cluster
+      const sign = cluster ? billboardsRef.current.get(cluster)?.group : undefined
+      const target = sign
+        ? new THREE.Vector3((building.position.x + sign.position.x) / 2, 3, (building.position.z + sign.position.z) / 2)
+        : new THREE.Vector3(building.position.x, 3, building.position.z)
+      const separation = sign ? Math.hypot(building.position.x - sign.position.x, building.position.z - sign.position.z) : 0
+      const distance = Math.max(70, separation * 2.1)
+      const viewDirection = new THREE.Vector3(.32, .58, .75).normalize()
+      controls.target.copy(target)
+      camera.position.copy(target).addScaledVector(viewDirection, distance)
+      controls.update()
     }
     state.current.onFocusReady(focus); state.current.onOverviewReady(overview)
     if (!currentProjects.length) overview()
@@ -552,10 +649,11 @@ export function TownScene(props: Props) {
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
-      const hit = raycaster.intersectObjects([hall, ...buildings.values(), ...workerGroupsRef.current.values()], true).find(result => result.object.userData.projectId || result.object.userData.agentId || result.object.userData.hallId)
+      const hit = raycaster.intersectObjects([observatoryPortal, hall, ...buildings.values(), ...workerGroupsRef.current.values()], true).find(result => result.object.userData.observatoryPortal || result.object.userData.projectId || result.object.userData.agentId || result.object.userData.hallId)
+      if (hit?.object.userData.observatoryPortal) { state.current.onEnterObservatory?.(); return }
       if (hit?.object.userData.hallId) state.current.onSelectHall()
       else if (hit?.object.userData.agentId) {
-        const person = projectAgentPresence(state.current.agents, state.current.tasks, state.current.layout).find(item => item.id === hit.object.userData.agentId)
+        const person = projectAgentPresence(state.current.agents, state.current.tasks, state.current.layout, state.current.messages, state.current.userId, state.current.liveConnected).find(item => item.id === hit.object.userData.agentId)
         if (person) state.current.onSelectAgent(person)
       } else if (hit?.object.userData.projectId) state.current.onSelect(hit.object.userData.projectId as string)
     }
@@ -614,6 +712,13 @@ export function TownScene(props: Props) {
           if (right) right.rotation.x = Math.sin(phase + 1.1) * (person.userData.animation === 'prep-loop' ? .09 : .16)
         }
       }
+      const slideIndex = Math.floor(now / 8000) % 3
+      for (const [cluster, billboard] of billboardsRef.current) {
+        const slide = billboardSlidesRef.current.get(cluster)?.[slideIndex]
+        if (slide) billboard.update(slide)
+      }
+      element.dataset.billboardSlide = ['identity', 'agents', 'work'][slideIndex]!
+      element.dataset.billboardCount = String(billboardsRef.current.size)
       if (Math.floor(now / 1000) !== Math.floor((now - delta * 1000) / 1000)) {
         element.dataset.rendererResources = JSON.stringify({ geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, tiles: tiles.length, lights: nightLights.length, clouds: clouds.length, flocks: flocks.length })
       }
@@ -621,6 +726,7 @@ export function TownScene(props: Props) {
       const ordered = [...labels].sort((a, b) => {
         const rank = (label: CSS2DObject) => {
           const id = label.element.dataset.projectId
+          if (label.element.classList.contains('town-observatory-label')) return 7
           if (label.element.classList.contains('town-communication-marker')) return 6
           if (label.element.dataset.hallId) return 5
           if (id === state.current.selected) return 4
@@ -637,7 +743,7 @@ export function TownScene(props: Props) {
         const rect = node.getBoundingClientRect()
         if (!rect.width || !rect.height) continue
         const collides = occupied.some(box => rect.left < box.right + 3 && rect.right + 3 > box.left && rect.top < box.bottom + 3 && rect.bottom + 3 > box.top)
-        const persistent = Boolean(node.classList.contains('town-communication-marker') || node.dataset.hallId || node.dataset.agentId || node.dataset.projectId === state.current.selected || state.current.pinnedProjectIds.has(node.dataset.projectId ?? ''))
+        const persistent = Boolean(node.classList.contains('town-observatory-label') || node.classList.contains('town-communication-marker') || node.dataset.hallId || node.dataset.agentId || node.dataset.projectId === state.current.selected || state.current.pinnedProjectIds.has(node.dataset.projectId ?? ''))
         if (collides && !persistent) { node.style.visibility = 'hidden'; continue }
         occupied.push(rect)
       }
@@ -653,14 +759,27 @@ export function TownScene(props: Props) {
       state.current.onFocusReady(null); state.current.onOverviewReady(null)
       labels.splice(0).forEach(label => label.element.remove())
       communicationMarkersRef.current.clear()
+      for (const { assets } of frontageAssetsRef.current.values()) for (const asset of assets) library.releaseAsset(asset)
+      frontageAssetsRef.current.clear()
       workerGroupsRef.current.clear(); buildingsRef.current.clear()
       for (const geometry of resources) geometry.dispose()
       for (const material of materials) material.dispose()
+      billboardLibrary.dispose(); billboardsRef.current.clear(); billboardSlidesRef.current.clear()
       library.dispose()
       renderer.dispose(); renderer.domElement.remove(); labelRenderer.domElement.remove()
       sceneRef.current = null; fogRef.current = null; hemiRef.current = null; sunRef.current = null; groundRef.current = null; skyRef.current = null; lampLightsRef.current = []; assetsRef.current = null; controlsRef.current = null
     }
   }, [sceneStamp])
+
+  useEffect(() => {
+    const slides = new Map<TownCluster, TownBillboardSlide[]>()
+    for (const island of props.layout.islands) {
+      const current = townBillboardSlides({ cluster: island.cluster, layout: props.layout, agents: props.agents, tasks: props.tasks, messages: props.messages, userId: props.userId, liveConnected: props.liveConnected })
+      slides.set(island.cluster, current)
+      billboardsRef.current.get(island.cluster)?.update(current[Math.floor(performance.now() / 8000) % 3]!)
+    }
+    billboardSlidesRef.current = slides
+  }, [props.layout, props.agents, props.tasks, props.messages, props.userId, props.liveConnected, sceneStamp])
 
   useEffect(() => {
     const scene = sceneRef.current, fog = fogRef.current, hemi = hemiRef.current, sun = sunRef.current, ground = groundRef.current
@@ -677,15 +796,49 @@ export function TownScene(props: Props) {
       const isActive = active.has(id)
       if (marker) marker.visible = isActive
       if (building.userData.activeAppearance === isActive) continue
-      const appearance = isActive ? projectBuildingAppearance(id) : undefined
+      const appearance = projectBuildingAppearance(id, props.layout.get(id)?.cluster)
       const updateAppearance = building.userData.setAppearance
-      if (typeof updateAppearance === 'function') updateAppearance(appearance)
+      if (typeof updateAppearance === 'function') updateAppearance(appearance, isActive)
       building.userData.activeAppearance = isActive
     }
   }, [props.activeProjectIds, sceneStamp])
 
   useEffect(() => {
-    const presence = projectAgentPresence(props.agents, props.tasks, props.layout)
+    const library = assetsRef.current
+    if (!library) return
+    const presence = projectAgentPresence(props.agents, props.tasks, props.layout, props.messages, props.userId, props.liveConnected)
+    for (const project of props.projects) {
+      const position = props.layout.get(project.id)
+      const house = buildingsRef.current.get(project.id)
+      if (!position || !house) continue
+      const running = props.liveConnected && presence.some(person => person.pose === 'working' && person.projectId === project.id)
+      const specs = townFrontagePlan(position, props.tasks, props.messages, props.userId, running)
+      const stamp = specs.map(item => `${item.slot}:${item.kind}`).join('|')
+      const existing = frontageAssetsRef.current.get(project.id)
+      if (existing?.stamp === stamp) continue
+      if (existing) for (const asset of existing.assets) { library.releaseAsset(asset); asset.removeFromParent() }
+      const assets = specs.map(item => {
+        const asset = library.createProp(item.kind, `${project.id}:${item.slot}`)
+        asset.position.set(item.x, 0, item.z)
+        asset.rotation.y = 0
+        asset.userData.projectId = project.id
+        asset.userData.frontageKind = item.slot
+        asset.userData.ambientScenery = false
+        asset.traverse(child => { child.userData.projectId = project.id })
+        house.add(asset)
+        return asset
+      })
+      frontageAssetsRef.current.set(project.id, { stamp, assets })
+    }
+    for (const [projectId, current] of frontageAssetsRef.current) {
+      if (props.layout.has(projectId)) continue
+      for (const asset of current.assets) { library.releaseAsset(asset); asset.removeFromParent() }
+      frontageAssetsRef.current.delete(projectId)
+    }
+  }, [props.projects, props.tasks, props.agents, props.messages, props.userId, props.liveConnected, props.layout, sceneStamp])
+
+  useEffect(() => {
+    const presence = projectAgentPresence(props.agents, props.tasks, props.layout, props.messages, props.userId, props.liveConnected)
     const library = assetsRef.current
     const groups = workerGroupsRef.current
     if (!library) return
@@ -714,7 +867,7 @@ export function TownScene(props: Props) {
         name.setAttribute('aria-label', `Open ${person.name} resident card`)
         name.addEventListener('click', event => {
           event.stopPropagation()
-          const current = projectAgentPresence(state.current.agents, state.current.tasks, state.current.layout).find(item => item.id === person.id)
+          const current = projectAgentPresence(state.current.agents, state.current.tasks, state.current.layout, state.current.messages, state.current.userId, state.current.liveConnected).find(item => item.id === person.id)
           if (current) state.current.onSelectAgent(current)
         })
         const label = new CSS2DObject(name)
@@ -736,22 +889,22 @@ export function TownScene(props: Props) {
         nameLabel.element.dataset.taskId = person.taskId ?? ''
       }
     }
-  }, [props.agents, props.tasks, props.layout, props.reducedMotion])
+  }, [props.agents, props.tasks, props.layout, props.reducedMotion, props.messages, props.userId, props.liveConnected])
 
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
     const markers = communicationMarkersRef.current
-    const presence = projectAgentPresence(props.agents, props.tasks, props.layout)
+    const presence = projectAgentPresence(props.agents, props.tasks, props.layout, props.messages, props.userId, props.liveConnected)
     const hosts = new Map<string, THREE.Object3D>()
     for (const [id, building] of buildingsRef.current) hosts.set(`project:${id}`, building)
     for (const [id, worker] of workerGroupsRef.current) hosts.set(`agent:${id}`, worker)
     const hall = scene.children.find(child => child.userData.hallId === 'bell-hall')
     if (hall) hosts.set('hall', hall)
     const desired = new Map<string, ReturnType<typeof townCommunicationMarker> | undefined>()
-    for (const project of props.projects) desired.set(`project:${project.id}`, townCommunicationMarker({ messages: props.messages, tasks: props.tasks, agents: props.agents, anchor: { type: 'project', id: project.id }, userId: props.userId }))
-    for (const person of presence) desired.set(`agent:${person.id}`, townCommunicationMarker({ messages: props.messages, tasks: props.tasks, agents: props.agents, anchor: { type: 'agent', id: person.id }, userId: props.userId }))
-    desired.set('hall', townCommunicationMarker({ messages: props.messages, tasks: props.tasks, agents: props.agents, anchor: { type: 'hall' }, userId: props.userId }))
+    for (const project of props.projects) desired.set(`project:${project.id}`, townCommunicationMarker({ messages: props.messages, tasks: props.tasks, agents: props.agents, anchor: { type: 'project', id: project.id }, userId: props.userId, allowLiveActivity: props.liveConnected }))
+    for (const person of presence) desired.set(`agent:${person.id}`, townCommunicationMarker({ messages: props.messages, tasks: props.tasks, agents: props.agents, anchor: { type: 'agent', id: person.id }, userId: props.userId, allowLiveActivity: props.liveConnected }))
+    desired.set('hall', townCommunicationMarker({ messages: props.messages, tasks: props.tasks, agents: props.agents, anchor: { type: 'hall' }, userId: props.userId, allowLiveActivity: props.liveConnected }))
     for (const [key, marker] of markers) {
       if (!desired.get(key) || !hosts.has(key)) { marker.element.remove(); markers.delete(key); const index = labelsRef.current.indexOf(marker); if (index >= 0) labelsRef.current.splice(index, 1) }
     }
@@ -762,16 +915,18 @@ export function TownScene(props: Props) {
       if (!marker) {
         const button = document.createElement('button')
         button.type = 'button'; button.className = 'town-communication-marker'
-        button.addEventListener('click', event => { event.stopPropagation(); const current = key === 'hall' ? undefined : key.split(':')[1]; if (key === 'hall') state.current.onSelectHall(); else if (key.startsWith('agent:')) { const person = projectAgentPresence(state.current.agents, state.current.tasks, state.current.layout).find(item => item.id === current); if (person) state.current.onSelectAgent(person) } else if (current) state.current.onSelect(current) })
+        button.addEventListener('click', event => { event.stopPropagation(); const current = key === 'hall' ? undefined : key.split(':')[1]; if (key === 'hall') state.current.onSelectHall(); else if (key.startsWith('agent:')) { const person = projectAgentPresence(state.current.agents, state.current.tasks, state.current.layout, state.current.messages, state.current.userId, state.current.liveConnected).find(item => item.id === current); if (person) state.current.onSelectAgent(person) } else if (current) state.current.onSelect(current) })
         marker = new CSS2DObject(button); markers.set(key, marker); labelsRef.current.push(marker); host.add(marker)
       }
       const button = marker.element as HTMLButtonElement
       button.textContent = value.glyph + (value.count > 1 ? ` ${value.count}` : '')
       button.setAttribute('aria-label', `${value.label}${value.count > 1 ? ` (${value.count})` : ''}`)
       button.dataset.markerKind = value.kind
+      button.dataset.projectId = key.startsWith('project:') ? key.slice('project:'.length) : ''
+      button.dataset.agentId = key.startsWith('agent:') ? key.slice('agent:'.length) : ''
       marker.position.set(0, key === 'hall' ? TEMPLE_SITE.maxHeight + 3.1 : key.startsWith('agent:') ? 4.8 : 9.2, 0)
     }
-  }, [props.agents, props.tasks, props.messages, props.projects, props.layout, props.userId])
+  }, [props.agents, props.tasks, props.messages, props.projects, props.layout, props.userId, props.liveConnected])
 
   useEffect(() => {
     for (const label of labelsRef.current) {
@@ -785,11 +940,11 @@ export function TownScene(props: Props) {
   }, [props.projects, props.selected])
 
   useEffect(() => {
-    for (const label of labelsRef.current) if (!label.element.classList.contains('town-communication-marker')) label.visible = props.labelsVisible
+    for (const label of labelsRef.current) if (!label.element.classList.contains('town-communication-marker') && !label.element.classList.contains('town-observatory-label')) label.visible = props.labelsVisible
     if (host.current) host.current.dataset.labelsVisible = String(props.labelsVisible)
   }, [props.labelsVisible, sceneStamp])
 
-  const people = useMemo(() => projectAgentPresence(props.agents, props.tasks, props.layout), [props.agents, props.tasks, props.layout])
+  const people = useMemo(() => projectAgentPresence(props.agents, props.tasks, props.layout, props.messages, props.userId, props.liveConnected), [props.agents, props.tasks, props.messages, props.layout, props.userId, props.liveConnected])
   return <div className="town-world" ref={host} aria-label="Interactive 3D map of the Kaveri countryside. Use arrow keys to orbit and plus or minus to zoom." role="application" tabIndex={0} data-layout-revision={props.layoutRevision} data-person-count={people.length} data-labels-visible={props.labelsVisible}>
     <div className="town-map-hint">DRAG ORBIT · RIGHT-DRAG PAN · SCROLL ZOOM · ARROWS ORBIT</div>
   </div>

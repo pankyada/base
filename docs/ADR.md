@@ -1338,3 +1338,25 @@ scoped read-only statistics.
 servers, or restarted processes. It adds no durable map store, routing policy,
 execution engine, provider call, or client authority. PT-085 implements the
 contract in `superpowers/specs/2026-09-23-workflow-map-spec.md`.
+
+### ADR-90
+
+**Observatory collections belong to the local Web host** — ✅
+
+*Context:* The approved non-coding universe browses personal files, while Town's
+Core project discovery deliberately catalogs Git repositories. Treating documents
+as Town projects would conflate personal collections with executable workspaces.
+
+*Decision:* Keep the observatory as a Web-only, read-only experience. Add Next
+routes for three explicitly selected Downloads collections on the Web host,
+with fixed root mappings, bounded immediate-file scans, supported media types,
+symlink/traversal rejection and streamed byte ranges. Do not accept client paths,
+dispatch agent work, or change Core discovery/contracts. A server-only root
+override supports isolated fixtures. Entering the portal saves a scoped browser
+camera pose, and returning restores it without changing Town settings.
+
+*Consequences:* These collections are local to the Web server machine, independent
+of remote Core or profile workspaces. The server must retain the existing local
+single-operator deployment posture. Collection expansion or remote/shared hosting
+requires a separate design. PDF rendering and video codecs depend on the browser;
+opening the original remains available. See the PT-109 observatory specification.
