@@ -29,6 +29,34 @@ export const TEMPLE_SITE = Object.freeze({
   maxZ: 16,
 })
 
+/**
+ * The walled temple campus that contains the main sanctuary (the TEMPLE_SITE asset,
+ * enlarged by `sanctuary.scale`), subsidiary shrines, tank, halls and four gopurams.
+ * Layout, roads and lots reserve this footprint; the road meets the south gopuram.
+ */
+export const TEMPLE_CAMPUS = Object.freeze({
+  width: 104,
+  depth: 124,
+  maxHeight: 38,
+  entrance: Object.freeze({ x: 0, z: 66 }),
+  clearance: 6,
+  minX: -52,
+  maxX: 52,
+  minZ: -62,
+  maxZ: 62,
+  sanctuary: Object.freeze({ x: 0, z: -12, scale: 1.5 }),
+})
+
+/**
+ * Artisan sites beside the temple's south approach road (ADR-91). The Guild Hall
+ * is the artisans' home; the staging mandapam is where dispatch gates play out.
+ * Both face the central road at x = 0; lots and other roads keep clear of them.
+ */
+export interface TownCivicSite { id: 'guild-hall' | 'staging'; x: number; z: number; width: number; depth: number; clearance: number; entrance: TownRoadPoint; facing: 1 | -1 }
+export const GUILD_HALL_SITE: TownCivicSite = Object.freeze({ id: 'guild-hall', x: -18, z: 84, width: 16, depth: 13, clearance: 4, entrance: Object.freeze({ x: -8, z: 84 }), facing: 1 as const })
+export const STAGING_SITE: TownCivicSite = Object.freeze({ id: 'staging', x: 17, z: 84, width: 13, depth: 10, clearance: 4, entrance: Object.freeze({ x: 8, z: 84 }), facing: -1 as const })
+export const TOWN_CIVIC_SITES: readonly TownCivicSite[] = Object.freeze([GUILD_HALL_SITE, STAGING_SITE])
+
 const FORM_SPECS: Record<BuildingForm, BuildingSpec> = {
   'veranda-house': { label: 'Veranda house', width: 4, depth: 4, lotWidth: 10, lotDepth: 10 },
   'tamil-workshop': { label: 'Tamil workshop', width: 6, depth: 5, lotWidth: 13, lotDepth: 12 },
@@ -114,9 +142,9 @@ const GRID_STEP = 2
 
 /** Project-independent curated discovery sites; property and road solvers reserve their clearings. */
 export const HISTORICAL_DISCOVERY_SITES: ReadonlyArray<{ id: string; x: number; z: number; radius: number; title: string; caption: string; source: string; href: string }> = [
-  { id: 'rajaraja', x: 42, z: 24, radius: 3.6, title: 'Rajaraja Chola I', caption: 'A stone relief evokes the Chola court and Rajaraja Chola I. This is an interpretive reference, not a surviving village inscription.', source: 'Tamil Nadu Department of Archaeology · Rajarajan Site Museum', href: 'https://www.tnarch.gov.in/node/293' },
-  { id: 'aryabhata', x: -38, z: 42, radius: 3.6, title: 'Aryabhata (476–550)', caption: 'A palm-leaf and sky-chart tableau commemorates Aryabhata, an earlier scholar who was not alive in 1000 CE.', source: 'University of St Andrews · MacTutor History of Mathematics', href: 'https://mathshistory.st-andrews.ac.uk/Biographies/Aryabhata_I/' },
-  { id: 'brahmagupta', x: 18, z: -54, radius: 3.6, title: 'Brahmagupta (598–670)', caption: 'A counting-board tableau commemorates Brahmagupta, an earlier scholar who was not alive in 1000 CE.', source: 'University of St Andrews · MacTutor History of Mathematics', href: 'https://mathshistory.st-andrews.ac.uk/Biographies/Brahmagupta/' },
+  { id: 'rajaraja', x: 70, z: 8, radius: 3.6, title: 'Rajaraja Chola I', caption: 'A stone relief evokes the Chola court and Rajaraja Chola I. This is an interpretive reference, not a surviving village inscription.', source: 'Tamil Nadu Department of Archaeology · Rajarajan Site Museum', href: 'https://www.tnarch.gov.in/node/293' },
+  { id: 'aryabhata', x: -70, z: 14, radius: 3.6, title: 'Aryabhata (476–550)', caption: 'A palm-leaf and sky-chart tableau commemorates Aryabhata, an earlier scholar who was not alive in 1000 CE.', source: 'University of St Andrews · MacTutor History of Mathematics', href: 'https://mathshistory.st-andrews.ac.uk/Biographies/Aryabhata_I/' },
+  { id: 'brahmagupta', x: 16, z: -84, radius: 3.6, title: 'Brahmagupta (598–670)', caption: 'A counting-board tableau commemorates Brahmagupta, an earlier scholar who was not alive in 1000 CE.', source: 'University of St Andrews · MacTutor History of Mathematics', href: 'https://mathshistory.st-andrews.ac.uk/Biographies/Brahmagupta/' },
 ]
 
 const bandByAge = (project: ActivityProject, active: boolean, pinned: boolean, now: number): TownPosition['band'] => {
@@ -171,21 +199,33 @@ function edgeGap(left: TownPosition, right: TownPosition): number {
 }
 
 function clearsTemple(item: TownPosition): boolean {
-  const dx = Math.max(0, Math.abs(item.x) - item.lotWidth / 2 - TEMPLE_SITE.width / 2)
-  const dz = Math.max(0, Math.abs(item.z) - item.lotDepth / 2 - TEMPLE_SITE.depth / 2)
-  return Math.hypot(dx, dz) >= TEMPLE_SITE.clearance
+  const dx = Math.max(0, Math.abs(item.x) - item.lotWidth / 2 - TEMPLE_CAMPUS.width / 2)
+  const dz = Math.max(0, Math.abs(item.z) - item.lotDepth / 2 - TEMPLE_CAMPUS.depth / 2)
+  return Math.hypot(dx, dz) >= TEMPLE_CAMPUS.clearance
 }
 
 function templeEdgeDistance(point: TownRoadPoint): number {
-  const dx = Math.max(0, Math.abs(point.x) - TEMPLE_SITE.width / 2)
-  const dz = Math.max(0, Math.abs(point.z) - TEMPLE_SITE.depth / 2)
+  const dx = Math.max(0, Math.abs(point.x) - TEMPLE_CAMPUS.width / 2)
+  const dz = Math.max(0, Math.abs(point.z) - TEMPLE_CAMPUS.depth / 2)
   return Math.hypot(dx, dz)
 }
 
 function isTempleApproach(point: TownRoadPoint): boolean {
   // The only road allowed through the reserved clearance is the straight paved
-  // approach extending outwards from the temple's +Z front entrance.
-  return point.z >= TEMPLE_SITE.entrance.z && Math.abs(point.x - TEMPLE_SITE.entrance.x) <= 2
+  // approach extending outwards from the south gopuram.
+  return point.z >= TEMPLE_CAMPUS.entrance.z && Math.abs(point.x - TEMPLE_CAMPUS.entrance.x) <= 2
+}
+
+function clearsCivicSites(item: TownPosition): boolean {
+  return TOWN_CIVIC_SITES.every(site => {
+    const dx = Math.max(0, Math.abs(item.x - site.x) - item.lotWidth / 2 - site.width / 2)
+    const dz = Math.max(0, Math.abs(item.z - site.z) - item.lotDepth / 2 - site.depth / 2)
+    return Math.hypot(dx, dz) >= site.clearance
+  })
+}
+
+function insideCivicSite(point: TownRoadPoint): boolean {
+  return TOWN_CIVIC_SITES.some(site => Math.abs(point.x - site.x) < site.width / 2 + 1 && Math.abs(point.z - site.z) < site.depth / 2 + 1)
 }
 
 function clearsDiscoveries(item: TownPosition): boolean {
@@ -221,7 +261,8 @@ function blockedRoadPoint(point: TownRoadPoint, placements: TownPosition[], tree
   for (const item of placements) {
     if (Math.abs(point.x - item.x) < item.lotWidth / 2 + 1 && Math.abs(point.z - item.z) < item.lotDepth / 2 + 1) return true
   }
-  if (templeEdgeDistance(point) < TEMPLE_SITE.clearance && !isTempleApproach(point)) return true
+  if (templeEdgeDistance(point) < TEMPLE_CAMPUS.clearance && !isTempleApproach(point)) return true
+  if (insideCivicSite(point)) return true
   if (trees.some(tree => Math.hypot(point.x - tree.x, point.z - tree.z) < 8)) return true
   if (HISTORICAL_DISCOVERY_SITES.some(site => circleDistance(point, site) < site.radius + 4)) return true
   return false
@@ -295,7 +336,8 @@ function environmentTrees(placements: TownPosition[], roads: TownRoadPoint[][]):
       x: roundGrid(Math.cos(angle) * radius + (random() - .5) * 5),
       z: roundGrid(Math.sin(angle) * radius + (random() - .5) * 5),
     }
-    if (templeEdgeDistance(point) < TEMPLE_SITE.clearance + 4) continue
+    if (templeEdgeDistance(point) < TEMPLE_CAMPUS.clearance + 4) continue
+    if (TOWN_CIVIC_SITES.some(site => Math.abs(point.x - site.x) < site.width / 2 + 8 && Math.abs(point.z - site.z) < site.depth / 2 + 8)) continue
     if (placements.some(item => Math.abs(point.x - item.x) < item.lotWidth / 2 + 12 && Math.abs(point.z - item.z) < item.lotDepth / 2 + 12)) continue
     // Route the public paths first, then reserve a generous tree-free shoulder
     // around every segment so denser scenery cannot strand a project entrance.
@@ -324,9 +366,14 @@ function routeLots(placements: TownPosition[]): { roads: TownRoadPoint[][]; tree
     addGridLine(network, { x: -outer, z: outer }, { x: -outer, z: -outer }),
   ]
   const gridLimit = outer + 160
-  const centralRoute = connectToRoadNetwork(TEMPLE_SITE.entrance, network, placements, [], gridLimit)
+  const centralRoute = connectToRoadNetwork(TEMPLE_CAMPUS.entrance, network, placements, [], gridLimit)
   for (const point of centralRoute) network.add(cellKey(point))
   roads.push(centralRoute)
+  for (const site of TOWN_CIVIC_SITES) {
+    const spur = connectToRoadNetwork(site.entrance, network, placements, [], gridLimit)
+    for (const point of spur) network.add(cellKey(point))
+    roads.push(spur)
+  }
   for (const item of placements) {
     const entrance = entranceFor(item)
     item.entrance = entrance
@@ -347,12 +394,15 @@ export function layoutProjects(projects: LayoutProject[], activeIds: ReadonlySet
   for (const project of projects) buckets.get(projectCluster(project))!.push(project)
   const placed: TownPosition[] = []
   const islands: TownLayout['islands'] = []
+  // The inner ring sits beyond the walled temple campus; the outer ring keeps
+  // the original 140-unit island pitch from it.
+  const inner = 100, outer = 240
   const islandSites: TownRoadPoint[] = [
-    { x: -210, z: -210 }, { x: -70, z: -210 }, { x: 70, z: -210 }, { x: 210, z: -210 },
-    { x: -210, z: -70 }, { x: -70, z: -70 }, { x: 70, z: -70 }, { x: 210, z: -70 },
-    { x: -210, z: 70 }, { x: -70, z: 70 }, { x: 70, z: 70 }, { x: 210, z: 70 },
-    { x: -210, z: 210 }, { x: 210, z: 210 },
-    { x: -70, z: 210 }, { x: 70, z: 210 },
+    { x: -outer, z: -outer }, { x: -inner, z: -outer }, { x: inner, z: -outer }, { x: outer, z: -outer },
+    { x: -outer, z: -inner }, { x: -inner, z: -inner }, { x: inner, z: -inner }, { x: outer, z: -inner },
+    { x: -outer, z: inner }, { x: -inner, z: inner }, { x: inner, z: inner }, { x: outer, z: inner },
+    { x: -outer, z: outer }, { x: outer, z: outer },
+    { x: -inner, z: outer }, { x: inner, z: outer },
   ]
   for (const [index, cluster] of TOWN_CLUSTERS.entries()) {
     const pending = buckets.get(cluster)!.sort((a, b) => {
@@ -388,7 +438,7 @@ export function layoutProjects(projects: LayoutProject[], activeIds: ReadonlySet
           item.z = center.z + Math.sin(angle) * variedRadius
           item.radius = Math.hypot(item.x, item.z)
           item.angle = Math.atan2(item.z, item.x)
-          if (!clearsTemple(item) || !clearsDiscoveries(item)) continue
+          if (!clearsTemple(item) || !clearsDiscoveries(item) || !clearsCivicSites(item)) continue
           if (placed.some(other => edgeGap(item, other) < PROPERTY_CLEARANCE - 1e-7)) continue
           found = true
           break

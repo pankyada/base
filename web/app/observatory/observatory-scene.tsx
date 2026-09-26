@@ -1,10 +1,14 @@
 'use client'
 
-import { useEffect, useRef, type CSSProperties } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 import type { ObservatoryCollection, ObservatoryFile } from './observatory-model'
+import {
+  ATMOSPHERE_FRAG, CLOUD_FRAG, GIANT_FRAG, ICE_FRAG, MOON_FRAG, RING_FRAG, RING_VERT, SKY_FRAG, SKY_VERT,
+  STAR_FRAG, STAR_VERT, SURFACE_VERT, TERRESTRIAL_FRAG, WORMHOLE_VERT, WORMHOLE_FRAG, INFALL_VERT, SOFT_POINT_FRAG, COMET_VERT,
+} from './observatory-shaders'
 
 interface Props {
   collections: ObservatoryCollection[]
@@ -13,82 +17,196 @@ interface Props {
   reducedMotion: boolean
   onSelectCollection: (id: string) => void
   onSelectFile: (file: ObservatoryFile) => void
+  departing: boolean
+  onRequestReturn: () => void
   onReturn: () => void
 }
 
-const WORLD_LAYOUT: Record<ObservatoryCollection['id'], { position: THREE.Vector3; tint: number; radius: number; title: string }> = {
-  images: { position: new THREE.Vector3(-10, 5.5, -1), tint: 0x7abbd3, radius: 2.18, title: 'Image constellation' },
-  documents: { position: new THREE.Vector3(0, 7.3, -4.8), tint: 0xd6ae72, radius: 2.05, title: 'Archive planet' },
-  videos: { position: new THREE.Vector3(10, 5.4, -1), tint: 0x55bcd3, radius: 2.22, title: 'Cinema world' },
+interface WorldLayout {
+  position: THREE.Vector3
+  radius: number
+  kind: 'terrestrial' | 'giant' | 'ice'
+  seed: number
+  atmosphere: number
+  accent: string
+  tilt: number
+  spin: number
+  cardOrbit: number
+  ring?: readonly [number, number]
+  moon?: boolean
 }
 
-function makeMaterial(color: number, resources: Set<THREE.Material>, options: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
-  const material = new THREE.MeshStandardMaterial({ color, roughness: .52, metalness: .26, ...options })
-  resources.add(material)
-  return material
+// One sun, far to the left and slightly toward the viewer, so every world reads as a lit gibbous disc.
+const SUN = new THREE.Vector3(-1, .34, .42).normalize()
+const MAX_CARDS = 12
+const CARD_ASPECT = 4 / 3
+
+const WORLD_LAYOUT: Record<ObservatoryCollection['id'], WorldLayout> = {
+  images: { position: new THREE.Vector3(-22, -.4, 3), radius: 2.3, kind: 'terrestrial', seed: 3.7, atmosphere: 0x5d9bff, accent: '#8ed8e6', tilt: .41, spin: .05, cardOrbit: 6.4, moon: true },
+  documents: { position: new THREE.Vector3(.5, 1.4, -16), radius: 3.4, kind: 'giant', seed: 1.9, atmosphere: 0xf0c68a, accent: '#eed399', tilt: .38, spin: .07, cardOrbit: 9.4, ring: [1.32, 2.35] },
+  videos: { position: new THREE.Vector3(23, -.8, 2), radius: 2.5, kind: 'ice', seed: 5.3, atmosphere: 0x9d8cff, accent: '#c5b2ee', tilt: .52, spin: .04, cardOrbit: 6.6 },
 }
 
-function makeTextTexture(title: string, count: string, color: string): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas')
-  canvas.width = 512; canvas.height = 512
-  const context = canvas.getContext('2d')!
-  const gradient = context.createLinearGradient(0, 0, 512, 512)
-  gradient.addColorStop(0, '#f6f2e9'); gradient.addColorStop(1, '#c7d9df')
-  context.fillStyle = gradient; context.fillRect(0, 0, 512, 512)
-  context.fillStyle = color; context.globalAlpha = .18
-  for (let index = 0; index < 10; index++) {
-    context.beginPath(); context.arc(65 + index * 43, 120 + (index % 3) * 90, 42 + index % 4 * 12, 0, Math.PI * 2); context.fill()
+// Overview bounds (world units) that must stay in frame: every world, the ring and the tags.
+const OVERVIEW_TARGET = new THREE.Vector3(.5, 2.6, -6)
+const OVERVIEW_HALF = { width: 31, height: 9.5 }
+// The way home: a wormhole high in the background between the giant and the ice world.
+const WORMHOLE = { position: new THREE.Vector3(13, 9.5, -32), radius: 3.8 }
+const DEPART_SECONDS = 1.9
+
+function fovs(camera: THREE.PerspectiveCamera, width: number, height: number) {
+  const vertical = THREE.MathUtils.degToRad(camera.fov)
+  return { vertical, horizontal: 2 * Math.atan(Math.tan(vertical / 2) * (width / Math.max(1, height))) }
+}
+
+// Top header and bottom dock cover part of the canvas; frame content in the space between them.
+function overviewDistance(camera: THREE.PerspectiveCamera, width: number, height: number): number {
+  const { vertical, horizontal } = fovs(camera, width, height)
+  const usable = Math.max(.45, (height - 190) / height)
+  return Math.max(OVERVIEW_HALF.height / (Math.tan(vertical / 2) * usable), OVERVIEW_HALF.width / Math.tan(horizontal / 2)) * 1.06
+}
+
+// When the index panel is open on wide screens, frame the world in the space left of it.
+function focusFrame(camera: THREE.PerspectiveCamera, width: number, height: number, halfSize: number) {
+  const { vertical, horizontal } = fovs(camera, width, height)
+  const panel = width > 760 ? 380 : 0
+  const usableWidth = (width - panel) / width
+  const usableHeight = Math.max(.45, (height - 200) / height)
+  const distance = Math.max(halfSize / (Math.tan(vertical / 2) * usableHeight), halfSize / (Math.tan(horizontal / 2) * usableWidth)) * 1.08
+  const shift = distance * Math.tan(horizontal / 2) * (panel / width)
+  return { distance, shift }
+}
+
+function roundedClip(context: CanvasRenderingContext2D, width: number, height: number, radius: number) {
+  context.beginPath(); context.roundRect(0, 0, width, height, radius); context.clip()
+}
+
+function wrapLines(context: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number): string[] {
+  const words = text.replace(/[_-]+/g, ' ').split(/\s+/)
+  const lines: string[] = []
+  let line = ''
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word
+    if (context.measureText(next).width <= maxWidth || !line) line = next
+    else { lines.push(line); line = word }
   }
-  context.globalAlpha = 1
-  context.strokeStyle = '#ae8b56'; context.lineWidth = 8; context.strokeRect(18, 18, 476, 476)
-  context.fillStyle = '#28343b'; context.textAlign = 'center'
-  context.font = '500 38px Georgia'; context.fillText(title, 256, 340, 440)
-  context.font = '24px sans-serif'; context.fillStyle = '#6d7476'; context.fillText(count, 256, 386)
-  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4
+  if (line) lines.push(line)
+  if (lines.length > maxLines) { lines.length = maxLines; lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, -1)}…` }
+  return lines.map(entry => { while (context.measureText(entry).width > maxWidth && entry.length > 2) entry = `${entry.slice(0, -2)}…`; return entry })
+}
+
+function extension(name: string): string {
+  return (name.split('.').pop() ?? '').slice(0, 4).toUpperCase()
+}
+
+// Document cards look like a sheet of paper; video cards like a film frame; images show a cover crop.
+function makeCardCanvas(file: ObservatoryFile, accent: string, image?: HTMLImageElement): HTMLCanvasElement {
+  const width = 512, height = Math.round(512 / CARD_ASPECT)
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height
+  const context = canvas.getContext('2d')!
+  roundedClip(context, width, height, 18)
+  if (image) {
+    const scale = Math.max(width / image.width, height / image.height)
+    context.drawImage(image, (width - image.width * scale) / 2, (height - image.height * scale) / 2, image.width * scale, image.height * scale)
+    const fade = context.createLinearGradient(0, height * .58, 0, height)
+    fade.addColorStop(0, 'rgba(6,10,18,0)'); fade.addColorStop(1, 'rgba(6,10,18,.86)')
+    context.fillStyle = fade; context.fillRect(0, 0, width, height)
+    context.fillStyle = '#f5efe3'; context.font = '500 25px system-ui, sans-serif'
+    context.fillText(wrapLines(context, file.name, width - 48, 1)[0], 24, height - 26)
+  } else if (file.kind === 'document') {
+    const paper = context.createLinearGradient(0, 0, width, height)
+    paper.addColorStop(0, '#f7f1e4'); paper.addColorStop(1, '#e4dac6')
+    context.fillStyle = paper; context.fillRect(0, 0, width, height)
+    context.fillStyle = '#b8894433'; context.fillRect(40, 0, 3, height)
+    context.fillStyle = '#9a6b2f'; context.font = '600 17px system-ui, sans-serif'; context.fillText(extension(file.name), 64, 50)
+    context.fillStyle = '#23303d'; context.font = '400 34px Georgia, serif'
+    wrapLines(context, file.name.replace(/\.[^.]+$/, ''), width - 110, 3).forEach((line, index) => context.fillText(line, 64, 104 + index * 42))
+    context.fillStyle = '#23303d22'
+    for (let row = 0; row < 5; row++) context.fillRect(64, 250 + row * 20, (width - 130) * (row === 4 ? .55 : 1), 6)
+  } else if (file.kind === 'video') {
+    const film = context.createLinearGradient(0, 0, width, height)
+    film.addColorStop(0, '#171a33'); film.addColorStop(1, '#0a0d19')
+    context.fillStyle = film; context.fillRect(0, 0, width, height)
+    context.fillStyle = '#ffffff14'
+    for (let x = 14; x < width; x += 34) { context.fillRect(x, 12, 18, 12); context.fillRect(x, height - 24, 18, 12) }
+    context.strokeStyle = accent; context.lineWidth = 3
+    context.beginPath(); context.arc(width / 2, height / 2 - 18, 44, 0, Math.PI * 2); context.stroke()
+    context.fillStyle = accent; context.beginPath()
+    context.moveTo(width / 2 - 14, height / 2 - 42); context.lineTo(width / 2 + 22, height / 2 - 18); context.lineTo(width / 2 - 14, height / 2 + 6); context.fill()
+    context.fillStyle = '#ece7f7'; context.font = '500 24px system-ui, sans-serif'; context.textAlign = 'center'
+    context.fillText(wrapLines(context, file.name, width - 70, 1)[0], width / 2, height - 60)
+  } else {
+    context.fillStyle = '#101a2a'; context.fillRect(0, 0, width, height)
+    context.fillStyle = accent; context.font = '64px Georgia, serif'; context.textAlign = 'center'; context.fillText('◈', width / 2, height / 2)
+    context.fillStyle = '#d7dde8'; context.font = '500 22px system-ui, sans-serif'
+    context.fillText(file.bytes > 20 * 1024 * 1024 ? 'Large image · open to view' : wrapLines(context, file.name, width - 60, 1)[0], width / 2, height - 44)
+  }
+  return canvas
+}
+
+function makeGlowTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 200
+  const context = canvas.getContext('2d')!
+  context.shadowColor = '#ffffff'; context.shadowBlur = 26
+  context.fillStyle = '#ffffff'; context.beginPath(); context.roundRect(34, 34, 188, 132, 12); context.fill()
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace
   return texture
 }
 
-function makeNebulaTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas'); canvas.width = 1536; canvas.height = 768
+function makeRadialTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128
   const context = canvas.getContext('2d')!
-  context.fillStyle = '#07111d'; context.fillRect(0, 0, canvas.width, canvas.height)
-  const clouds = [
-    [310, 280, 350, 'rgba(49,90,157,.25)'], [550, 375, 270, 'rgba(113,70,140,.16)'],
-    [920, 230, 310, 'rgba(46,111,145,.22)'], [1250, 430, 350, 'rgba(67,83,159,.20)'],
-    [760, 120, 220, 'rgba(163,114,76,.09)'],
-  ] as const
-  for (const [x, y, radius, color] of clouds) {
-    const gradient = context.createRadialGradient(x, y, 0, x, y, radius)
-    gradient.addColorStop(0, color); gradient.addColorStop(1, 'rgba(7,17,29,0)')
-    context.fillStyle = gradient; context.fillRect(x - radius, y - radius, radius * 2, radius * 2)
-  }
-  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 2
+  const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64)
+  gradient.addColorStop(0, 'rgba(255,255,255,1)'); gradient.addColorStop(.18, 'rgba(255,240,215,.55)'); gradient.addColorStop(1, 'rgba(255,220,180,0)')
+  context.fillStyle = gradient; context.fillRect(0, 0, 128, 128)
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace
   return texture
 }
 
-function requiredOverviewDistance(camera: THREE.PerspectiveCamera, width: number, height: number, target: THREE.Vector3): number {
-  // Bounds include the portal arch, the outside collection cards and their labels.
-  const halfWidth = Math.max(Math.abs(-19.6 - target.x), Math.abs(19.6 - target.x))
-  const halfHeight = Math.max(Math.abs(-2 - target.y), Math.abs(13.8 - target.y))
-  const verticalFov = THREE.MathUtils.degToRad(camera.fov)
-  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * (width / Math.max(1, height)))
-  return Math.max(halfHeight / Math.tan(verticalFov / 2), halfWidth / Math.tan(horizontalFov / 2)) * 1.16
+// A distant barred spiral: a few thousand soft points along two logarithmic arms.
+function makeGalaxyTexture(random: () => number): THREE.CanvasTexture {
+  const size = 512, canvas = document.createElement('canvas'); canvas.width = canvas.height = size
+  const context = canvas.getContext('2d')!
+  context.translate(size / 2, size / 2); context.rotate(-.45); context.globalCompositeOperation = 'lighter'
+  for (let i = 0; i < 7000; i++) {
+    const t = Math.pow(random(), .8), arm = i % 2
+    const angle = t * Math.PI * 3.4 + arm * Math.PI + (random() - .5) * (.7 - t * .35)
+    const radius = t * 210 + (random() - .5) * 14
+    const x = Math.cos(angle) * radius, y = Math.sin(angle) * radius * .38
+    const warm = 1 - t
+    context.fillStyle = `rgba(${Math.round(170 + warm * 85)},${Math.round(180 + warm * 40)},${Math.round(255 - warm * 90)},${.05 + random() * .09})`
+    context.fillRect(x, y, 1.6, 1.6)
+  }
+  const core = context.createRadialGradient(0, 0, 0, 0, 0, 70)
+  core.addColorStop(0, 'rgba(255,236,200,.95)'); core.addColorStop(.25, 'rgba(255,214,160,.35)'); core.addColorStop(1, 'rgba(255,200,150,0)')
+  context.setTransform(1, 0, 0, .42, size / 2, size / 2); context.rotate(-.45)
+  context.fillStyle = core; context.fillRect(-80, -80, 160, 160)
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace
+  return texture
 }
 
-function requiredFocusDistance(camera: THREE.PerspectiveCamera, width: number, height: number, halfWidth: number, halfHeight: number): number {
-  const verticalFov = THREE.MathUtils.degToRad(camera.fov)
-  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * (width / Math.max(1, height)))
-  return Math.max(halfHeight / Math.tan(verticalFov / 2), halfWidth / Math.tan(horizontalFov / 2)) * 1.13
+function statusLabel(collection: ObservatoryCollection): string {
+  if (collection.status === 'missing') return 'Folder not found'
+  if (collection.status === 'unavailable') return 'Folder unavailable'
+  return collection.files.length ? `${collection.files.length}${collection.truncated ? '+' : ''} ${collection.files.length === 1 ? 'file' : 'files'}` : 'Empty'
 }
 
-function addRing(parent: THREE.Object3D, radius: number, tube: number, color: number, materials: Set<THREE.Material>, geometries: Set<THREE.BufferGeometry>, rotation: THREE.Euler, opacity = 1): THREE.Mesh {
-  const geometry = new THREE.TorusGeometry(radius, tube, 8, 120); geometries.add(geometry)
-  const material = makeMaterial(color, materials, { emissive: color, emissiveIntensity: .42, transparent: opacity < 1, opacity })
-  const ring = new THREE.Mesh(geometry, material); ring.rotation.copy(rotation); parent.add(ring); return ring
-}
-
-function buttonStyle(): CSSProperties {
-  return { pointerEvents: 'auto', cursor: 'pointer', border: '1px solid rgba(226,192,129,.72)', borderRadius: '999px', padding: '9px 15px', color: '#fff8e8', background: 'rgba(20,27,36,.82)', boxShadow: '0 0 24px rgba(235,181,91,.15)', font: '500 12px/1.2 system-ui, sans-serif', letterSpacing: '.11em', textTransform: 'uppercase', whiteSpace: 'nowrap' }
+interface CardEntry { mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; glow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; file: ObservatoryFile }
+interface WorldEntry {
+  id: string
+  layout: WorldLayout
+  dim: THREE.IUniform<number>
+  baseDim: number
+  group: THREE.Group
+  spinner: THREE.Object3D
+  clouds?: THREE.Mesh
+  moon?: THREE.Object3D
+  cards: CardEntry[]
+  cardRing: THREE.Group
+  orbitLine: THREE.LineLoop<THREE.BufferGeometry, THREE.LineBasicMaterial>
+  ringOpacity: number
+  ringAngle: number
+  tag: HTMLDivElement
 }
 
 export default function ObservatoryScene(props: Props) {
@@ -101,14 +219,14 @@ export default function ObservatoryScene(props: Props) {
     if (!host) return
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color('#0b1420')
-    const camera = new THREE.PerspectiveCamera(42, 1, .1, 420)
-    camera.position.set(0, 19, 36)
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7))
+    const camera = new THREE.PerspectiveCamera(36, 1, .1, 2400)
+    camera.position.set(0, 3, 40)
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25)
+    renderer.setPixelRatio(pixelRatio)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.16
+    renderer.toneMappingExposure = 1.05
     renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;outline:none;touch-action:none'
     host.appendChild(renderer.domElement)
     const labels = new CSS2DRenderer()
@@ -116,232 +234,279 @@ export default function ObservatoryScene(props: Props) {
     host.appendChild(labels.domElement)
 
     const controls = new OrbitControls(camera, renderer.domElement)
-    controls.target.set(0, 4.4, 0); controls.enableDamping = true; controls.dampingFactor = .055
-    controls.minDistance = 18; controls.maxDistance = 150; controls.maxPolarAngle = Math.PI * .48
-    controls.enablePan = true; controls.panSpeed = .55
+    controls.target.copy(OVERVIEW_TARGET); controls.enableDamping = true; controls.dampingFactor = .06
+    controls.minDistance = 7; controls.maxDistance = 140; controls.minPolarAngle = Math.PI * .2; controls.maxPolarAngle = Math.PI * .72
+    controls.enablePan = false; controls.rotateSpeed = .6; controls.zoomSpeed = .8
     renderer.domElement.tabIndex = 0
-    renderer.domElement.setAttribute('aria-label', 'Observatory scene. Drag to orbit, use arrow keys to look around, plus and minus to zoom, Home to reset view.')
+    renderer.domElement.setAttribute('aria-label', 'Observatory scene. Drag to orbit, scroll to zoom, arrow keys to look around, plus and minus to zoom, Home to reset view.')
     let cameraTransition: { fromPosition: THREE.Vector3; fromTarget: THREE.Vector3; toPosition: THREE.Vector3; toTarget: THREE.Vector3; elapsed: number; duration: number } | null = null
-    let userInterruptedCamera = false
-    const cancelCameraTransition = () => { if (cameraTransition) cameraTransition = null; userInterruptedCamera = true }
+    const cancelCameraTransition = () => { cameraTransition = null }
     controls.addEventListener('start', cancelCameraTransition)
+    // Idle scenes redraw at 30 fps; dragging, zooming and camera flights get full frame rate.
+    let interacting = false
+    const startInteraction = () => { interacting = true }, endInteraction = () => { interacting = false }
+    controls.addEventListener('start', startInteraction); controls.addEventListener('end', endInteraction)
 
-    const geometries = new Set<THREE.BufferGeometry>()
-    const materials = new Set<THREE.Material>()
-    const textures = new Set<THREE.Texture>()
-    const clickable: THREE.Object3D[] = []
-    const collectionGroups = new Map<string, THREE.Group>()
-    const disposers: Array<() => void> = []
-    let lastFrameTime = performance.now()
-    let elapsedTime = 0
-
-    const nebulaTexture = makeNebulaTexture(); textures.add(nebulaTexture)
-    const nebulaGeo = new THREE.SphereGeometry(230, 36, 24); geometries.add(nebulaGeo)
-    const nebulaMat = new THREE.MeshBasicMaterial({ map: nebulaTexture, side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false })
-    materials.add(nebulaMat)
-    const nebula = new THREE.Mesh(nebulaGeo, nebulaMat); nebula.renderOrder = -20; scene.add(nebula)
-
-    scene.add(new THREE.HemisphereLight(0xfff0d7, 0x263b4b, 1.65))
-    const key = new THREE.DirectionalLight(0xffe0a6, 2.7); key.position.set(-12, 24, 12); scene.add(key)
-    const cool = new THREE.DirectionalLight(0x91c8f0, 1.35); cool.position.set(14, 11, -14); scene.add(cool)
-    const centerGlow = new THREE.PointLight(0xffd58c, 48, 36, 2); centerGlow.position.set(0, 7, 0); scene.add(centerGlow)
-
+    const disposables = new Set<{ dispose: () => void }>()
+    const track = <T extends { dispose: () => void }>(resource: T): T => { disposables.add(resource); return resource }
     const random = (() => { let seed = 0x53a91; return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296 } })()
-    const starPositions: number[] = [], starColors: number[] = []
-    for (let i = 0; i < 2800; i++) {
-      const radius = 68 + random() * 155, theta = random() * Math.PI * 2, phi = Math.acos(2 * random() - 1)
-      starPositions.push(radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi) * .72 + 24, radius * Math.sin(phi) * Math.sin(theta))
-      const roll = random()
-      const color = new THREE.Color(roll > .9 ? 0xffd797 : roll > .64 ? 0xc5e1ff : roll > .24 ? 0xa7b9e8 : 0xf1eee4)
-      starColors.push(color.r, color.g, color.b)
+
+    // Sky: the galactic band, stars and a distant galaxy travel with the camera (infinitely far).
+    const sky = new THREE.Group(); scene.add(sky)
+    const skyMaterial = track(new THREE.ShaderMaterial({
+      vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false,
+      uniforms: { uBand: { value: new THREE.Vector3(.28, 1, .36).normalize() }, uCore: { value: new THREE.Vector3(.35, -.22, -1).normalize() }, uSun: { value: SUN } },
+    }))
+    // The Milky Way never changes, so bake it once into a cube map instead of running noise per pixel every frame.
+    const skyScene = new THREE.Scene()
+    skyScene.add(new THREE.Mesh(track(new THREE.SphereGeometry(1000, 64, 32)), skyMaterial))
+    const skyTarget = track(new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType, generateMipmaps: false }))
+    new THREE.CubeCamera(1, 2000, skyTarget).update(renderer, skyScene)
+    scene.background = skyTarget.texture
+
+    const band = skyMaterial.uniforms.uBand.value as THREE.Vector3
+    const starPositions: number[] = [], starColors: number[] = [], starSizes: number[] = [], starPhases: number[] = []
+    const starPalette = [[.72, .82, 1], [.86, .9, 1], [1, .97, .9], [1, .88, .7], [1, .72, .52]] as const
+    const direction = new THREE.Vector3()
+    while (starSizes.length < 7000) {
+      direction.set(random() * 2 - 1, random() * 2 - 1, random() * 2 - 1)
+      const length = direction.length(); if (length > 1 || length < .01) continue
+      direction.divideScalar(length)
+      const latitude = direction.dot(band)
+      if (random() > .3 + .7 * Math.exp(-latitude * latitude * 14)) continue
+      const distance = 760 + random() * 180
+      starPositions.push(direction.x * distance, direction.y * distance, direction.z * distance)
+      const magnitude = Math.pow(random(), 7)
+      const tint = starPalette[Math.min(4, Math.floor(Math.pow(random(), 1.6) * 5))]
+      const brightness = .5 + magnitude * 1.8 + random() * .35
+      starColors.push(tint[0] * brightness, tint[1] * brightness, tint[2] * brightness)
+      starSizes.push(1.4 + magnitude * 5.2); starPhases.push(random())
     }
-    const starGeometry = new THREE.BufferGeometry(); geometries.add(starGeometry)
+    const starGeometry = track(new THREE.BufferGeometry())
     starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3))
-    starGeometry.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3))
-    const starMaterial = new THREE.PointsMaterial({ size: .58, vertexColors: true, transparent: true, opacity: 1, sizeAttenuation: true, depthWrite: false }); materials.add(starMaterial)
-    const starField = new THREE.Points(starGeometry, starMaterial); scene.add(starField)
-    // Fine dust gives depth without a costly shader or postprocessing pass.
-    const dustPositions: number[] = []
-    for (let i = 0; i < 560; i++) dustPositions.push((random() - .5) * 62, random() * 22 - 3, (random() - .5) * 48)
-    const dustGeometry = new THREE.BufferGeometry(); geometries.add(dustGeometry); dustGeometry.setAttribute('position', new THREE.Float32BufferAttribute(dustPositions, 3))
-    const dustMaterial = new THREE.PointsMaterial({ color: 0xf2d49c, size: .07, transparent: true, opacity: .5, depthWrite: false }); materials.add(dustMaterial); scene.add(new THREE.Points(dustGeometry, dustMaterial))
+    starGeometry.setAttribute('aColor', new THREE.Float32BufferAttribute(starColors, 3))
+    starGeometry.setAttribute('aSize', new THREE.Float32BufferAttribute(starSizes, 1))
+    starGeometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(starPhases, 1))
+    const starMaterial = track(new THREE.ShaderMaterial({
+      vertexShader: STAR_VERT, fragmentShader: STAR_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: pixelRatio } },
+    }))
+    const stars = new THREE.Points(starGeometry, starMaterial); stars.renderOrder = -9; stars.frustumCulled = false; sky.add(stars)
 
-    const orbitalPaths = [
-      { points: [[-16, 10.5, -4], [-10, 14.2, -8], [0, 13.6, -9], [10, 14, -5], [16, 10, -1]], color: 0x6e91c4 },
-      { points: [[-16, 6.8, 1], [-9, 9.6, 5], [0, 10.1, 6.5], [9, 8.7, 5], [16, 6.2, 1]], color: 0xc59c5d },
-      { points: [[-12, 2.4, -8], [-7, 5.1, -12], [0, 6.1, -12], [8, 4.7, -10], [13, 2.3, -6]], color: 0x597ba7 },
-    ] as const
-    for (const path of orbitalPaths) {
-      const curve = new THREE.CatmullRomCurve3(path.points.map(point => new THREE.Vector3(...point)))
-      const curveGeometry = new THREE.TubeGeometry(curve, 96, .018, 5, false); geometries.add(curveGeometry)
-      const curveMaterial = new THREE.MeshBasicMaterial({ color: path.color, transparent: true, opacity: .6, toneMapped: false }); materials.add(curveMaterial)
-      scene.add(new THREE.Mesh(curveGeometry, curveMaterial))
-    }
+    const galaxyMaterial = track(new THREE.SpriteMaterial({ map: track(makeGalaxyTexture(random)), transparent: true, opacity: .5, depthWrite: false, blending: THREE.AdditiveBlending }))
+    const galaxy = new THREE.Sprite(galaxyMaterial); galaxy.position.set(.62, .4, -1).normalize().multiplyScalar(820); galaxy.scale.setScalar(78); galaxy.renderOrder = -8; sky.add(galaxy)
 
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(17.2, 96), makeMaterial(0x182735, materials, { roughness: .48, metalness: .48 })); floor.geometry.rotateX(-Math.PI / 2); geometries.add(floor.geometry); floor.position.y = -.16; scene.add(floor)
-    addRing(floor, 16.85, .075, 0xc69b57, materials, geometries, new THREE.Euler(0, 0, 0), .82)
-    const platform = new THREE.Group(); scene.add(platform)
-    for (const [radius, depth, color] of [[15, .34, 0xc7b99d], [12.7, .18, 0x34495a], [10.3, .25, 0xe5d5b3], [8.5, .12, 0x657687]] as const) {
-      const geo = new THREE.CylinderGeometry(radius, radius * 1.035, depth, 96); geometries.add(geo)
-      const mesh = new THREE.Mesh(geo, makeMaterial(color, materials, { roughness: .58, metalness: color === 0x34495a ? .52 : .22 })); mesh.position.y = depth / 2; platform.add(mesh)
-      addRing(platform, radius * .94, .055, 0xc99c55, materials, geometries, new THREE.Euler(Math.PI / 2, 0, 0), .9).position.y = depth + .04
-    }
-    // Fine brass index marks make the observatory read as a calibrated instrument.
-    const indexMaterial = makeMaterial(0xd6b570, materials, { roughness: .3, metalness: .78, emissive: 0x4a3217, emissiveIntensity: .18 })
-    const indexGeometry = new THREE.BoxGeometry(.035, .018, .25); geometries.add(indexGeometry)
-    for (let i = 0; i < 96; i++) {
-      const angle = i / 96 * Math.PI * 2
-      const mark = new THREE.Mesh(indexGeometry, indexMaterial)
-      const radius = i % 8 === 0 ? 14.28 : 14.36
-      mark.position.set(Math.sin(angle) * radius, .355, Math.cos(angle) * radius)
-      mark.rotation.y = angle; scene.add(mark)
-    }
-    // Stepped central plinth and a telescope silhouette anchor the scene.
-    for (const [radius, height, y, color] of [[4.4, .42, .65, 0xf1e6d1], [3.55, .24, .98, 0xb99150], [3.1, .34, 1.24, 0x24384a], [2.7, .22, 1.52, 0xe8d6b4]] as const) {
-      const geo = new THREE.CylinderGeometry(radius, radius * 1.08, height, 64); geometries.add(geo)
-      const mesh = new THREE.Mesh(geo, makeMaterial(color, materials, { roughness: .44, metalness: .34 })); mesh.position.y = y; platform.add(mesh)
-    }
-    const telescope = new THREE.Group(); telescope.position.set(0, 1.72, .2); scene.add(telescope)
-    const tubeGeo = new THREE.CylinderGeometry(.78, 1.02, 6.4, 24); geometries.add(tubeGeo)
-    const tube = new THREE.Mesh(tubeGeo, makeMaterial(0xeee5d4, materials, { roughness: .28, metalness: .6 })); tube.rotation.z = -.55; tube.position.set(0, 3.58, 0); telescope.add(tube)
-    for (const y of [.42, 6.74]) {
-      const collarGeo = new THREE.CylinderGeometry(1.04, .95, .25, 24); geometries.add(collarGeo)
-      const collar = new THREE.Mesh(collarGeo, makeMaterial(0xb68a45, materials, { roughness: .3, metalness: .82 })); collar.rotation.z = -.55; collar.position.set(0, y, 0); telescope.add(collar)
-    }
-    const lensGeo = new THREE.CircleGeometry(.73, 32); geometries.add(lensGeo)
-    const lens = new THREE.Mesh(lensGeo, new THREE.MeshBasicMaterial({ color: 0xc8e7f3, side: THREE.DoubleSide, transparent: true, opacity: .86, toneMapped: false })); materials.add(lens.material); lens.rotation.x = Math.PI / 2; lens.rotation.z = -.55; lens.position.set(0, 6.84, 0); telescope.add(lens)
-    const pivotGeo = new THREE.SphereGeometry(.42, 20, 16); geometries.add(pivotGeo)
-    const pivot = new THREE.Mesh(pivotGeo, makeMaterial(0xc39a55, materials, { roughness: .24, metalness: .8 })); pivot.position.set(0, 2.45, 0); telescope.add(pivot)
-    const gimbal = addRing(telescope, 1.48, .105, 0x98713a, materials, geometries, new THREE.Euler(0, 0, 0), .98); gimbal.position.set(0, 2.45, 0)
-    const strutGeo = new THREE.CylinderGeometry(.105, .16, 1, 12); geometries.add(strutGeo)
-    const mountMaterial = makeMaterial(0xa77f43, materials, { roughness: .28, metalness: .82 })
-    const upper = new THREE.Vector3(0, 2.45, 0)
-    for (const [x, z] of [[-1.35, -.9], [1.35, -.9], [0, 1.45]] as const) {
-      const foot = new THREE.Vector3(x, .12, z), middle = foot.clone().add(upper).multiplyScalar(.5)
-      const strut = new THREE.Mesh(strutGeo, mountMaterial); strut.position.copy(middle); strut.scale.y = foot.distanceTo(upper); strut.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), upper.clone().sub(foot).normalize()); telescope.add(strut)
-      const footGeo = new THREE.CylinderGeometry(.3, .35, .16, 12); geometries.add(footGeo)
-      const pad = new THREE.Mesh(footGeo, mountMaterial); pad.position.copy(foot); telescope.add(pad)
-    }
-    const braceGeo = new THREE.CylinderGeometry(.045, .045, 2.4, 8); geometries.add(braceGeo)
-    const brace = new THREE.Mesh(braceGeo, mountMaterial); brace.rotation.x = Math.PI / 2; brace.position.set(0, .75, 0); telescope.add(brace)
-    // Thin aiming sight and a brass focuser make the instrument silhouette legible.
-    const finderGeo = new THREE.CylinderGeometry(.12, .15, 1.9, 12); geometries.add(finderGeo)
-    const finder = new THREE.Mesh(finderGeo, makeMaterial(0xc7a25f, materials, { roughness: .32, metalness: .8 })); finder.rotation.z = -.55; finder.position.set(.58, 4.05, .72); telescope.add(finder)
-    const focuserGeo = new THREE.CylinderGeometry(.18, .2, .9, 12); geometries.add(focuserGeo)
-    const focuser = new THREE.Mesh(focuserGeo, mountMaterial); focuser.rotation.z = -.55; focuser.position.set(0, .05, 0); telescope.add(focuser)
-    for (let i = 0; i < 12; i++) {
-      const angle = i / 12 * Math.PI * 2
-      const postGeo = new THREE.CylinderGeometry(.07, .1, .85, 8); geometries.add(postGeo)
-      const post = new THREE.Mesh(postGeo, makeMaterial(0x997847, materials, { metalness: .7, roughness: .38 })); post.position.set(Math.cos(angle) * 6.8, .62, Math.sin(angle) * 6.8); scene.add(post)
-      const lampGeo = new THREE.SphereGeometry(.13, 10, 8); geometries.add(lampGeo)
-      const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: 0xffd488, toneMapped: false })); materials.add(lamp.material); lamp.position.set(post.position.x, 1.08, post.position.z); scene.add(lamp)
-    }
-
-    // Return portal is a glowing, walk-through arch on the observatory's rim.
-    const portal = new THREE.Group(); portal.position.set(-15.2, 2.9, 1.6); portal.rotation.y = .22; scene.add(portal)
-    const archCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(-2.1, -2.1, 0), new THREE.Vector3(-2.1, .9, 0), new THREE.Vector3(-1.25, 2.6, 0), new THREE.Vector3(0, 3.1, 0), new THREE.Vector3(1.25, 2.6, 0), new THREE.Vector3(2.1, .9, 0), new THREE.Vector3(2.1, -2.1, 0)])
-    const archGeo = new THREE.TubeGeometry(archCurve, 48, .22, 10, false); geometries.add(archGeo)
-    const archMat = makeMaterial(0xd0a452, materials, { emissive: 0xffba54, emissiveIntensity: 1.1, metalness: .72, roughness: .28 })
-    const arch = new THREE.Mesh(archGeo, archMat); portal.add(arch)
-    const portalGlowGeo = new THREE.PlaneGeometry(3.65, 4.7); geometries.add(portalGlowGeo)
-    const portalGlow = new THREE.Mesh(portalGlowGeo, new THREE.MeshBasicMaterial({ color: 0xf4d598, transparent: true, opacity: .17, side: THREE.DoubleSide, depthWrite: false, toneMapped: false })); materials.add(portalGlow.material); portalGlow.position.set(0, .1, -.08); portal.add(portalGlow)
-    const portalOrb = new THREE.Mesh(new THREE.SphereGeometry(.17, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffdfa2, toneMapped: false })); geometries.add(portalOrb.geometry); materials.add(portalOrb.material); portalOrb.position.set(0, 2.45, .16); portal.add(portalOrb)
-    portal.userData.action = 'return'; arch.userData.action = 'return'; portalGlow.userData.action = 'return'; portalOrb.userData.action = 'return'; clickable.push(arch, portalGlow, portalOrb)
-    const portalButton = document.createElement('button'); portalButton.type = 'button'; portalButton.textContent = '↶  Return to Town'; portalButton.setAttribute('aria-label', 'Return to Town'); Object.assign(portalButton.style, buttonStyle())
-    portalButton.addEventListener('click', () => latest.current.onReturn())
-    const portalLabel = new CSS2DObject(portalButton); portalLabel.position.set(0, -2.55, .1); portal.add(portalLabel); disposers.push(() => portalButton.remove())
-
+    // Worlds.
+    const worlds = new Map<string, WorldEntry>()
+    const pickable: THREE.Object3D[] = []
     const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous')
+    const glowTexture = track(makeGlowTexture())
+    const cardGeometry = track(new THREE.PlaneGeometry(1, 1 / CARD_ASPECT))
     let alive = true
-    const fileCollectionIds = new Map<string, string>()
-    const collectionLabelButtons = new Map<string, HTMLButtonElement>()
+    const fileWorld = new Map<string, string>()
+
+    // Every world material shares one dim uniform so unfocused worlds can recede together.
+    let worldDim: THREE.IUniform<number> = { value: 1 }
+    const surfaceMaterial = (fragmentShader: string, seed: number, extra: Record<string, THREE.IUniform> = {}, options: THREE.ShaderMaterialParameters = {}) => track(new THREE.ShaderMaterial({
+      vertexShader: SURFACE_VERT, fragmentShader, ...options,
+      uniforms: { uSun: { value: SUN }, uSeed: { value: seed }, uDim: worldDim, ...extra },
+    }))
+
     for (const collection of latest.current.collections) {
       const layout = WORLD_LAYOUT[collection.id]
       if (!layout) continue
-      const world = new THREE.Group(); world.position.copy(layout.position); scene.add(world); collectionGroups.set(collection.id, world)
-      world.userData.collectionId = collection.id
-      const halo = new THREE.Group(); world.add(halo)
-      const geometry = new THREE.SphereGeometry(layout.radius, 40, 28); geometries.add(geometry)
-      const material = makeMaterial(layout.tint, materials, { roughness: .66, metalness: .17, emissive: layout.tint, emissiveIntensity: .12 })
-      const sphere = new THREE.Mesh(geometry, material); halo.add(sphere); sphere.userData.collectionId = collection.id; clickable.push(sphere)
-      // Mottled procedural surface catches the brass light and makes each world read as a celestial body.
-      const cloudGeo = new THREE.SphereGeometry(layout.radius * 1.012, 36, 24); geometries.add(cloudGeo)
-      const cloudMat = makeMaterial(collection.id === 'documents' ? 0xf2dfbd : collection.id === 'images' ? 0x8dc2d5 : 0x74c6d7, materials, { transparent: true, opacity: .24, roughness: .82, metalness: .06, wireframe: true })
-      const cloud = new THREE.Mesh(cloudGeo, cloudMat); halo.add(cloud)
-      const platformGeo = new THREE.CylinderGeometry(layout.radius * 1.2, layout.radius * 1.42, .25, 48); geometries.add(platformGeo)
-      const platformMesh = new THREE.Mesh(platformGeo, makeMaterial(0x273a49, materials, { metalness: .64, roughness: .36 })); platformMesh.position.y = -layout.radius * .64; world.add(platformMesh); platformMesh.userData.collectionId = collection.id; clickable.push(platformMesh)
-      addRing(world, layout.radius * 1.36, .065, layout.tint, materials, geometries, new THREE.Euler(Math.PI / 2.6, .08, .1), .84)
-      addRing(world, layout.radius * 1.67, .027, 0xc89a51, materials, geometries, new THREE.Euler(Math.PI / 2.1, -.12, .15), .82)
-      for (let i = 0; i < 6; i++) {
-        const a = i / 6 * Math.PI * 2, orbGeo = new THREE.SphereGeometry(.09 + (i % 2) * .035, 8, 6); geometries.add(orbGeo)
-        const orbMat = new THREE.MeshBasicMaterial({ color: i % 2 ? layout.tint : 0xffd28a, toneMapped: false }); materials.add(orbMat)
-        const satellite = new THREE.Mesh(orbGeo, orbMat); satellite.position.set(Math.cos(a) * layout.radius * 1.67, Math.sin(a) * .8, Math.sin(a) * layout.radius * 1.3); world.add(satellite)
+      const baseDim = collection.status === 'ready' ? 1 : .35
+      worldDim = { value: baseDim }
+      const group = new THREE.Group(); group.position.copy(layout.position); scene.add(group)
+      const axis = new THREE.Group(); axis.rotation.set(.22, 0, layout.tilt); group.add(axis)
+      const spinner = new THREE.Group(); axis.add(spinner)
+      const sphereGeometry = track(new THREE.SphereGeometry(layout.radius, 128, 80))
+      group.updateMatrixWorld(true)
+      const ringNormal = new THREE.Vector3(0, 1, 0).applyQuaternion(axis.getWorldQuaternion(new THREE.Quaternion()))
+      const ringUniforms: Record<string, THREE.IUniform> = layout.ring ? {
+        uRingN: { value: ringNormal }, uCenter: { value: layout.position.clone() },
+        uRingIn: { value: layout.ring[0] * layout.radius }, uRingOut: { value: layout.ring[1] * layout.radius },
+      } : {}
+      const fragment = layout.kind === 'terrestrial' ? TERRESTRIAL_FRAG : layout.kind === 'giant' ? GIANT_FRAG : ICE_FRAG
+      const planet = new THREE.Mesh(sphereGeometry, surfaceMaterial(fragment, layout.seed, ringUniforms))
+      planet.userData.collectionId = collection.id; spinner.add(planet); pickable.push(planet)
+
+      let clouds: THREE.Mesh | undefined
+      if (layout.kind === 'terrestrial') {
+        clouds = new THREE.Mesh(track(new THREE.SphereGeometry(layout.radius * 1.012, 96, 64)), surfaceMaterial(CLOUD_FRAG, layout.seed + 11, {}, { transparent: true, depthWrite: false }))
+        axis.add(clouds)
       }
-      const files = collection.files.slice(0, 12)
-      files.forEach((file, index) => {
-        fileCollectionIds.set(file.id, collection.id)
-        const angle = index / Math.max(files.length, 1) * Math.PI * 2 - Math.PI / 2
-        const imageWithinBudget = file.kind === 'image' && Boolean(file.url) && file.bytes <= 20 * 1024 * 1024
-        const texture = imageWithinBudget ? undefined : makeTextTexture(file.bytes > 20 * 1024 * 1024 ? 'LARGE IMAGE' : file.kind === 'document' ? 'FIELD NOTES' : file.kind === 'video' ? 'MOVING IMAGE' : 'IMAGE STUDY', file.name, `#${layout.tint.toString(16).padStart(6, '0')}`)
-        if (texture) textures.add(texture)
-        const cardMaterial = new THREE.MeshBasicMaterial({ map: texture ?? null, color: texture ? 0xffffff : 0xf1e8d7, side: THREE.DoubleSide, toneMapped: false })
-        materials.add(cardMaterial)
-        const cardGeo = new THREE.PlaneGeometry(1.5, 1.18); geometries.add(cardGeo)
-        const card = new THREE.Mesh(cardGeo, cardMaterial)
-        const cardRadius = layout.radius * 1.48
-        card.position.set(Math.cos(angle) * cardRadius, .05 + Math.sin(index * 4.2) * .6, Math.sin(angle) * cardRadius)
-        card.lookAt(0, 0, 0); card.userData.fileId = file.id; card.userData.collectionId = collection.id; card.userData.file = file; card.userData.action = 'file'; clickable.push(card); world.add(card)
-        if (imageWithinBudget) loader.load(file.url, loaded => {
+      const atmosphere = new THREE.Mesh(track(new THREE.SphereGeometry(layout.radius * (layout.kind === 'terrestrial' ? 1.075 : 1.05), 96, 64)), track(new THREE.ShaderMaterial({
+        vertexShader: SURFACE_VERT, fragmentShader: ATMOSPHERE_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        uniforms: { uSun: { value: SUN }, uColor: { value: new THREE.Color(layout.atmosphere) }, uStrength: { value: layout.kind === 'terrestrial' ? 1.6 : .6 }, uDim: worldDim },
+      })))
+      group.add(atmosphere)
+
+      if (layout.ring) {
+        const ring = new THREE.Mesh(track(new THREE.RingGeometry(layout.ring[0] * layout.radius, layout.ring[1] * layout.radius, 256, 1)), track(new THREE.ShaderMaterial({
+          vertexShader: RING_VERT, fragmentShader: RING_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+          uniforms: { uSun: { value: SUN }, uDim: worldDim, uRadius: { value: layout.radius }, ...ringUniforms },
+        })))
+        ring.rotation.x = -Math.PI / 2; axis.add(ring)
+      }
+
+      let moon: THREE.Object3D | undefined
+      if (layout.moon) {
+        moon = new THREE.Group(); moon.rotation.set(.18, 0, -.12); group.add(moon)
+        const moonMesh = new THREE.Mesh(track(new THREE.SphereGeometry(layout.radius * .2, 48, 32)), surfaceMaterial(MOON_FRAG, 8.1))
+        moonMesh.position.set(layout.radius * 1.9, 0, 0); moon.add(moonMesh)
+      }
+
+      // Files orbit as a tidy card ring that only appears when this world is in focus.
+      const cardRing = new THREE.Group(); cardRing.rotation.x = .4; cardRing.visible = false; group.add(cardRing)
+      const orbitPoints = Array.from({ length: 160 }, (_, index) => { const angle = index / 160 * Math.PI * 2; return new THREE.Vector3(Math.cos(angle) * layout.cardOrbit, 0, Math.sin(angle) * layout.cardOrbit) })
+      const orbitLine = new THREE.LineLoop(track(new THREE.BufferGeometry().setFromPoints(orbitPoints)), track(new THREE.LineBasicMaterial({ color: layout.accent, transparent: true, opacity: 0, depthWrite: false })))
+      cardRing.add(orbitLine)
+      const cardWidth = layout.cardOrbit * .3
+      const cards: CardEntry[] = collection.files.slice(0, MAX_CARDS).map(file => {
+        fileWorld.set(file.id, collection.id)
+        const texture = track(new THREE.CanvasTexture(makeCardCanvas(file, layout.accent))); texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4
+        const mesh = new THREE.Mesh(cardGeometry, track(new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, depthWrite: false, toneMapped: false, side: THREE.DoubleSide })))
+        mesh.scale.setScalar(cardWidth); mesh.userData.file = file; mesh.userData.collectionId = collection.id
+        const glow = new THREE.Mesh(cardGeometry, track(new THREE.MeshBasicMaterial({ map: glowTexture, color: layout.accent, transparent: true, opacity: 0, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending })))
+        glow.scale.set(1.36, 1.36, 1); glow.position.z = -.01; mesh.add(glow)
+        cardRing.add(mesh); pickable.push(mesh)
+        if (file.kind === 'image' && file.url && file.bytes <= 20 * 1024 * 1024) loader.load(file.url, loaded => {
           if (!alive) { loaded.dispose(); return }
-          const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512
-          const context = canvas.getContext('2d')!
-          const source = loaded.image as HTMLImageElement
-          const scale = Math.min(512 / source.width, 512 / source.height)
-          const width = Math.max(1, Math.round(source.width * scale)), height = Math.max(1, Math.round(source.height * scale))
-          context.fillStyle = '#f4efe5'; context.fillRect(0, 0, 512, 512)
-          context.drawImage(source, (512 - width) / 2, (512 - height) / 2, width, height)
-          loaded.dispose()
-          const thumbnail = new THREE.CanvasTexture(canvas); thumbnail.colorSpace = THREE.SRGBColorSpace; thumbnail.anisotropy = 4; textures.add(thumbnail)
-          card.material.map = thumbnail; card.material.needsUpdate = true
+          const thumbnail = track(new THREE.CanvasTexture(makeCardCanvas(file, layout.accent, loaded.image as HTMLImageElement))); thumbnail.colorSpace = THREE.SRGBColorSpace; thumbnail.anisotropy = 4
+          loaded.dispose(); mesh.material.map = thumbnail; mesh.material.needsUpdate = true
         }, undefined, () => {})
-        const frameGeo = new THREE.EdgesGeometry(cardGeo); geometries.add(frameGeo)
-        const frame = new THREE.LineSegments(frameGeo, new THREE.LineBasicMaterial({ color: 0xffd58c, transparent: true, opacity: .72 })); materials.add((frame as THREE.LineSegments).material as THREE.Material); frame.position.copy(card.position); frame.quaternion.copy(card.quaternion); frame.scale.set(1.06, 1.06, 1); frame.userData.action = 'file-frame'; frame.userData.fileId = file.id; world.add(frame)
-        const stemGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(card.position.x, card.position.y, card.position.z)]); geometries.add(stemGeo)
-        const stem = new THREE.Line(stemGeo, new THREE.LineBasicMaterial({ color: 0xd4b274, transparent: true, opacity: .38 })); materials.add(stem.material); world.add(stem)
+        return { mesh, glow, file }
       })
-      const labelButton = document.createElement('button'); labelButton.type = 'button'
-      const countLabel = collection.status === 'missing' ? 'Folder not found' : collection.status === 'unavailable' ? 'Folder unavailable' : collection.files.length ? `${collection.files.length}${collection.truncated ? '+' : ''} items` : 'No previews'
-      labelButton.textContent = `${collection.name}  ·  ${countLabel}`
-      labelButton.setAttribute('aria-label', collection.status === 'ready' ? `Open ${collection.name}, ${collection.files.length} items` : `${collection.name}, ${countLabel}`); Object.assign(labelButton.style, buttonStyle())
-      labelButton.addEventListener('click', () => latest.current.onSelectCollection(collection.id))
-      const label = new CSS2DObject(labelButton); label.position.set(0, -layout.radius - 2, 0); world.add(label); disposers.push(() => labelButton.remove()); collectionLabelButtons.set(collection.id, labelButton)
-      world.traverse(object => { if (object !== world) object.userData.collectionId ??= collection.id })
+
+      const tag = document.createElement('div'); tag.className = 'observatory-tag'; tag.dataset.collection = collection.id
+      tag.style.setProperty('--world-color', layout.accent)
+      tag.innerHTML = '<b></b><span></span>'
+      tag.querySelector('b')!.textContent = collection.name
+      tag.querySelector('span')!.textContent = statusLabel(collection)
+      tag.setAttribute('aria-hidden', 'true')
+      tag.addEventListener('click', () => latest.current.onSelectCollection(collection.id))
+      const label = new CSS2DObject(tag); label.center.set(.5, 1); label.position.set(0, layout.radius * (layout.ring ? 1.12 : 1.14) + .2, 0); group.add(label)
+
+      worlds.set(collection.id, { id: collection.id, layout, dim: worldDim, baseDim, group, spinner, clouds, moon, cards, cardRing, orbitLine, ringOpacity: 0, ringAngle: -Math.PI / 2, tag })
     }
 
-    const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2(); let pointerDown: { x: number; y: number } | null = null
+    // Wormhole back to Town: a throat that always faces the viewer, with matter spiralling in.
+    const wormhole = new THREE.Group(); wormhole.position.copy(WORMHOLE.position); scene.add(wormhole)
+    const facing = new THREE.Group(); wormhole.add(facing)
+    const wormholeMaterial = track(new THREE.ShaderMaterial({ vertexShader: WORMHOLE_VERT, fragmentShader: WORMHOLE_FRAG, transparent: true, depthWrite: false, uniforms: { uTime: { value: 0 }, uOpen: { value: 0 } } }))
+    const throat = new THREE.Mesh(track(new THREE.PlaneGeometry(WORMHOLE.radius * 2, WORMHOLE.radius * 2)), wormholeMaterial)
+    throat.userData.action = 'return'; facing.add(throat); pickable.push(throat)
+    const infallSeeds: number[] = []
+    for (let i = 0; i < 900; i++) infallSeeds.push(random(), random(), random())
+    const infallGeometry = track(new THREE.BufferGeometry())
+    infallGeometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(900 * 3), 3))
+    infallGeometry.setAttribute('aSeed', new THREE.Float32BufferAttribute(infallSeeds, 3))
+    const infallMaterial = track(new THREE.ShaderMaterial({
+      vertexShader: INFALL_VERT, fragmentShader: SOFT_POINT_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uRadius: { value: WORMHOLE.radius / 2 }, uPixelRatio: { value: pixelRatio } },
+    }))
+    const infall = new THREE.Points(infallGeometry, infallMaterial); infall.frustumCulled = false; facing.add(infall)
+    const portalTag = document.createElement('div'); portalTag.className = 'observatory-tag observatory-tag--portal'
+    portalTag.style.setProperty('--world-color', '#f4b27a')
+    portalTag.innerHTML = '<b>Return to Town</b><span>Wormhole</span>'
+    portalTag.setAttribute('aria-hidden', 'true')
+    portalTag.addEventListener('click', () => latest.current.onRequestReturn())
+    const portalLabel = new CSS2DObject(portalTag); portalLabel.center.set(.5, 1); portalLabel.position.set(0, WORMHOLE.radius * .92, 0); wormhole.add(portalLabel)
+
+    // A comet on a long orbit. Its tails are fixed relative to the sun, so they always stream away from it.
+    const comaTexture = track(makeRadialTexture())
+    const comet = new THREE.Group(); scene.add(comet)
+    const coma = new THREE.Sprite(track(new THREE.SpriteMaterial({ map: comaTexture, color: 0xfff1d6, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })))
+    coma.scale.setScalar(2.2); comet.add(coma)
+    const antiSun = SUN.clone().negate()
+    const bend = new THREE.Vector3().crossVectors(antiSun, new THREE.Vector3(0, 1, 0)).normalize()
+    const gauss = () => (random() + random() + random() - 1.5) / 1.5
+    const tailPositions: number[] = [], tailAlong: number[] = [], tailColors: number[] = [], tailSizes: number[] = []
+    for (let i = 0; i < 1500; i++) {
+      const ion = i >= 1000
+      const along = ion ? random() : Math.pow(random(), 1.4)
+      const point = antiSun.clone().multiplyScalar(along * (ion ? 26 : 17))
+      if (!ion) point.addScaledVector(bend, along * along * 4)
+      point.add(new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar((ion ? .25 : 1.1) * along + .06))
+      tailPositions.push(point.x, point.y, point.z); tailAlong.push(along)
+      if (ion) tailColors.push(.4, .6, 1); else tailColors.push(1, .82, .55)
+      tailSizes.push(ion ? 1.4 : 1.8 + random() * 2.4)
+    }
+    const tailGeometry = track(new THREE.BufferGeometry())
+    tailGeometry.setAttribute('position', new THREE.Float32BufferAttribute(tailPositions, 3))
+    tailGeometry.setAttribute('aAlong', new THREE.Float32BufferAttribute(tailAlong, 1))
+    tailGeometry.setAttribute('aColor', new THREE.Float32BufferAttribute(tailColors, 3))
+    tailGeometry.setAttribute('aSize', new THREE.Float32BufferAttribute(tailSizes, 1))
+    const tailMaterial = track(new THREE.ShaderMaterial({
+      vertexShader: COMET_VERT, fragmentShader: SOFT_POINT_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uPixelRatio: { value: pixelRatio } },
+    }))
+    const tail = new THREE.Points(tailGeometry, tailMaterial); tail.frustumCulled = false; comet.add(tail)
+
+    // Occasional shooting stars streak across whatever part of the sky is in view.
+    const meteorGeometry = track(new THREE.BufferGeometry())
+    meteorGeometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3))
+    meteorGeometry.setAttribute('color', new THREE.Float32BufferAttribute([1, .95, .85, 0, 0, 0], 3))
+    const meteorMaterial = track(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }))
+    const meteor = new THREE.Line(meteorGeometry, meteorMaterial); meteor.frustumCulled = false; sky.add(meteor)
+    const meteorState = { wait: 3 + random() * 4, age: -1, start: new THREE.Vector3(), velocity: new THREE.Vector3() }
+    const METEOR_LIFE = .85
+
+    // Picking: click selects, hover shows a pointer and lifts the matching tag.
+    const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
+    let pointerDown: { x: number; y: number } | null = null
+    let hovered: string | null = null
+    let hoveringPortal = false
+    const visibleInScene = (object: THREE.Object3D) => { for (let node: THREE.Object3D | null = object; node; node = node.parent) if (!node.visible) return false; return true }
+    const pick = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect()
+      pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
+      raycaster.setFromCamera(pointer, camera)
+      return raycaster.intersectObjects(pickable.filter(visibleInScene), false)[0]?.object
+    }
     const down = (event: PointerEvent) => { pointerDown = { x: event.clientX, y: event.clientY } }
     const up = (event: PointerEvent) => {
       if (!pointerDown || Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 5) { pointerDown = null; return }
       pointerDown = null
-      const rect = renderer.domElement.getBoundingClientRect(); pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
-      raycaster.setFromCamera(pointer, camera)
-      const hit = raycaster.intersectObjects(clickable, false)[0]?.object
-      if (!hit) return
-      if (hit.userData.action === 'return') latest.current.onReturn()
-      else if (hit.userData.action === 'file') { const file = hit.userData.file as ObservatoryFile; latest.current.onSelectFile(file) }
-      else if (typeof hit.userData.collectionId === 'string') latest.current.onSelectCollection(hit.userData.collectionId)
+      const hit = pick(event)
+      if (hit?.userData.action === 'return') latest.current.onRequestReturn()
+      else if (hit?.userData.file) latest.current.onSelectFile(hit.userData.file as ObservatoryFile)
+      else if (typeof hit?.userData.collectionId === 'string') latest.current.onSelectCollection(hit.userData.collectionId)
     }
-    renderer.domElement.addEventListener('pointerdown', down); renderer.domElement.addEventListener('pointerup', up)
+    const move = (event: PointerEvent) => {
+      if (event.buttons) return
+      const hit = pick(event)
+      hovered = typeof hit?.userData.collectionId === 'string' ? hit.userData.collectionId : null
+      hoveringPortal = hit?.userData.action === 'return'
+      renderer.domElement.style.cursor = hit ? 'pointer' : 'grab'
+    }
+    renderer.domElement.addEventListener('pointerdown', down); renderer.domElement.addEventListener('pointerup', up); renderer.domElement.addEventListener('pointermove', move)
 
-    const overviewTarget = new THREE.Vector3(0, 4.4, 0)
-    const fitOverview = (width: number, height: number) => {
-      controls.target.copy(overviewTarget)
-      const distance = requiredOverviewDistance(camera, width, height, overviewTarget)
-      camera.position.copy(overviewTarget).add(new THREE.Vector3(0, .22, 1).normalize().multiplyScalar(distance))
-      controls.update()
+    const frameFor = (id: string | null, width: number, height: number) => {
+      const world = id ? worlds.get(id) : undefined
+      const toCamera = camera.position.clone().sub(controls.target).normalize()
+      if (!world) {
+        const distance = overviewDistance(camera, width, height)
+        return { target: OVERVIEW_TARGET.clone(), position: OVERVIEW_TARGET.clone().add(new THREE.Vector3(0, .16, 1).normalize().multiplyScalar(distance)) }
+      }
+      // Look from outside the system so neighbouring worlds fall away from the frame.
+      const lateral = THREE.MathUtils.clamp(world.layout.position.x / 22, -1, 1) * .7
+      toCamera.set(lateral, world.layout.ring ? .62 : .3, 1).normalize()
+      const { distance, shift } = focusFrame(camera, width, height, world.layout.cardOrbit + world.layout.radius * .5)
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), toCamera).normalize()
+      const target = world.layout.position.clone().addScaledVector(right, shift)
+      return { target, position: target.clone().addScaledVector(toCamera, distance) }
     }
+    const startFocus = (id: string | null) => {
+      const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight)
+      const { target, position } = frameFor(id, width, height)
+      if (latest.current.reducedMotion) { controls.target.copy(target); camera.position.copy(position); controls.update(); cameraTransition = null; return }
+      cameraTransition = { fromPosition: camera.position.clone(), fromTarget: controls.target.clone(), toPosition: position, toTarget: target, elapsed: 0, duration: 1.1 }
+    }
+
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Home') { event.preventDefault(); cameraTransition = null; userInterruptedCamera = false; fitOverview(host.clientWidth, host.clientHeight) }
+      if (event.key === 'Home') { event.preventDefault(); cameraTransition = null; const { target, position } = frameFor(null, host.clientWidth, host.clientHeight); controls.target.copy(target); camera.position.copy(position); controls.update() }
       else if (['+', '=', '-', '_', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault(); cancelCameraTransition()
         if (event.key === '+' || event.key === '=') controls.dollyIn(1.18)
@@ -356,108 +521,139 @@ export default function ObservatoryScene(props: Props) {
     renderer.domElement.addEventListener('keydown', keydown)
 
     let frame = 0
-    let lastFocusedCollection: string | null = null
-    const startCollectionFocus = (id: string | null) => {
-      userInterruptedCamera = false
-      const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight)
-      let target: THREE.Vector3, distance: number
-      if (id && collectionGroups.has(id)) {
-        const layout = WORLD_LAYOUT[id as ObservatoryCollection['id']]
-        target = layout.position.clone().add(new THREE.Vector3(2.1, -.45, 0))
-        const halfWidth = layout.radius * 1.78 + 2.1, halfHeight = layout.radius + 2.35
-        distance = Math.max(13.5, requiredFocusDistance(camera, width, height, halfWidth, halfHeight))
-      } else {
-        target = overviewTarget.clone(); distance = requiredOverviewDistance(camera, width, height, target)
-      }
-      const direction = camera.position.clone().sub(controls.target).normalize()
-      if (direction.lengthSq() < .1) direction.set(0, .22, 1).normalize()
-      const position = target.clone().add(direction.multiplyScalar(distance))
-      if (latest.current.reducedMotion) { controls.target.copy(target); camera.position.copy(position); controls.update(); cameraTransition = null; return }
-      cameraTransition = { fromPosition: camera.position.clone(), fromTarget: controls.target.clone(), toPosition: position, toTarget: target, elapsed: 0, duration: .78 }
-    }
+    let lastFrameTime = performance.now()
+    let elapsedTime = 0
+    let lastFocused: string | null = null
+    let departure: { elapsed: number; from: THREE.Vector3; fromTarget: THREE.Vector3; end: THREE.Vector3; done: boolean } | null = null
+    const cardPosition = new THREE.Vector3()
     const render = () => {
       frame = requestAnimationFrame(render)
       const now = performance.now()
-      const delta = Math.min((now - lastFrameTime) / 1000, .04)
+      if (!interacting && !cameraTransition && !departure && now - lastFrameTime < 1000 / 30 - 2) return
+      const delta = Math.min((now - lastFrameTime) / 1000, .05)
       lastFrameTime = now
-      elapsedTime += delta
-      const motion = latest.current.reducedMotion ? 0 : delta
-      controls.update()
-      if (latest.current.selectedCollection !== lastFocusedCollection) {
-        lastFocusedCollection = latest.current.selectedCollection
-        startCollectionFocus(lastFocusedCollection)
+      const { selectedCollection, selectedFileId, reducedMotion } = latest.current
+      const motion = reducedMotion ? 0 : delta
+      elapsedTime += motion
+      if (latest.current.departing && !departure) {
+        cameraTransition = null; controls.enabled = false
+        const approach = camera.position.clone().sub(WORMHOLE.position).normalize()
+        departure = { elapsed: 0, from: camera.position.clone(), fromTarget: controls.target.clone(), end: WORMHOLE.position.clone().addScaledVector(approach, .05), done: reducedMotion }
+        if (reducedMotion) latest.current.onReturn()
       }
-      if (cameraTransition && !userInterruptedCamera) {
+      if (!departure && selectedCollection !== lastFocused) { lastFocused = selectedCollection; startFocus(selectedCollection) }
+      if (cameraTransition) {
         cameraTransition.elapsed = Math.min(cameraTransition.duration, cameraTransition.elapsed + delta)
         const amount = cameraTransition.elapsed / cameraTransition.duration
-        const eased = amount * amount * (3 - 2 * amount)
+        const eased = amount < .5 ? 4 * amount ** 3 : 1 - (-2 * amount + 2) ** 3 / 2
         camera.position.lerpVectors(cameraTransition.fromPosition, cameraTransition.toPosition, eased)
         controls.target.lerpVectors(cameraTransition.fromTarget, cameraTransition.toTarget, eased)
-        controls.update()
         if (amount >= 1) cameraTransition = null
       }
+      if (departure && !departure.done) {
+        // Dive through the throat: accelerate in, widen the lens, then hand off to Town.
+        departure.elapsed += delta
+        const amount = Math.min(1, departure.elapsed / DEPART_SECONDS)
+        const eased = amount ** 3
+        camera.position.lerpVectors(departure.from, departure.end, eased)
+        controls.target.lerpVectors(departure.fromTarget, WORMHOLE.position, Math.min(1, amount * 2.2))
+        camera.lookAt(controls.target)
+        camera.fov = 36 + eased * 44; camera.updateProjectionMatrix()
+        if (amount >= 1) { departure.done = true; latest.current.onReturn() }
+      } else if (!departure) controls.update()
+      sky.position.copy(camera.position)
+      starMaterial.uniforms.uTime.value = elapsedTime
+      facing.quaternion.copy(camera.quaternion)
+      wormholeMaterial.uniforms.uTime.value = elapsedTime
+      infallMaterial.uniforms.uTime.value = elapsedTime
+      const open = departure ? Math.min(1, departure.elapsed / DEPART_SECONDS) : hoveringPortal ? .35 : 0
+      wormholeMaterial.uniforms.uOpen.value = reducedMotion ? open : THREE.MathUtils.damp(wormholeMaterial.uniforms.uOpen.value, open, 6, delta)
+      portalTag.classList.toggle('is-hovered', hoveringPortal)
+
+      const cometPhase = elapsedTime / 140 * Math.PI * 2 + 2.5
+      comet.position.set(Math.cos(cometPhase) * 62, 15 + Math.sin(cometPhase) * 7, -48 + Math.sin(cometPhase) * 14)
+      tailMaterial.uniforms.uTime.value = elapsedTime
+
       if (motion) {
-        starField.rotation.y += motion * .0013
-        for (const [id, world] of collectionGroups) {
-          const selected = latest.current.selectedCollection === id || fileCollectionIds.get(latest.current.selectedFileId ?? '') === id
-          const speed = selected ? 0 : .048
-          world.rotation.y += motion * speed
-          const pulse = selected ? 1.04 + Math.sin(elapsedTime * 1.6) * .012 : 1 + Math.sin(elapsedTime * .7 + id.length) * .009
-          world.scale.setScalar(pulse)
+        if (meteorState.age < 0 && (meteorState.wait -= motion) <= 0) {
+          const forward = camera.getWorldDirection(new THREE.Vector3())
+          const side = new THREE.Vector3().crossVectors(forward, camera.up).normalize()
+          meteorState.start.copy(forward).addScaledVector(side, (random() - .5) * 1.1).addScaledVector(camera.up, .12 + random() * .3).normalize().multiplyScalar(600)
+          meteorState.velocity.copy(side).multiplyScalar(random() > .5 ? 1 : -1).addScaledVector(camera.up, -.35 - random() * .3).normalize().multiplyScalar(220 + random() * 120)
+          meteorState.age = 0; meteorState.wait = 6 + random() * 10
         }
-        portalGlow.material && ((portalGlow.material as THREE.MeshBasicMaterial).opacity = .14 + Math.sin(elapsedTime * 1.7) * .05)
+        if (meteorState.age >= 0) {
+          meteorState.age += motion
+          const head = meteorState.start.clone().addScaledVector(meteorState.velocity, meteorState.age)
+          const tailEnd = head.clone().addScaledVector(meteorState.velocity, -Math.min(meteorState.age, .22))
+          const positions = meteorGeometry.attributes.position as THREE.BufferAttribute
+          positions.setXYZ(0, head.x, head.y, head.z); positions.setXYZ(1, tailEnd.x, tailEnd.y, tailEnd.z); positions.needsUpdate = true
+          meteorMaterial.opacity = Math.sin(Math.PI * Math.min(1, meteorState.age / METEOR_LIFE))
+          if (meteorState.age > METEOR_LIFE) { meteorState.age = -1; meteorMaterial.opacity = 0 }
+        }
       }
-      for (const [id, world] of collectionGroups) {
-        const focused = latest.current.selectedCollection === id || fileCollectionIds.get(latest.current.selectedFileId ?? '') === id
-        world.traverse(object => {
-          const selectedFile = object.userData.fileId === latest.current.selectedFileId
-          if (object.userData.action === 'file') object.scale.setScalar(selectedFile ? 1.2 : 1)
-          if (object.userData.action === 'file-frame') {
-            object.scale.setScalar(selectedFile ? 1.16 : 1.06)
-            const material = (object as THREE.LineSegments).material as THREE.LineBasicMaterial
-            material.color.set(selectedFile ? 0xffe39d : 0xffd58c); material.opacity = selectedFile ? 1 : .72
-          }
+
+      const activeWorld = selectedCollection ?? (selectedFileId ? fileWorld.get(selectedFileId) ?? null : null)
+      for (const world of worlds.values()) {
+        world.spinner.rotation.y += motion * world.layout.spin
+        if (world.clouds) world.clouds.rotation.y += motion * world.layout.spin * 1.35
+        if (world.moon) world.moon.rotation.y += motion * .09
+        const active = world.id === activeWorld
+        const holdsSelection = world.cards.some(card => card.file.id === selectedFileId)
+        world.ringOpacity = reducedMotion ? (active ? 1 : 0) : THREE.MathUtils.damp(world.ringOpacity, active ? 1 : 0, 5, delta)
+        world.cardRing.visible = world.ringOpacity > .01
+        if (!holdsSelection) world.ringAngle += motion * .05
+        world.orbitLine.material.opacity = world.ringOpacity * .22
+        const reveal = .82 + world.ringOpacity * .18
+        const billboard = world.cardRing.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(camera.quaternion)
+        world.cards.forEach((card, index) => {
+          const angle = world.ringAngle + index / world.cards.length * Math.PI * 2
+          const radius = world.layout.cardOrbit * reveal
+          card.mesh.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius)
+          // Billboard: undo the ring tilt so each card squarely faces the camera.
+          card.mesh.quaternion.copy(billboard)
+          const selected = card.file.id === selectedFileId
+          card.mesh.getWorldPosition(cardPosition)
+          const behind = cardPosition.distanceTo(camera.position) > world.layout.position.distanceTo(camera.position) + world.layout.radius * .6
+          card.mesh.material.opacity = world.ringOpacity * (selected ? 1 : behind ? .55 : .95)
+          card.glow.material.opacity = selected ? world.ringOpacity * .9 : 0
+          card.mesh.scale.setScalar(world.layout.cardOrbit * .3 * (selected ? 1.28 : 1))
         })
-        const button = collectionLabelButtons.get(id)
-        if (button) { button.style.borderColor = focused ? 'rgba(255,222,157,.98)' : 'rgba(226,192,129,.72)'; button.style.background = focused ? 'rgba(74,54,31,.94)' : 'rgba(20,27,36,.82)' }
+        const dimmed = activeWorld !== null && !active
+        const targetDim = world.baseDim * (dimmed ? .38 : 1)
+        world.dim.value = reducedMotion ? targetDim : THREE.MathUtils.damp(world.dim.value, targetDim, 4, delta)
+        world.tag.classList.toggle('is-active', active)
+        world.tag.classList.toggle('is-dimmed', dimmed)
+        world.tag.classList.toggle('is-hovered', hovered === world.id)
       }
-      renderer.render(scene, camera); labels.render(scene, camera)
+      if (ready) { renderer.render(scene, camera); labels.render(scene, camera) }
     }
+
     let framed = false
     const resize = () => {
       const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight)
       camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height); labels.setSize(width, height)
-      const selectedId = latest.current.selectedCollection
-      const selectedLayout = selectedId ? WORLD_LAYOUT[selectedId as ObservatoryCollection['id']] : undefined
-      const required = selectedLayout
-        ? Math.max(13.5, requiredFocusDistance(camera, width, height,
-          selectedLayout.radius * 1.78 + Math.abs(selectedLayout.position.x - controls.target.x),
-          selectedLayout.radius + 2.35 + Math.abs(selectedLayout.position.y - controls.target.y)))
-        : requiredOverviewDistance(camera, width, height, controls.target)
-      if (!framed) { fitOverview(width, height); framed = true }
-      else if (required > controls.getDistance() * 1.02) {
-        const direction = camera.position.clone().sub(controls.target).normalize()
-        camera.position.copy(controls.target).add(direction.multiplyScalar(required))
-        controls.update()
-      }
-      if (cameraTransition) {
-        const direction = cameraTransition.toPosition.clone().sub(cameraTransition.toTarget).normalize()
-        cameraTransition.toPosition.copy(cameraTransition.toTarget).add(direction.multiplyScalar(required))
-      }
+      if (departure) return
+      const { target, position } = frameFor(latest.current.selectedCollection, width, height)
+      if (!framed) { controls.target.copy(target); camera.position.copy(position); controls.update(); framed = true; lastFocused = latest.current.selectedCollection }
+      else if (cameraTransition) { cameraTransition.toTarget.copy(target); cameraTransition.toPosition.copy(position) }
+      else if (position.distanceTo(target) > controls.getDistance() * 1.02) { camera.position.copy(controls.target).addScaledVector(camera.position.clone().sub(controls.target).normalize(), position.distanceTo(target)); controls.update() }
     }
+    // Compile every shader off the main thread (where supported) before the first frame,
+    // so the page shows a calm "calibrating" state instead of a frozen black canvas.
+    let ready = false
+    renderer.compileAsync(scene, camera).catch(() => {}).then(() => { if (alive) { ready = true; host.dataset.ready = 'true' } })
     const observer = new ResizeObserver(resize); observer.observe(host); resize(); render()
 
     return () => {
-      alive = false; cancelAnimationFrame(frame); observer.disconnect(); controls.removeEventListener('start', cancelCameraTransition); controls.dispose()
-      renderer.domElement.removeEventListener('pointerdown', down); renderer.domElement.removeEventListener('pointerup', up); renderer.domElement.removeEventListener('keydown', keydown)
-      disposers.forEach(dispose => dispose())
+      alive = false; cancelAnimationFrame(frame); observer.disconnect(); controls.removeEventListener('start', cancelCameraTransition); controls.removeEventListener('start', startInteraction); controls.removeEventListener('end', endInteraction); controls.dispose()
+      renderer.domElement.removeEventListener('pointerdown', down); renderer.domElement.removeEventListener('pointerup', up)
+      renderer.domElement.removeEventListener('pointermove', move); renderer.domElement.removeEventListener('keydown', keydown)
       scene.traverse(object => { if (object instanceof CSS2DObject) object.element.remove() })
-      textures.forEach(texture => texture.dispose())
-      geometries.forEach(geometry => geometry.dispose())
-      materials.forEach(material => material.dispose())
+      disposables.forEach(resource => resource.dispose())
       renderer.dispose(); renderer.domElement.remove(); labels.domElement.remove()
     }
   }, [props.collections])
 
-  return <div ref={hostRef} aria-label="Cosmic Observatory" role="application" tabIndex={0} style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#0b1420', touchAction: 'none' }} />
+  return <div ref={hostRef} className="observatory-scene" aria-label="Cosmic Observatory" role="application" tabIndex={0} style={{ position: 'absolute', inset: 0, overflow: 'hidden', background: '#02040a', touchAction: 'none' }} />
 }

@@ -224,7 +224,10 @@ claim that the tableau is a faithful period artifact.
 
 Pass the complete existing Town agent/task projection to the scene: agent ID,
 display name, home project, persisted state, task ID, session ID and run ID.
-Render at most one human per Town agent and no ambient human villager. A person exposes
+Render at most one agent figure per Town agent. **2026-09-26 PT-127 / ADR-93 amendment:**
+the user explicitly requested generic townspeople, superseding the original
+no-ambient-human restriction. Add a bounded decorative population with no agent
+identity, status badge, roster/count contribution or claim of real work. A runtime agent exposes
 their name and current state through an accessible DOM button/control; activating
 it opens the existing project/task/worker controls. The visible human remains
 selectable even when its 3D target is too small.

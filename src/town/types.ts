@@ -14,6 +14,7 @@ export type TownTaskState =
   | 'cancelled'
   | 'interrupted'
 
+export type TownCraft = 'planner' | 'designer' | 'builder' | 'reviewer' | 'tester' | 'debugger' | 'researcher' | 'scribe' | 'guardian'
 export type TownWorkspaceMode = 'read_only' | 'shared_checkout' | 'isolated_worktree'
 export type TownProjectScanStatus = 'known' | 'unknown' | 'partial' | 'error'
 export type TownQuotaStatus = 'available' | 'unavailable' | 'stale' | 'exhausted' | 'unsupported'
@@ -73,6 +74,13 @@ export interface TownAgent {
   task_id?: string
   session_id?: string
   run_id?: string
+  /** Artisan catalog key (ADR-91); absent on legacy task-bound agents. */
+  persona?: string
+  craft?: TownCraft
+  retired_at?: string
+  /** Last real tool start observed for this agent's live run (throttled). */
+  last_activity_at?: string
+  last_tool?: string
 }
 
 export interface TownTask {

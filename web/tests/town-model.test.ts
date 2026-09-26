@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildingForm, layoutProjects, projectBuildingAppearance, projectCluster, TEMPLE_SITE, townCentralDistrictRadius, townGroveSites, townLoadState, townOverviewDistance, type TownPosition } from '../app/town/town-model'
+import { buildingForm, layoutProjects, projectBuildingAppearance, projectCluster, TEMPLE_CAMPUS, TEMPLE_SITE, townCentralDistrictRadius, townGroveSites, townLoadState, townOverviewDistance, type TownPosition } from '../app/town/town-model'
 import { angularSeparationDegrees, BIRDS_PER_FLOCK_LIMIT, BIRD_FLOCK_LIMIT, CLOUD_FORM_LIMIT, HISTORICAL_REFERENCES, TOWN_DEFAULT_CAMERA_POSITION_DIRECTION, TOWN_MODE_KEY, TOWN_MOON_DIRECTION, isTownHumanEndpoint, nightLampSites, parseTownMode, projectAgentPresence, townAnswerReceiptLabel, townBillboardSlides, townCommunicationMarker, townConversationGroups, townLayoutStamp, townSceneLighting, townTaskSection, workerAnimation } from '../app/town/town-world-model'
 import { townFrontagePlan } from '../app/town/town-world-model'
 
@@ -158,6 +158,16 @@ describe('town model', () => {
   })
   it('reserves one measured temple site and creates stable project identities independent of size tier', () => {
     expect(TEMPLE_SITE).toMatchObject({ width: 26, depth: 32, maxHeight: 25, entrance: { x: 0, z: 16 }, clearance: 5, minX: -13, maxX: 13, minZ: -16, maxZ: 16 })
+    // The campus reserves the whole walled compound and fully contains the enlarged sanctuary.
+    expect(TEMPLE_CAMPUS.width).toBe(TEMPLE_CAMPUS.maxX - TEMPLE_CAMPUS.minX)
+    expect(TEMPLE_CAMPUS.depth).toBe(TEMPLE_CAMPUS.maxZ - TEMPLE_CAMPUS.minZ)
+    const { sanctuary } = TEMPLE_CAMPUS
+    expect(sanctuary.x + TEMPLE_SITE.minX * sanctuary.scale).toBeGreaterThan(TEMPLE_CAMPUS.minX)
+    expect(sanctuary.x + TEMPLE_SITE.maxX * sanctuary.scale).toBeLessThan(TEMPLE_CAMPUS.maxX)
+    expect(sanctuary.z + TEMPLE_SITE.minZ * sanctuary.scale).toBeGreaterThan(TEMPLE_CAMPUS.minZ)
+    expect(sanctuary.z + TEMPLE_SITE.maxZ * sanctuary.scale).toBeLessThan(TEMPLE_CAMPUS.maxZ)
+    expect(TEMPLE_SITE.maxHeight * sanctuary.scale).toBeLessThanOrEqual(TEMPLE_CAMPUS.maxHeight)
+    expect(TEMPLE_CAMPUS.entrance.z).toBeGreaterThan(TEMPLE_CAMPUS.maxZ)
     const first = projectBuildingAppearance('repo-alpha')
     expect(first).toEqual(projectBuildingAppearance('repo-alpha'))
     expect(first.heightScale).toBeGreaterThanOrEqual(.9)
@@ -177,15 +187,15 @@ describe('town model', () => {
     }))
     const layout = layoutProjects(projects, new Set(projects.slice(0, 9).map(item => item.id)), new Set(), now)
     for (const item of layout.values()) {
-      const dx = Math.max(0, Math.abs(item.x) - item.lotWidth / 2 - TEMPLE_SITE.width / 2)
-      const dz = Math.max(0, Math.abs(item.z) - item.lotDepth / 2 - TEMPLE_SITE.depth / 2)
-      expect(Math.hypot(dx, dz)).toBeGreaterThanOrEqual(TEMPLE_SITE.clearance)
+      const dx = Math.max(0, Math.abs(item.x) - item.lotWidth / 2 - TEMPLE_CAMPUS.width / 2)
+      const dz = Math.max(0, Math.abs(item.z) - item.lotDepth / 2 - TEMPLE_CAMPUS.depth / 2)
+      expect(Math.hypot(dx, dz)).toBeGreaterThanOrEqual(TEMPLE_CAMPUS.clearance)
       expect(item.road.length).toBeGreaterThan(0)
     }
-    const approach = layout.roads.find(route => route.some(point => point.x === TEMPLE_SITE.entrance.x && point.z === TEMPLE_SITE.entrance.z))
-    expect(approach?.at(-1)).toEqual(TEMPLE_SITE.entrance)
-    expect(approach?.some(point => point.x === 0 && point.z > TEMPLE_SITE.entrance.z)).toBe(true)
-    expect(approach?.every(point => point.z >= TEMPLE_SITE.entrance.z || point.x < TEMPLE_SITE.minX || point.x > TEMPLE_SITE.maxX || point.z < TEMPLE_SITE.minZ || point.z > TEMPLE_SITE.maxZ)).toBe(true)
+    const approach = layout.roads.find(route => route.some(point => point.x === TEMPLE_CAMPUS.entrance.x && point.z === TEMPLE_CAMPUS.entrance.z))
+    expect(approach?.at(-1)).toEqual(TEMPLE_CAMPUS.entrance)
+    expect(approach?.some(point => point.x === 0 && point.z > TEMPLE_CAMPUS.entrance.z)).toBe(true)
+    expect(approach?.every(point => point.z >= TEMPLE_CAMPUS.entrance.z || point.x < TEMPLE_CAMPUS.minX || point.x > TEMPLE_CAMPUS.maxX || point.z < TEMPLE_CAMPUS.minZ || point.z > TEMPLE_CAMPUS.maxZ)).toBe(true)
   })
 
   it('places active, pinned, recent, established, quiet, and unknown projects in ordered bands', () => {
@@ -307,9 +317,9 @@ describe('town model', () => {
     for (let left = 0; left < placed.length; left++) {
       const item = placed[left]
       expect(item.form).toBe(buildingForm(projects.find(candidate => candidate.id === item.id)?.size))
-      const templeGapX = Math.max(0, Math.abs(item.x) - item.lotWidth / 2 - TEMPLE_SITE.width / 2)
-      const templeGapZ = Math.max(0, Math.abs(item.z) - item.lotDepth / 2 - TEMPLE_SITE.depth / 2)
-      expect(Math.hypot(templeGapX, templeGapZ)).toBeGreaterThanOrEqual(TEMPLE_SITE.clearance)
+      const templeGapX = Math.max(0, Math.abs(item.x) - item.lotWidth / 2 - TEMPLE_CAMPUS.width / 2)
+      const templeGapZ = Math.max(0, Math.abs(item.z) - item.lotDepth / 2 - TEMPLE_CAMPUS.depth / 2)
+      expect(Math.hypot(templeGapX, templeGapZ)).toBeGreaterThanOrEqual(TEMPLE_CAMPUS.clearance)
       for (let right = left + 1; right < placed.length; right++) {
         const other = placed[right]
         const dx = Math.max(0, Math.abs(item.x - other.x) - (item.lotWidth + other.lotWidth) / 2)
@@ -334,17 +344,17 @@ describe('town model', () => {
       graph.set(a, (graph.get(a) ?? new Set()).add(b))
       graph.set(b, (graph.get(b) ?? new Set()).add(a))
       for (const point of roadSamples(route[index - 1], route[index])) {
-        const templeGapX = Math.max(0, Math.abs(point.x) - TEMPLE_SITE.width / 2)
-        const templeGapZ = Math.max(0, Math.abs(point.z) - TEMPLE_SITE.depth / 2)
-        const templeApproach = point.z >= TEMPLE_SITE.entrance.z && Math.abs(point.x) <= 2
-        expect(Math.hypot(templeGapX, templeGapZ) >= TEMPLE_SITE.clearance || templeApproach).toBe(true)
+        const templeGapX = Math.max(0, Math.abs(point.x) - TEMPLE_CAMPUS.width / 2)
+        const templeGapZ = Math.max(0, Math.abs(point.z) - TEMPLE_CAMPUS.depth / 2)
+        const templeApproach = point.z >= TEMPLE_CAMPUS.entrance.z && Math.abs(point.x) <= 2
+        expect(Math.hypot(templeGapX, templeGapZ) >= TEMPLE_CAMPUS.clearance || templeApproach).toBe(true)
         for (const lot of positions.values()) expect(lotEdgeDistance(point, lot)).toBeGreaterThanOrEqual(.65)
         for (const tree of positions.trees) expect(Math.hypot(point.x - tree.x, point.z - tree.z)).toBeGreaterThanOrEqual(6)
         for (const reference of HISTORICAL_REFERENCES) expect(Math.hypot(point.x - reference.x, point.z - reference.z)).toBeGreaterThanOrEqual(reference.radius + 2)
       }
     }
 
-    const reachable = new Set<string>([key({ x: 0, z: 16 })]), queue = [...reachable]
+    const reachable = new Set<string>([key(TEMPLE_CAMPUS.entrance)]), queue = [...reachable]
     for (let cursor = 0; cursor < queue.length; cursor++) for (const next of graph.get(queue[cursor]) ?? []) if (!reachable.has(next)) { reachable.add(next); queue.push(next) }
     for (const item of positions.values()) expect(reachable.has(key(item.entrance))).toBe(true)
   }, 20_000)

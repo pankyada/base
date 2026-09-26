@@ -6,10 +6,11 @@ import { useRouter } from 'next/navigation'
 import { fileIdentity, fileSize, matchingFiles, type ObservatoryCollection, type ObservatoryFile } from './observatory-model'
 
 const Scene = dynamic(() => import('./observatory-scene'), { ssr: false })
-const collectionCopy: Record<string, { symbol: string; eyebrow: string; description: string; color: string }> = {
-  images: { symbol: '◈', eyebrow: 'THE IMAGE ATLAS', description: 'Places, people, perspectives', color: '#8ed8e6' },
-  documents: { symbol: '▤', eyebrow: 'THE PAPER ARCHIVE', description: 'Ideas worth keeping', color: '#eed399' },
-  videos: { symbol: '▷', eyebrow: 'THE MOTION VAULT', description: 'Moments in motion', color: '#c5b2ee' },
+// Colors match each world in the scene: blue ocean world, amber ringed giant, violet ice giant.
+const collectionCopy: Record<string, { description: string; color: string }> = {
+  images: { description: 'Places, people, perspectives', color: '#8ed8e6' },
+  documents: { description: 'Ideas worth keeping', color: '#eed399' },
+  videos: { description: 'Moments in motion', color: '#c5b2ee' },
 }
 
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -77,7 +78,19 @@ export function ObservatoryClient() {
   const [paused, setPaused] = useState(false)
   const [listOpen, setListOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
-  const returnToTown = useCallback(() => router.push('/town?from=observatory'), [router])
+  const [departing, setDeparting] = useState(false)
+  const returned = useRef(false)
+  const returnToTown = useCallback(() => {
+    if (returned.current) return
+    returned.current = true
+    router.push('/town?from=observatory')
+  }, [router])
+  // Leaving flies the camera through the wormhole first; the timer covers a missing 3D view.
+  const requestReturn = useCallback(() => {
+    if (reducedMotion) { returnToTown(); return }
+    setDeparting(true)
+    window.setTimeout(returnToTown, 2600)
+  }, [reducedMotion, returnToTown])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -107,6 +120,9 @@ export function ObservatoryClient() {
       const target = event.target as HTMLElement
       if (target.matches('input, textarea, select') || target.isContentEditable || preview) return
       if (event.key === '/') { event.preventDefault(); searchRef.current?.focus() }
+      const world = ({ '1': 'images', '2': 'documents', '3': 'videos' } as Record<string, string>)[event.key]
+      if (world && !event.metaKey && !event.ctrlKey && !event.altKey) { setSelectedCollection(world); setSelectedFile(null); setQuery(''); setListOpen(true) }
+      if (event.key === '0') { setSelectedCollection(null); setSelectedFile(null); setListOpen(false) }
       if (event.key === 'Escape') { setSelectedFile(null); setSelectedCollection(null); setQuery(''); setListOpen(false) }
     }
     window.addEventListener('keydown', keydown)
@@ -123,30 +139,19 @@ export function ObservatoryClient() {
   const showingList = listOpen || query.trim().length > 0
   const truncated = collections.some(collection => collection.truncated)
 
-  return <main className="observatory-page" data-testid="cosmic-observatory" data-reduced-motion={reducedMotion || paused}>
-    <div className="observatory-atmosphere" aria-hidden="true" />
-    <SceneBoundary><Scene collections={collections} selectedCollection={selectedCollection} selectedFileId={selectedFile?.id ?? null} reducedMotion={reducedMotion || paused} onSelectCollection={chooseCollection} onSelectFile={chooseFile} onReturn={returnToTown} /></SceneBoundary>
+  return <main className={`observatory-page${departing ? ' is-departing' : ''}`} data-testid="cosmic-observatory" data-reduced-motion={reducedMotion || paused}>
+    <SceneBoundary><Scene collections={collections} selectedCollection={selectedCollection} selectedFileId={selectedFile?.id ?? null} reducedMotion={reducedMotion || paused} onSelectCollection={chooseCollection} onSelectFile={chooseFile} departing={departing} onRequestReturn={requestReturn} onReturn={returnToTown} /></SceneBoundary>
+    <div className="observatory-vignette" aria-hidden="true" />
+    <div className="observatory-flash" aria-hidden="true" />
     <header className="observatory-header">
       <div className="observatory-brand"><span className="observatory-brand-mark" aria-hidden="true">✧</span><div><span className="observatory-eyebrow">BASE / PERSONAL UNIVERSE</span><h1>Cosmic Observatory</h1></div></div>
       <label className="observatory-search"><span aria-hidden="true">⌕</span><input ref={searchRef} aria-label="Search files" placeholder="Find something in your universe…" value={query} onChange={event => { setQuery(event.target.value); setSelectedFile(null) }} /><kbd>/</kbd>{query && <button type="button" aria-label="Clear search" onClick={() => setQuery('')}>×</button>}</label>
       <div className="observatory-header-actions"><button type="button" aria-label={paused ? 'Resume orbital motion' : 'Pause orbital motion'} aria-pressed={paused || reducedMotion} disabled={reducedMotion} onClick={() => setPaused(value => !value)} title={reducedMotion ? 'Reduced motion enabled by your device' : 'Toggle orbital motion'}>{paused || reducedMotion ? '▷' : 'Ⅱ'}</button><button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading} aria-label="Refresh collections">↻</button></div>
     </header>
 
-    <div className="observatory-coordinates" aria-hidden="true"><span>EST. 2026</span><i /><span>YOUR EVERYDAY, ELSEWHERE</span></div>
-
     {loadError && <div className="observatory-alert" role="alert"><b>Unable to read your collections</b><span>{loadError}</span><button type="button" onClick={() => setRevision(value => value + 1)}>Try again</button></div>}
     {loading && <div className="observatory-loading" role="status"><span />Mapping your collections…</div>}
 
-    <nav className="observatory-worlds" aria-label="Collection worlds">
-      {(['images', 'documents', 'videos'] as const).map((id, index) => {
-        const collection = collections.find(item => item.id === id)
-        const copy = collectionCopy[id]
-        const status = !collection ? loading ? 'Mapping…' : 'Unavailable' : collection.status === 'missing' ? 'Folder not found' : collection.status === 'unavailable' ? 'Folder unavailable' : `${collection.files.length}${collection.truncated ? '+' : ''} files`
-        return <button key={id} type="button" className={`observatory-world-card${selectedCollection === id ? ' is-active' : ''}`} aria-pressed={selectedCollection === id} onClick={() => chooseCollection(id)} style={{ '--world-color': copy.color } as React.CSSProperties}>
-          <span className="observatory-world-symbol" aria-hidden="true">{copy.symbol}</span><span className="observatory-world-copy"><small>0{index + 1} / {copy.eyebrow}</small><b>{collection?.name ?? `${id[0].toUpperCase()}${id.slice(1)}`}</b><span>{status} <i>·</i> {copy.description}</span></span><span className="observatory-world-arrow" aria-hidden="true">↗</span>
-        </button>
-      })}
-    </nav>
 
     {showingList && <section className="observatory-catalog" aria-label="Files in your collections">
       <header><div><span className="observatory-eyebrow">{query.trim() ? 'SEARCH RESULTS' : 'COLLECTION INDEX'}</span><h2>{currentCollection?.name ?? 'All collections'} <span>{files.length}</span></h2></div><button type="button" aria-label="Close collection index" onClick={() => { setListOpen(false); setQuery('') }}>×</button></header>
@@ -166,7 +171,18 @@ export function ObservatoryClient() {
       <div className="observatory-detail-info"><span className="observatory-eyebrow">{selectedFile.kind} / ORIGINAL FILE</span><h2>{selectedFile.name}</h2><p>{fileSize(selectedFile.bytes)} · {new Date(selectedFile.modifiedAt).toLocaleDateString()}</p><div className="observatory-detail-actions"><button type="button" onClick={() => setPreview(selectedFile)}>Preview</button><a href={selectedFile.url} target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>
     </aside>}
 
-    <footer className="observatory-footer"><button type="button" className="observatory-return" onClick={returnToTown}><span aria-hidden="true">←</span> Return to Town</button><span className="observatory-controls-hint">DRAG TO ORBIT <i>·</i> SCROLL TO EXPLORE</span><button type="button" className="observatory-index-toggle" aria-expanded={showingList} onClick={() => { setListOpen(value => !value); setQuery('') }}>▦ <span>{loading ? 'Mapping' : `${total}${truncated ? '+' : ''} files`}</span><span>{showingList ? 'Hide index' : 'Browse index'}</span></button></footer>
+    <footer className="observatory-footer"><button type="button" className="observatory-return" onClick={requestReturn} disabled={departing}><span aria-hidden="true">←</span> Return to Town</button>
+      <nav className="observatory-worlds" aria-label="Collection worlds">
+        {(['images', 'documents', 'videos'] as const).map((id, index) => {
+          const collection = collections.find(item => item.id === id)
+          const copy = collectionCopy[id]
+          const status = !collection ? loading ? 'Mapping…' : 'Unavailable' : collection.status === 'missing' ? 'Not found' : collection.status === 'unavailable' ? 'Unavailable' : `${collection.files.length}${collection.truncated ? '+' : ''}`
+          return <button key={id} type="button" className={`observatory-world-card${selectedCollection === id ? ' is-active' : ''}`} aria-pressed={selectedCollection === id} title={`${copy.description} · press ${index + 1}`} aria-keyshortcuts={String(index + 1)} onClick={() => selectedCollection === id ? setSelectedCollection(null) : chooseCollection(id)} style={{ '--world-color': copy.color } as React.CSSProperties}>
+            <span className="observatory-world-dot" aria-hidden="true" /><b>{collection?.name ?? `${id[0].toUpperCase()}${id.slice(1)}`}</b><small>{status}</small>
+          </button>
+        })}
+      </nav>
+      <button type="button" className="observatory-index-toggle" aria-expanded={showingList} onClick={() => { setListOpen(value => !value); setQuery('') }}>▦ <span>{loading ? 'Mapping' : `${total}${truncated ? '+' : ''} files`}</span><span>{showingList ? 'Hide index' : 'Browse index'}</span></button></footer>
     {preview && <FilePreview key={preview.url} file={preview} onClose={() => setPreview(null)} />}
   </main>
 }

@@ -1360,3 +1360,71 @@ of remote Core or profile workspaces. The server must retain the existing local
 single-operator deployment posture. Collection expansion or remote/shared hosting
 requires a separate design. PDF rendering and video codecs depend on the browser;
 opening the original remains available. See the PT-109 observatory specification.
+
+### ADR-91
+
+**Town agents are persistent named artisans with one active task each** — ✅
+
+*Context:* Town created a task-bound agent for every assignment, so the town was
+empty until the orchestrator acted and the user could not choose who worked. The
+approved artisan direction (PT-116) needs stable identities that the user can
+recognise, assign and follow on the map.
+
+*Decision:* Seed a fixed catalog of persistent artisans per user store with
+stable `artisan-<key>` IDs; add hire and assign-and-dispatch REST routes; keep the
+existing dispatch gates and add an agent-busy gate so one artisan never runs two
+tasks at once. Continuity is a persona prompt plus the artisan's recent work-order
+summaries appended at run start, not a new memory store. Runtime `role` stays
+`orchestrator|worker` so the lease rules are unchanged; craft and persona are
+additive fields. Legacy task-bound agents stay readable.
+
+*Consequences:* Work for one artisan serialises; parallelism comes from other
+artisans or hired apprentices, still bounded by the provider-account concurrency
+gate. The Web figure location is a projection of persisted state, so walking is
+client animation only and never implies progress. See the PT-116 specification.
+
+### ADR-92
+
+**Explore-on-foot collides against boxes taken from the rendered meshes** — ✅
+
+*Context:* PT-121 lets the user walk the Town as a traveller. Hand-written
+collider tables would drift from the procedural assets (gopuram passages,
+cloister pillars, house forms) every time an asset changes, and the asset
+library merges static parts per material, so one merged mesh's box can span a
+whole temple campus.
+
+*Decision:* Colliders and camera occluders are derived at walk start from the
+world boxes of the real meshes: one per instance of an instanced mesh, one per
+original part of a batched mesh (the merge now records `userData.pieceBoxes`),
+else one per mesh. Walkers climb anything up to a step height above their
+footing and pass under anything above head room; very broad slabs count as
+ground. The follow camera is pulled in front of any box between it and the
+traveller for the frame and restored afterwards so the orbit distance springs
+back. Walk mode is Web-only view state: no Core, REST, SSE or persisted field.
+
+*Consequences:* Asset edits change collisions automatically, at the cost of
+axis-aligned boxes (rotated houses collide slightly wide) and a one-time box
+scan per scene build. Batched assets carry six floats per merged part.
+
+### ADR-93
+
+**Decorative townspeople are separate from runtime agents and the user avatar** — ✅
+
+*Context:* On 2026-09-26 the user requested generic humans in Town, more detailed
+agent avatars and an especially detailed user avatar, retaining the approved
+stylized direction. This explicitly extends the earlier no-ambient-human scope.
+
+*Decision:* Add a bounded, deterministic Web-only population as scenery. These
+figures have no agent IDs, task/status badges, roster entries or work claims.
+Runtime artisans retain persisted identity and truthful state choreography.
+The user gets a separate detailed traveller asset using the existing walk controls.
+
+*Consequences:* A visible person is no longer automatically a runtime agent.
+Scenery humans are distinguished by everyday clothing and absence of agent
+markers; they do not affect runtime counts or interaction targets. Reduced motion
+stops their idle animation. Core/API/protocol and agent dispatch are unchanged.
+
+*Addendum (2026-09-26, PT-129):* The default scenery population is 48 with a hard
+cap of 64; a seeded subset may wander between safe roadside stops over the connected
+rendered road graph. Routes and telemetry are presentation-only. Reduced motion freezes
+travel as well as idle animation.

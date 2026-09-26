@@ -24,6 +24,16 @@ html:has(.town-page), body:has(.town-page) { overflow:hidden; }
 .town-observatory-label:hover, .town-observatory-label:focus-visible { border-color:#edffff; outline:2px solid #c9f5ef88; outline-offset:2px; }
 .town-observatory-entry { position:absolute; z-index:14; left:84px; bottom:18px; display:flex; align-items:center; gap:10px; min-height:36px; padding:0 12px; border:1px solid #a6d6df; border-radius:6px; background:linear-gradient(135deg,#20343bea,#282b31ed); color:#e9f4e8; box-shadow:0 4px 18px #1119139c,inset 0 1px #ffffff22; font:600 10px/1 var(--font-jb),monospace; letter-spacing:.04em; text-decoration:none; }
 .town-observatory-entry span { color:#d8c782; font-size:14px; }
+.town-explore-dock { position:absolute; z-index:14; left:84px; bottom:62px; display:grid; justify-items:start; gap:6px; max-width:calc(100vw - 100px); pointer-events:none; }
+.town-explore-entry { display:flex; align-items:center; gap:10px; min-height:36px; padding:0 12px; border:1px solid #d9c27d; border-radius:6px; background:linear-gradient(135deg,#3a3320ea,#282b31ed); color:#f4ecd4; box-shadow:0 4px 18px #1119139c,inset 0 1px #ffffff22; font:600 10px/1 var(--font-jb),monospace; letter-spacing:.04em; cursor:pointer; pointer-events:auto; }
+.town-explore-entry span { color:#d8c782; font-size:14px; }
+.town-explore-entry:hover, .town-explore-entry:focus-visible { border-color:#f1e1a8; background:#4a4128; outline:2px solid #e4cf8a66; outline-offset:2px; }
+.town-explore-dock[data-exploring="true"] .town-explore-entry { border-color:#8fd0c4; background:linear-gradient(135deg,#1f3a3aea,#282b31ed); }
+.town-explore-legend { margin:0; padding:6px 9px; border:1px solid #ffffff22; border-radius:6px; background:#1d221dd9; color:#d9d3bd; font:500 10px/1.7 Arial,system-ui,sans-serif; }
+.town-explore-dock kbd, .town-explore-prompt kbd { display:inline-block; min-width:16px; margin:0 2px; padding:0 4px; border:1px solid #cdbb7f; border-bottom-width:2px; border-radius:3px; background:#2c3027; color:#f4ecd4; font:600 9px/14px var(--font-jb),monospace; text-align:center; }
+.town-explore-prompt { position:absolute; z-index:17; left:50%; bottom:128px; transform:translateX(-50%); display:flex; align-items:center; gap:8px; max-width:calc(100vw - 32px); padding:8px 14px 8px 10px; border:1px solid #e3c35a; border-radius:999px; background:#1d221dee; color:#f4ecd4; box-shadow:0 6px 22px #0009; font:600 12px/1.2 Arial,system-ui,sans-serif; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.town-explore-prompt:hover, .town-explore-prompt:focus-visible { background:#2d3428; outline:2px solid #e3c35a88; outline-offset:2px; }
+.town-traveller-tag { transform:translate(-50%,-100%); padding:2px 7px; border:1px solid #8fd0c4; border-radius:999px; background:#1f3a3add; color:#e9f7f2; font:700 9px/1.2 Arial,system-ui,sans-serif; letter-spacing:.06em; text-transform:uppercase; pointer-events:none; }
 .town-observatory-entry:hover, .town-observatory-entry:focus-visible { border-color:#daf4e8; background:#31505a; color:#fff; outline:2px solid #b7e4da88; outline-offset:2px; }
 .town-agent-label, .town-temple-label { width:max-content; max-width:210px; overflow:hidden; padding:5px 8px; border:1px solid #c8b67eaa; border-radius:12px; background:#292b23eF; color:#f2ead4; box-shadow:0 2px 9px #10130c99; cursor:pointer; pointer-events:auto; font:600 9px/1.2 var(--font-jb),monospace; text-overflow:ellipsis; white-space:nowrap; }
 .town-agent-label:hover, .town-agent-label:focus-visible, .town-temple-label:hover, .town-temple-label:focus-visible { border-color:#f2d78d; outline:2px solid #f2d78d66; outline-offset:2px; }
@@ -368,6 +378,7 @@ html:has(.town-page), body:has(.town-page) { overflow:hidden; }
 
 @media (max-width:800px) {
   .town-observatory-entry { left:68px; bottom:88px; }
+  .town-explore-dock { left:68px; bottom:132px; max-width:calc(100vw - 84px); }
   .town-survey-chip { top:10px; left:68px; width:min(330px,calc(100vw - 88px)); min-width:0; }
   .town-control-rail { top:10px; left:10px; gap:6px; }
   .town-control-trigger { width:52px; min-height:46px; }
@@ -376,6 +387,9 @@ html:has(.town-page), body:has(.town-page) { overflow:hidden; }
 }
 @media (max-width:600px) {
   .town-observatory-entry { left:68px; bottom:92px; min-height:34px; }
+  .town-explore-dock { bottom:134px; }
+  .town-explore-legend { font-size:9px; }
+  .town-explore-prompt { bottom:176px; }
   .town-survey-chip { top:auto; right:10px; bottom:10px; left:68px; width:auto; max-height:72px; overflow:hidden; }
   .town-map-hint { top:12px; right:12px; max-width:calc(100vw - 92px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:8px; }
   .town-control-rail { top:10px; left:10px; }
@@ -392,4 +406,80 @@ html:has(.town-page), body:has(.town-page) { overflow:hidden; }
 }
 @media (prefers-reduced-motion: reduce) {
   .town-page *, .town-page *::before, .town-page *::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; }
+}
+
+/* PT-118 artisan roster, assign card and in-world status badges */
+.town-canvas { --lamp-idle:#d9b36a; --lamp-queued:#ffb347; --lamp-working:#f3dc86; --lamp-attention:#ffa21f; --lamp-alert:#ff5a45; --lamp-done:#7ddc84; --lamp-unknown:#9aa0a6; }
+.town-canvas [data-lamp="idle"] { --lamp:var(--lamp-idle); }
+.town-canvas [data-lamp="queued"] { --lamp:var(--lamp-queued); }
+.town-canvas [data-lamp="working"] { --lamp:var(--lamp-working); }
+.town-canvas [data-lamp="attention"] { --lamp:var(--lamp-attention); }
+.town-canvas [data-lamp="alert"] { --lamp:var(--lamp-alert); }
+.town-canvas [data-lamp="done"] { --lamp:var(--lamp-done); }
+.town-canvas [data-lamp="unknown"] { --lamp:var(--lamp-unknown); }
+.town-canvas[data-pick-mode="true"] .town-world { cursor:crosshair; }
+.town-civic-label { cursor:default; }
+
+.town-artisan-badge { display:flex; align-items:center; gap:5px; transform:translate(-50%,-100%); padding:3px 7px 3px 5px; border:1px solid color-mix(in srgb,var(--lamp) 70%,#1d221d); border-radius:999px; background:#1d221ddd; color:#f4ecd4; font:600 10px/1.1 Arial,system-ui,sans-serif; white-space:nowrap; cursor:pointer; pointer-events:auto; box-shadow:0 2px 8px #0008; }
+.town-artisan-badge i { width:8px; height:8px; border-radius:50%; background:var(--lamp); box-shadow:0 0 6px var(--lamp); flex:none; }
+.town-artisan-badge span { color:#cfc8b0; font-weight:400; }
+.town-artisan-badge[data-lamp="attention"] i { animation:town-lamp-pulse 1.1s ease-in-out infinite; }
+.town-artisan-badge[data-lamp="unknown"] { opacity:.7; }
+
+.town-roster-layer { position:absolute; z-index:18; left:16px; right:16px; bottom:12px; display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
+.town-roster { max-width:min(100%,960px); overflow-x:auto; padding:6px 8px; border:1px solid #b6aa7a; border-radius:12px; background:#252a23ee; box-shadow:0 10px 34px #15181088; pointer-events:auto; scrollbar-width:thin; }
+.town-roster ol { display:flex; gap:4px; margin:0; padding:0; list-style:none; }
+.town-roster-hire { position:relative; }
+.town-roster-portrait { display:grid; justify-items:center; gap:2px; width:74px; padding:5px 3px 4px; border:1px solid transparent; border-radius:9px; background:transparent; color:#eee9d9; cursor:pointer; }
+.town-roster-portrait:hover, .town-roster-portrait:focus-visible { background:#ffffff12; border-color:#ffffff22; }
+.town-roster-portrait.is-selected { background:#d0b87926; border-color:#d0b879; }
+.town-roster-portrait[data-ghost="true"] .town-roster-face { opacity:.55; filter:grayscale(.6); }
+.town-roster-face { position:relative; display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:#5a5d4f; color:#fff8ea; box-shadow:0 0 0 3px var(--lamp,#6d705f), 0 0 10px color-mix(in srgb,var(--lamp,#000) 45%,transparent); font:600 20px/1 Arial,sans-serif; }
+.town-roster-portrait[data-needs-you="true"] .town-roster-face { animation:town-roster-call 1.2s ease-in-out infinite; }
+.town-roster-name { max-width:70px; overflow:hidden; text-overflow:ellipsis; font-size:11px; font-weight:700; white-space:nowrap; }
+.town-roster-state { max-width:70px; overflow:hidden; text-overflow:ellipsis; color:#b3b6a7; font-size:9.5px; white-space:nowrap; }
+.town-roster-add .town-roster-face { background:transparent; border:1px dashed #b6aa7a; box-shadow:none; color:#d0b879; }
+.town-hire-menu { position:absolute; right:0; bottom:calc(100% + 10px); width:240px; display:grid; gap:4px; padding:10px; border:1px solid #b6aa7a; border-radius:9px; background:#252a23f8; box-shadow:0 12px 34px #0009; }
+.town-hire-menu p { margin:0 0 4px; color:#b3b6a7; font-size:11px; }
+.town-hire-menu button { display:grid; gap:1px; padding:6px 8px; border:1px solid #64695d; border-radius:6px; background:#1d221d; color:#eee9d9; text-align:left; cursor:pointer; }
+.town-hire-menu small { color:#b3b6a7; }
+
+.town-pick-banner { padding:7px 12px; border:1px solid #ffb347; border-radius:999px; background:#2b2419f2; color:#ffe3b0; font-size:12px; pointer-events:auto; box-shadow:0 6px 20px #0008; }
+.town-pick-banner button { margin-left:6px; border:0; background:none; color:#ffcf7d; text-decoration:underline; cursor:pointer; }
+
+.town-assign-card { width:min(440px,100%); max-height:min(62dvh,560px); overflow:auto; display:grid; gap:10px; padding:12px 14px; border:1px solid #b6aa7a; border-top:3px solid var(--lamp,#b6aa7a); border-radius:10px; background:#252a23f8; color:#eee9d9; box-shadow:0 16px 46px #15181099; pointer-events:auto; }
+.town-assign-card header { display:flex; align-items:center; gap:10px; }
+.town-assign-card header h2 { margin:0; font-size:16px; }
+.town-assign-card header p { margin:0; color:#b3b6a7; font-size:11px; }
+.town-assign-card header > div { flex:1; min-width:0; }
+.town-assign-close { width:28px; height:28px; border:1px solid #64695d; border-radius:6px; background:transparent; color:#eee9d9; font-size:18px; line-height:1; cursor:pointer; }
+.town-assign-status { display:flex; align-items:center; gap:7px; margin:0; font-size:12px; }
+.town-assign-status i { width:9px; height:9px; flex:none; border-radius:50%; background:var(--lamp); box-shadow:0 0 6px var(--lamp); }
+.town-assign-form { display:grid; gap:8px; padding-top:8px; border-top:1px solid #64695d; }
+.town-assign-search { display:flex; gap:6px; }
+.town-assign-search label { flex:1; }
+.town-assign-search input, .town-assign-prompt textarea { width:100%; box-sizing:border-box; padding:7px 9px; border:1px solid #64695d; border-radius:6px; background:#1d221d; color:#eee9d9; font:inherit; }
+.town-assign-search button, .town-assign-chosen button { padding:6px 10px; border:1px solid #d0b879; border-radius:6px; background:transparent; color:#e2c878; cursor:pointer; white-space:nowrap; }
+.town-assign-matches { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.town-assign-matches button { padding:4px 9px; border:1px solid #64695d; border-radius:999px; background:#1d221d; color:#eee9d9; font-size:11.5px; cursor:pointer; }
+.town-assign-matches button:hover { border-color:#d0b879; }
+.town-assign-chosen { display:grid; grid-template-columns:1fr auto; gap:0 8px; align-items:center; padding:7px 9px; border:1px solid #d0b879; border-radius:6px; background:#d0b8791a; }
+.town-assign-chosen small { grid-column:1; overflow:hidden; color:#b3b6a7; font-size:10.5px; text-overflow:ellipsis; white-space:nowrap; }
+.town-assign-chosen button { grid-column:2; grid-row:1 / span 2; }
+.town-assign-prompt { display:grid; gap:4px; font-size:11px; color:#b3b6a7; }
+.town-assign-prompt textarea { min-height:78px; resize:vertical; }
+.town-assign-toggle { display:flex; align-items:center; gap:7px; font-size:12px; }
+.town-assign-send { padding:9px 12px; border:0; border-radius:7px; background:#d0b879; color:#1d221d; font-weight:700; cursor:pointer; }
+.town-assign-send:disabled { opacity:.45; cursor:not-allowed; }
+
+@keyframes town-lamp-pulse { 50% { transform:scale(1.5); } }
+@keyframes town-roster-call { 50% { box-shadow:0 0 0 5px var(--lamp), 0 0 18px var(--lamp); } }
+@media (max-width:600px) {
+  .town-roster-layer { left:8px; right:8px; bottom:8px; }
+  .town-roster-portrait { width:60px; }
+  .town-roster-face { width:34px; height:34px; }
+  .town-assign-card { max-height:55dvh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .town-artisan-badge[data-lamp="attention"] i, .town-roster-portrait[data-needs-you="true"] .town-roster-face { animation:none; }
 }

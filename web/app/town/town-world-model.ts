@@ -1,5 +1,5 @@
 import type { TownPosition, TownRoadPoint, TownLayout, TownCluster } from './town-model'
-import { HISTORICAL_DISCOVERY_SITES, TEMPLE_SITE } from './town-model'
+import { HISTORICAL_DISCOVERY_SITES, TEMPLE_CAMPUS } from './town-model'
 import type { TownPropKind } from './town-assets'
 
 export type TownAgentRecord = {
@@ -328,27 +328,36 @@ export function townSceneLighting(mode: TownMode): TownSceneLighting {
     : { sky: 0xabcdd8, hemisphere: 2.2, hemisphereColor: 0xd9e5dc, groundFill: 0x596348, directional: 2.5, directionalColor: 0xffedc4, ground: 0x9aa477, lamp: 0, lampDistance: 48, lampDecay: 1.5, shadows: true }
 }
 
+const CENTRAL_LAMP_OFFSET = TEMPLE_CAMPUS.clearance + 8
+const CENTRAL_LAMP_FALLBACKS = [
+  { x: 0, z: TEMPLE_CAMPUS.entrance.z + 14 },
+  { x: TEMPLE_CAMPUS.minX - CENTRAL_LAMP_OFFSET, z: 0 },
+  { x: TEMPLE_CAMPUS.maxX + CENTRAL_LAMP_OFFSET, z: 0 },
+]
+const CENTRAL_LAMP_REACH = Math.hypot(TEMPLE_CAMPUS.maxX, TEMPLE_CAMPUS.maxZ) + 30
+
 export function nightLampSites(projects: ReadonlyMap<string, TownPosition>, limit = 24): Array<{ x: number; z: number }> {
   const cap = Math.max(0, Math.min(24, Math.floor(limit)))
   if (!cap) return []
   const layout = projects as TownLayout
-  const roadPoints = Array.isArray(layout.roads) ? layout.roads.flat().filter(point => Math.hypot(point.x, point.z) <= 48) : []
+  const roadPoints = Array.isArray(layout.roads) ? layout.roads.flat().filter(point => Math.hypot(point.x, point.z) <= CENTRAL_LAMP_REACH) : []
   const uniqueRoadPoints = [...new Map(roadPoints.map(point => [`${point.x},${point.z}`, point])).values()]
   const points: TownRoadPoint[] = []
   const add = (point: TownRoadPoint) => {
     if (points.length < cap && !points.some(existing => existing.x === point.x && existing.z === point.z)) points.push({ ...point })
   }
 
-  // Fixed inner capacity belongs to the temple approach and central junctions.
-  // Prefer real road nodes; fallbacks support empty/legacy model fixtures.
-  const targets = [TEMPLE_SITE.entrance, { x: 0, z: 30 }, { x: -20, z: 0 }, { x: 20, z: 0 }]
+  // Fixed inner capacity belongs to the temple approach and the lanes just
+  // outside the campus walls. Prefer real road nodes; fallbacks support
+  // empty/legacy model fixtures.
+  const targets = [TEMPLE_CAMPUS.entrance, ...CENTRAL_LAMP_FALLBACKS]
   for (const target of targets) {
     const onRoad = uniqueRoadPoints
       .filter(point => !points.some(existing => existing.x === point.x && existing.z === point.z))
       .sort((a, b) => Math.hypot(a.x - target.x, a.z - target.z) - Math.hypot(b.x - target.x, b.z - target.z) || a.x - b.x || a.z - b.z)[0]
     add(onRoad ?? target)
   }
-  if (!layout.roads) for (const fallback of [{ x: 0, z: 30 }, { x: -20, z: 0 }, { x: 20, z: 0 }]) add(fallback)
+  if (!layout.roads) for (const fallback of CENTRAL_LAMP_FALLBACKS) add(fallback)
 
   const allCandidates = [...projects.values()]
     .sort((a, b) => a.id.localeCompare(b.id))

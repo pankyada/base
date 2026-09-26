@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { createTownAssetLibrary } from '../app/town/town-assets'
-import { buildingSpec, TEMPLE_SITE, TOWN_HOUSE_THEMES, type TownBuildingAppearance } from '../app/town/town-model'
+import { buildingSpec, TEMPLE_CAMPUS, TEMPLE_SITE, TOWN_HOUSE_THEMES, type TownBuildingAppearance } from '../app/town/town-model'
+import { ARTISAN_LOOKS } from '../app/town/town-artisans'
 
 function localBounds(group: THREE.Group): THREE.Box3 {
   group.updateMatrixWorld(true)
@@ -30,6 +31,94 @@ const appearance = (variant: number, heightScale = 1, wallColor = 0xc77952, roof
 })
 
 describe('town asset library', () => {
+  it('keeps named human artisans articulated with their craft and status assets within a bounded draw budget', () => {
+    const library = createTownAssetLibrary()
+    for (const look of ARTISAN_LOOKS.filter(item => item.form === 'human')) {
+      const figure = library.createArtisan(look)
+      const body = figure.getObjectByName('artisanBody') as THREE.Group
+      expect(body, look.key).toBeTruthy()
+      expect(figure.userData.leftArm).toBe(body.getObjectByName('leftArm'))
+      expect(figure.userData.rightArm).toBe(body.getObjectByName('rightArm'))
+      expect(figure.userData.animationTargets.leftArm).toBe(figure.userData.leftArm)
+      expect(figure.userData.animationTargets.rightArm).toBe(figure.userData.rightArm)
+      expect(body.getObjectByName('leftLeg')).toBeTruthy()
+      expect(body.getObjectByName('rightLeg')).toBeTruthy()
+      expect(body.getObjectByName('craftProp')).toBeTruthy()
+      expect(body.getObjectByName('orderLeaf')).toBeTruthy()
+      expect(body.getObjectByName('statusLamp')).toBeTruthy()
+      const bounds = localBounds(body)
+      expect(bounds.getSize(new THREE.Vector3()).x, look.key).toBeLessThan(1.6)
+      expect(bounds.getSize(new THREE.Vector3()).z, look.key).toBeLessThan(1.6)
+      expect(meshes(figure).length, look.key).toBeLessThan(45)
+    }
+    library.dispose()
+  })
+
+  it('keeps scenery, legacy agent and traveller figures articulated and within bounded asset budgets', () => {
+    const library = createTownAssetLibrary()
+    const figures = [
+      library.createTownsperson('market-west'),
+      library.createTownsperson('market-east'),
+      library.createWorker('legacy-agent'),
+      library.createTraveller(),
+      library.createArtisan(ARTISAN_LOOKS.find(item => item.key === 'ganesha')!),
+      library.createArtisan(ARTISAN_LOOKS.find(item => item.key === 'nandi')!),
+    ]
+    for (const figure of figures) {
+      const body = figure.userData.body as THREE.Group
+      const leftArm = figure.userData.leftArm as THREE.Group
+      const rightArm = figure.userData.rightArm as THREE.Group
+      expect(body).toBeInstanceOf(THREE.Group)
+      if (figure.userData.form !== 'nandi') {
+        expect(leftArm).toBeInstanceOf(THREE.Group)
+        expect(rightArm).toBeInstanceOf(THREE.Group)
+        expect(body.getObjectByName('leftLeg')).toBeTruthy()
+        expect(body.getObjectByName('rightLeg')).toBeTruthy()
+        expect(figure.userData.animationTargets.leftArm).toBe(leftArm)
+        expect(figure.userData.animationTargets.rightArm).toBe(rightArm)
+      } else {
+        expect(figure.userData.legs).toHaveLength(4)
+      }
+      const bounds = localBounds(figure)
+      const footprintLimit = figure.userData.form === 'nandi' ? 3.5 : 2.2
+      expect(bounds.getSize(new THREE.Vector3()).x).toBeLessThan(footprintLimit)
+      expect(bounds.getSize(new THREE.Vector3()).z).toBeLessThan(footprintLimit)
+      const drawBudget = figure.userData.assetKind === 'townsperson' ? 40
+        : figure.userData.assetKind === 'worker' ? 35
+          : figure.userData.assetKind === 'traveller' ? 50
+            : figure.userData.form === 'nandi' ? 25 : 45
+      expect(meshes(figure).length).toBeLessThan(drawBudget)
+    }
+    for (const figure of figures.slice(0, 4)) {
+      expect(figure.getObjectByName('statusLamp')).toBeUndefined()
+      expect(figure.getObjectByName('craftRing')).toBeUndefined()
+    }
+    expect(figures[0]!.userData.townsperson).toBe(true)
+    expect(figures[3]!.userData.traveller).toBe(true)
+    expect(figures[4]!.getObjectByName('statusLamp')).toBeTruthy()
+    expect(figures[5]!.getObjectByName('nandiHead')).toBeTruthy()
+    library.dispose()
+    expect(() => library.createTraveller()).toThrow('Town asset library has been disposed')
+  })
+
+  it('releases avatar-local merged buffers without disposing sibling or cached geometry', () => {
+    const library = createTownAssetLibrary()
+    const removed = library.createTownsperson('retired-resident')
+    const sibling = library.createTownsperson('remaining-resident')
+    const localBatches = meshes(removed).filter(item => item.userData.assetBatch).map(item => item.geometry)
+    const siblingBatches = meshes(sibling).filter(item => item.userData.assetBatch).map(item => item.geometry)
+    const shared = meshes(removed).find(item => !item.userData.assetBatch)!.geometry
+    const disposed = new Set<THREE.BufferGeometry>()
+    for (const geometry of [...localBatches, ...siblingBatches, shared]) geometry.addEventListener('dispose', () => disposed.add(geometry))
+
+    library.releaseAsset(removed)
+    expect(localBatches.length).toBeGreaterThan(0)
+    expect(localBatches.every(geometry => disposed.has(geometry))).toBe(true)
+    expect(siblingBatches.every(geometry => !disposed.has(geometry))).toBe(true)
+    expect(disposed.has(shared)).toBe(false)
+    library.dispose()
+  })
+
   it('builds the Town Temple as a detailed, raycastable landmark inside the shared site envelope', () => {
     const library = createTownAssetLibrary()
     const temple = library.createTemple('town-temple-check')
@@ -59,6 +148,30 @@ describe('town asset library', () => {
     expect(bounds.max.y).toBeLessThanOrEqual(TEMPLE_SITE.maxHeight)
     expect(bounds.max.y).toBeGreaterThan(20)
     expect(architecture.templeMass).toContain('rear sanctuary vimana')
+    library.dispose()
+  })
+
+  it('encloses the sanctuary in one walled campus with four gopurams inside the reserved footprint', () => {
+    const library = createTownAssetLibrary()
+    const campus = library.createTempleCampus('campus-check')
+    const bounds = localBounds(campus)
+    const { clearance } = TEMPLE_CAMPUS
+    expect(campus.userData.assetKind).toBe('temple-campus')
+    expect(bounds.min.x).toBeGreaterThanOrEqual(TEMPLE_CAMPUS.minX - clearance)
+    expect(bounds.max.x).toBeLessThanOrEqual(TEMPLE_CAMPUS.maxX + clearance)
+    expect(bounds.min.z).toBeGreaterThanOrEqual(TEMPLE_CAMPUS.minZ - clearance)
+    expect(bounds.max.z).toBeLessThanOrEqual(TEMPLE_CAMPUS.entrance.z)
+    expect(bounds.min.y).toBeGreaterThanOrEqual(-1e-6)
+    expect(bounds.max.y).toBeLessThanOrEqual(TEMPLE_CAMPUS.maxHeight)
+
+    const towers = ['south', 'north', 'east', 'west'].map(name => campus.getObjectByName(`campus-gopuram-${name}`)!)
+    expect(towers.every(Boolean)).toBe(true)
+    const heights = towers.map(tower => tower.userData.height as number)
+    expect(heights[0]).toBe(Math.max(...heights))
+    expect(heights[0]).toBeLessThan(TEMPLE_SITE.maxHeight * TEMPLE_CAMPUS.sanctuary.scale)
+    expect(campus.getObjectByName('campus-shrine-amman')).toBeTruthy()
+    expect(campus.getObjectByName('campus-shrine-subsidiary')).toBeTruthy()
+    expect(campus.userData.architecture.entrance).toEqual(TEMPLE_CAMPUS.entrance)
     library.dispose()
   })
 

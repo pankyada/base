@@ -1,0 +1,11 @@
+# Local realistic warrior GLB assessment
+
+Date: 2026-09-26. Task: PT-125. Feature ORCH-06, Web Town. Source supplied by user at `~/Desktop/glb-assets/Meshy_AI_indian_worrier_lord_p_0926002102_texture.glb`. Inspection only; file was not modified or imported into Town.
+
+The 37,847,352-byte glTF 2.0 binary parses and renders successfully in Three.js GLTFLoader. Its single mesh has 591,582 vertices and 784,815 triangles, with one material and three embedded 2048×2048 JPEG textures. It has one node, no skin/joints and no animation. The source GLB contains no provenance/license metadata beyond `pygltflib@v1.16.5`. A headless Chromium Three.js preview is at `/tmp/base-glb-preview/render.png` (temporary).
+
+Visual inspection: standing bearded warrior/sage figure with saffron drapery, bow, quiver and pole weapon. Strong candidate for a close-up guardian, perhaps Nandi's human-form visual or a nonliteral Town sentinel, if the user likes the more realistic direction. It is not a literal depiction of the named artisan without a deliberate design decision. Its level of detail and material finish differ sharply from current procedural low-poly artisans and temple. The bow and pole weapon also signal combat rather than the current work-focused craft roles.
+
+Feasible without mesh authoring: load as a static, named figure; scale/place it; change whole-material tint; add separate badge, lamp or accessory objects. Not feasible directly: walking, individual limb gestures, clothing-only recolor or reusable facial variants. Those require segmentation/retopology, rigging, UV/texture work and new animations. A Town-ready version should target a measured triangle/texture/byte budget and preserve source as the untouched master; loading this 784k-triangle 36 MB figure for every artisan would be costly. The current Town asset library uses shared procedural geometries and explicit disposal, so a GLB import also needs loader, shared asset caching, lifecycle cleanup, fallback and collision bounds.
+
+Next practical step if selected: create one optimized static prototype and compare it beside current artisans and temple under day/night light, then decide whether a realistic cast is desired. Rig and animate only after that look is accepted. No tests were run because product code did not change.

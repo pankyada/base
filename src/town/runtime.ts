@@ -11,11 +11,14 @@ import type { ProviderClient } from '../provider/types.js'
 import type { TownDispatchWorker, TownRuntimeStart } from './http.js'
 import type { TownMessage, TownProject, TownTask } from './types.js'
 import type { TownStore } from './store.js'
+import { artisanPrompt } from './artisans.js'
 
 const TOWN_TOOLS = ['TownRead', 'TownCreateTask', 'TownAssign', 'TownPost', 'TownAsk', 'TownDispatch'] as const
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob', 'TownRead', 'TownPost', 'TownAsk'] as const
-const ORCHESTRATOR_PROMPT = `\n\nYou are coordinating real work through the Orchestrator Town. First call TownRead to inspect the selected project and current work. Break the user's instruction into concrete tasks only when needed. Create each task with TownCreateTask, assign it to an agent with TownAssign, and start it only with TownDispatch. Dispatch performs authoritative quota, dependency, concurrency, and workspace checks; a queued result is not a started worker. Use TownPost for durable progress and TownAsk when a human decision blocks the plan. Report only evidence returned by real tools. Do not invent work, pretend a queued task started, or claim success before worker evidence arrives.`
+const ORCHESTRATOR_PROMPT = `\n\nYou are coordinating real work through the Orchestrator Town. First call TownRead to inspect the selected project and current work. Break the user's instruction into concrete tasks only when needed. Create each task with TownCreateTask, assign it with TownAssign to the persistent artisan (agent_id from TownRead) whose craft fits, and start it only with TownDispatch. Dispatch performs authoritative quota, dependency, concurrency, and workspace checks; a queued result is not a started worker. Use TownPost for durable progress and TownAsk when a human decision blocks the plan. Report only evidence returned by real tools. Do not invent work, pretend a queued task started, or claim success before worker evidence arrives.`
 const MANUAL_ORCHESTRATOR_PROMPT = `${ORCHESTRATOR_PROMPT}\n\nThe user explicitly authorized this root task to make one manual attempt despite the provider quota status shown by TownRead. Keep the quota status and source truthful; do not describe it as available or reserved. For the requested code work, create a direct child task with TownCreateTask, assign a coding worker, then call TownDispatch. Core applies this task-scoped authorization only to that direct child and continues enforcing the other gates. Do not claim quota is why you cannot start this authorized attempt. If TownDispatch returns queued for another gate, report that result accurately.`
+
+const ACTIVITY_THROTTLE_MS = 5_000
 
 function workerContextPrompt(projectPath: string): string {
   return `\n\nTown worker environment: host platform is ${process.platform}; the exact project root is ${JSON.stringify(projectPath)}. Resolve project files from that root and use available tools to verify any requested path before claiming it exists.`
@@ -129,11 +132,19 @@ function makeTownTools(input: {
     },
   }
   const assign: ToolDefinition = {
-    name: 'TownAssign', description: 'Assign a durable task to a configured Base profile as a task-bound agent.',
-    parameters: { type: 'object', properties: { task_id: { type: 'string' }, profile: { type: 'string' }, display_name: { type: 'string' } }, required: ['task_id'] },
+    name: 'TownAssign', description: 'Assign a durable task to a persistent artisan by agent_id (preferred), or to a configured Base profile as a task-bound agent.',
+    parameters: { type: 'object', properties: { task_id: { type: 'string' }, agent_id: { type: 'string' }, profile: { type: 'string' }, display_name: { type: 'string' } }, required: ['task_id'] },
     async execute(args) {
       const taskId = objectInput(args, 'task_id'), target = store.getTask(taskId)
       if (!target) throw new Error('task not found')
+      if (typeof args.agent_id === 'string' && args.agent_id.trim()) {
+        const artisan = store.snapshot().agents.find(agent => agent.id === args.agent_id)
+        if (!artisan || artisan.retired_at) throw new Error('artisan not found')
+        if (artisan.role === 'orchestrator') throw new Error('work orders cannot be assigned to the planner')
+        if (artisan.profile !== profile.name && !configuredProfiles.has(artisan.profile)) throw new Error('agent profile is not configured')
+        const assigned = store.assignTask(target.id, target.revision, artisan.id)
+        return serialize({ task_id: assigned.id, agent_id: artisan.id, display_name: artisan.display_name, craft: artisan.craft, state: assigned.state })
+      }
       const agentProfile = typeof args.profile === 'string' ? args.profile : profile.name
       if (agentProfile !== profile.name && !configuredProfiles.has(agentProfile)) throw new Error('agent profile is not configured')
       const agent = store.putAgent({ id: randomUUID(), profile: agentProfile, role: 'worker', display_name: typeof args.display_name === 'string' ? args.display_name.slice(0, 80) : agentProfile, lifecycle: 'task_bound', home_project_id: target.project_id, state: 'idle', task_id: target.id })
@@ -155,8 +166,16 @@ export function createTownRuntime(options: TownRuntimeOptions): TownRuntimeStart
   const dispatchers = new Map<string, TownDispatchWorker>()
   const leaseRenewers = new Map<string, ReturnType<typeof setInterval>>()
   const channels = (profile: Profile) => options.channelsForProfile?.(profile)
-  const eventsFor = (user: string, task: TownTask, store: TownStore, profile: Profile, runId: string, sessionId: string): AgentLoopEvents => ({
-    onToken() {}, onToolStart() {}, onToolEnd() {}, onSessionEnd() {}, onStats() {},
+  const lastActivity = new Map<string, number>()
+  const eventsFor = (user: string, task: TownTask, store: TownStore, profile: Profile, runId: string, sessionId: string, activityAgentId?: string): AgentLoopEvents => ({
+    onToken() {}, onToolEnd() {}, onSessionEnd() {}, onStats() {},
+    onToolStart(_id, name) {
+      if (!activityAgentId) return
+      const now = Date.now()
+      if (now - (lastActivity.get(runId) ?? 0) < ACTIVITY_THROTTLE_MS) return
+      lastActivity.set(runId, now)
+      try { store.recordAgentActivity(activityAgentId, name) } catch { /* activity is advisory; never fail the run */ }
+    },
     onToolPrompt: async (toolCallId, name, toolInput, risk, reason) => {
       const detail = `${JSON.stringify(toolInput).slice(0, 500)}${risk ? `\nRisk: ${risk}.` : ''}${reason ? ` ${reason}` : ''}`
       const question = `${name} needs approval for task “${task.title}”.\n${detail}\nReply “allow” or “deny”.`
@@ -171,6 +190,7 @@ export function createTownRuntime(options: TownRuntimeOptions): TownRuntimeStart
     const agent = input.task.agent_id ? input.store.snapshot().agents.find(item => item.id === input.task.agent_id) : undefined
     const orchestrator = agent?.role === 'orchestrator'
     const profile = scopedProfile(input.profile, input.project.path, orchestrator || input.task.workspace_mode === 'read_only')
+    const persona = artisanPrompt(agent, input.store.snapshot().tasks, input.task.id)
     return {
       profile,
       ...(options.providerForProfile ? { provider: options.providerForProfile(profile) } : {}),
@@ -178,12 +198,12 @@ export function createTownRuntime(options: TownRuntimeOptions): TownRuntimeStart
       userMessage: input.task.prompt,
       runId: input.runId,
       onSessionCreated: (sessionId: string) => options.runStore.update(input.runId, { session_id: sessionId }),
-      events: eventsFor(input.user, input.task, input.store, profile, input.runId, input.sessionId),
+      events: eventsFor(input.user, input.task, input.store, profile, input.runId, input.sessionId, agent?.lifecycle === 'persistent' ? agent.id : undefined),
       channels: channels(profile),
       pendingInputs: options.pendingStore,
       unattended: true,
       runtimeTools: makeTownTools({ ...input, profile, pendingStore: options.pendingStore, configuredProfiles }),
-      ...(orchestrator ? { runtimeToolAllowlist: TOWN_TOOLS, systemPromptAppend: input.manualQuotaOverrideAuthorized ? MANUAL_ORCHESTRATOR_PROMPT : ORCHESTRATOR_PROMPT } : { systemPromptAppend: workerContextPrompt(input.project.path), stageSystemPromptAppend: workerContextPrompt(input.project.path) }),
+      ...(orchestrator ? { runtimeToolAllowlist: TOWN_TOOLS, systemPromptAppend: (input.manualQuotaOverrideAuthorized ? MANUAL_ORCHESTRATOR_PROMPT : ORCHESTRATOR_PROMPT) + persona } : { systemPromptAppend: workerContextPrompt(input.project.path) + persona, stageSystemPromptAppend: workerContextPrompt(input.project.path) + persona }),
       ...(!orchestrator && input.task.workspace_mode === 'read_only' ? { runtimeToolAllowlist: READ_ONLY_TOOLS } : {}),
       denyMutatingTools: !orchestrator && input.task.workspace_mode === 'read_only',
     }
@@ -285,6 +305,7 @@ export function createTownRuntime(options: TownRuntimeOptions): TownRuntimeStart
       }).finally(() => {
         options.abortRegistry.delete(runId)
         if (!parked) {
+          lastActivity.delete(runId)
           dispatchers.delete(runId)
           clearInterval(leaseRenewers.get(runId))
           leaseRenewers.delete(runId)

@@ -10,6 +10,7 @@ import { RevisionConflictError } from '../shared/atomic-json.js'
 import { harnessStatePath } from '../config/state-paths.js'
 import { defaultTownRoot, TownStore, type NewTownMessage } from './store.js'
 import { discoverTownProjects } from './discovery.js'
+import { artisanBusyWith, artisanDefinition, artisanId, artisanRecord, ensureArtisans } from './artisans.js'
 import type { QuotaSnapshot, TownMessage, TownProject, TownTask, TownTaskState } from './types.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -159,6 +160,7 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
         baseDirectory: deps.baseDirectory,
         ...(deps.runtime?.canRecoverContinuation ? { canRecoverContinuation: (task, question) => deps.runtime!.canRecoverContinuation!({ user: safe, task, question }) } : {}),
       })
+      ensureArtisans(store, deps.defaultProfile.name)
       stores.set(safe, store)
     }
     return store
@@ -201,13 +203,13 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
       return store.setQuota({ provider, account_scope: '', status: 'unavailable', fetched_at: now().toISOString(), expires_at: new Date(now().getTime() + QUOTA_MAX_AGE_MS).toISOString(), windows: [], source: 'provider quota probe', last_error: error instanceof Error ? error.message : 'provider quota probe failed' })
     }
   }
-  const queueTask = (store: TownStore, task: TownTask, reason: DispatchReason): TownTask => {
+  const queueTask = (store: TownStore, task: TownTask, reason: DispatchReason, detail: string = reason): TownTask => {
     const target: TownTaskState = reason === 'quota' ? 'queued_quota' : reason === 'dependency' ? 'queued_dependency' : reason === 'workspace' ? 'queued_workspace' : 'queued_concurrency'
     let current = task
     if (current.state === 'draft') current = store.transitionTask(current.id, current.revision, 'ready')
-    if (current.state === target) return current
+    if (current.state === target && current.block_reason === detail) return current
     if (current.state !== 'ready') current = store.transitionTask(current.id, current.revision, 'ready')
-    return store.transitionTask(current.id, current.revision, target, { block_reason: reason })
+    return store.transitionTask(current.id, current.revision, target, { block_reason: detail })
   }
   const dispatch = async (store: TownStore, user: string, taskId: string, expectedRevision: number, profile: Profile, orchestrator = false, manualAuthorization?: ManualQuotaAuthorization) => {
     const foundTask = store.getTask(taskId)
@@ -223,6 +225,10 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
     if (task.depends_on.some(id => snapshot.tasks.find(other => other.id === id)?.state !== 'completed')) {
       const queued = queueTask(store, task, 'dependency')
       return { decision: 'queued' as const, task: queued, reason: 'dependency' as const, quota: snapshot.quota }
+    }
+    if (artisanBusyWith(snapshot.tasks, snapshot.agents, task)) {
+      const queued = queueTask(store, task, 'concurrency', 'agent_busy')
+      return { decision: 'queued' as const, task: queued, reason: 'concurrency' as const, detail: 'agent_busy' as const, quota: snapshot.quota }
     }
     const quota = await quotaFor(store, user, profile)
     const capacity = ensureFreshQuota(quota, now())
@@ -471,7 +477,8 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
           return
         }
         const answeredTaskIds = new Set(snapshot.messages.filter(message => message.kind === 'answer' && message.answer_outcome?.state === 'queued_quota').map(message => message.task_id))
-        const queued = snapshot.tasks.find(task => task.state.startsWith('queued_') && !answeredTaskIds.has(task.id))
+        // Skip work whose persistent artisan is still busy so it cannot starve other queued orders.
+        const queued = snapshot.tasks.find(task => task.state.startsWith('queued_') && !answeredTaskIds.has(task.id) && !artisanBusyWith(snapshot.tasks, snapshot.agents, task))
         if (!queued) continue
         const assignedName = queued.agent_id ? snapshot.agents.find(agent => agent.id === queued.agent_id)?.profile : deps.defaultProfile.name
         const selected = assignedName === deps.defaultProfile.name ? deps.defaultProfile : deps.profiles?.get(assignedName ?? '')
@@ -679,6 +686,33 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
         for (const question of store.snapshot().messages.filter(message => message.kind === 'question' && message.task_id === task.id && message.continuation_id)) store.closeContinuation(question.id)
         send(res, 200, { task: cancelled }); return true
       }
+      if (method === 'POST' && path === '/town/agents') {
+        const input = await body(req)
+        const definition = artisanDefinition(string(input.persona, 'persona', 64))
+        if (!definition) throw Object.assign(new Error('unknown artisan persona'), { status: 400 })
+        if (store.snapshot().agents.some(agent => agent.id === artisanId(definition.key))) throw Object.assign(new Error(`${definition.display_name} is already in the guild`), { status: 409 })
+        send(res, 201, { agent: store.putAgent(artisanRecord(definition, profile.name)) }); return true
+      }
+      const assignMatch = /^\/town\/agents\/([^/]+)\/assign$/.exec(path)
+      if (method === 'POST' && assignMatch) {
+        const input = await body(req)
+        const expected = revision(input.revision)
+        const agent = store.snapshot().agents.find(item => item.id === decodeURIComponent(assignMatch[1]))
+        if (!agent) throw Object.assign(new Error('agent not found'), { status: 404 })
+        if (agent.retired_at) throw Object.assign(new Error(`${agent.display_name} is retired`), { status: 409 })
+        const definition = artisanDefinition(agent.persona)
+        const prompt = string(input.prompt, 'prompt')
+        const requestedMode = input.workspace_mode === undefined ? undefined : string(input.workspace_mode, 'workspace_mode', 32)
+        if (requestedMode !== undefined && !['read_only', 'shared_checkout'].includes(requestedMode)) throw Object.assign(new Error('workspace_mode must be read_only or shared_checkout'), { status: 400 })
+        const workspaceMode = agent.role === 'orchestrator' ? 'read_only' : (requestedMode ?? definition?.workspace_mode ?? 'shared_checkout') as TownTask['workspace_mode']
+        const title = input.title === undefined ? prompt.replace(/\s+/g, ' ').slice(0, 200) : string(input.title, 'title', 200)
+        const created = store.createTask({ project_id: string(input.project_id, 'project_id', 128), title, prompt, agent_id: agent.id, workspace_mode: workspaceMode }, expected)
+        const ready = store.transitionTask(created.id, created.revision, 'ready')
+        const selected = agent.profile === profile.name ? profile : deps.profiles?.get(agent.profile)
+        if (!selected) throw Object.assign(new Error('assigned profile is not available'), { status: 409 })
+        const result = await dispatch(store, user, ready.id, ready.revision, selected, agent.role === 'orchestrator')
+        send(res, result.decision === 'started' ? 202 : 200, result); return true
+      }
       if (method === 'POST' && path === '/town/orchestrate') {
         const input = await body(req)
         const expected = revision(input.revision)
@@ -687,8 +721,8 @@ export function createTownHttpHandler(deps: TownHttpDeps): TownHttpHandler {
         const project = projectIds.map(id => store.getProject(id)).find(Boolean)
         if (!project) throw Object.assign(new Error('select or discover a project first'), { status: 409 })
         const instruction = string(input.instruction, 'instruction')
-        const agentId = randomUUID()
-        const agent = store.putAgent({ id: agentId, profile: profile.name, role: 'orchestrator', display_name: profile.name, lifecycle: 'task_bound', home_project_id: project.id, state: 'idle' })
+        const planner = store.snapshot().agents.find(item => item.id === artisanId('chanakya') && !item.retired_at && item.profile === profile.name)
+        const agent = planner ?? store.putAgent({ id: randomUUID(), profile: profile.name, role: 'orchestrator', display_name: profile.name, lifecycle: 'task_bound', home_project_id: project.id, state: 'idle' })
         const task = store.createTask({ project_id: project.id, title: instruction.slice(0, 200), prompt: instruction, agent_id: agent.id, workspace_mode: 'read_only' })
         const ready = store.transitionTask(task.id, task.revision, 'ready')
         const result = await dispatch(store, user, task.id, ready.revision, profile, true)

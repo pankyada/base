@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
-import { buildingSpec, TEMPLE_SITE, type BuildingForm, type TownBuildingAppearance } from './town-model'
+import { buildingSpec, TEMPLE_CAMPUS, TEMPLE_SITE, type BuildingForm, type TownBuildingAppearance } from './town-model'
+import { LAMP_COLOR, type ArtisanLamp, type ArtisanLook } from './town-artisans'
 
 export type TownTreeKind = 'palmyra' | 'broadleaf'
 export type TownAnimalKind = 'cattle' | 'goat' | 'chicken'
@@ -13,9 +14,19 @@ export interface TownAssetLibrary {
   createHouse(form: BuildingForm, seed: number | string, appearance?: TownBuildingAppearance, active?: boolean): THREE.Group
   createPavilion(seed: number | string): THREE.Group
   createTemple(seed: number | string): THREE.Group
+  createTempleCampus(seed: number | string): THREE.Group
   createTree(kind: TownTreeKind, seed: number | string): THREE.Group
   createAnimal(kind: TownAnimalKind, seed: number | string): THREE.Group
   createWorker(seed: number | string): THREE.Group
+  /** Ambient resident used as non-interactive scenery. */
+  createTownsperson(seed: number | string): THREE.Group
+  /** Persistent artisan figure (ADR-91) with articulated limbs, craft prop, order leaf and status lamp. */
+  createArtisan(look: ArtisanLook): THREE.Group
+  /** Detailed, non-agent player avatar for explore-on-foot. */
+  createTraveller(): THREE.Group
+  artisanLampMaterial(lamp: ArtisanLamp): THREE.Material
+  createGuildHall(seed: number | string): THREE.Group
+  createStagingMandapam(seed: number | string): THREE.Group
   createLamp(seed: number | string): THREE.Group
   createProp(kind: TownPropKind, seed: number | string): THREE.Group
   /** Release unique merged buffers before detaching a whole asset during relayout. */
@@ -63,6 +74,7 @@ export function createTownAssetLibrary(): TownAssetLibrary {
   const mergedGeometries = new Set<THREE.BufferGeometry>()
   const mergedByAsset = new WeakMap<THREE.Group, Set<THREE.BufferGeometry>>()
   const materials = new Map<string, THREE.Material>()
+  const textures = new Set<THREE.Texture>()
   let disposed = false
 
   function geometry<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
@@ -105,6 +117,40 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       materials.set(key, result)
     }
     return result as THREE.MeshStandardMaterial
+  }
+
+  /** Terracotta fish-scale tiling for gopuram crowns, generated as data so it needs no DOM canvas. */
+  function scaleRoof(): THREE.MeshStandardMaterial {
+    const key = 'campus-scale-tiled-crown'
+    const cached = materials.get(key)
+    if (cached) return cached as THREE.MeshStandardMaterial
+    if (disposed) throw new Error('Town asset library has been disposed')
+    const size = 64, cell = 16
+    const data = new Uint8Array(size * size * 4)
+    const fill = new THREE.Color(0xc9683f), light = new THREE.Color(0xe0905f), rim = new THREE.Color(0x7a3322), texel = new THREE.Color()
+    for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) {
+      const row = Math.floor(y / cell)
+      const cx = ((x + (row % 2) * cell / 2) % cell) - cell / 2, cy = y % cell
+      const r = Math.hypot(cx, cy) / (cell * .62)
+      if (r > 1) texel.copy(fill).lerp(rim, .35)
+      else if (r > .84) texel.copy(rim)
+      else texel.copy(light).lerp(fill, r)
+      const offset = (y * size + x) * 4
+      data[offset] = Math.round(texel.r * 255); data[offset + 1] = Math.round(texel.g * 255); data[offset + 2] = Math.round(texel.b * 255); data[offset + 3] = 255
+    }
+    const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+    texture.repeat.set(3, 7)
+    texture.magFilter = THREE.LinearFilter
+    texture.minFilter = THREE.LinearMipmapLinearFilter
+    texture.generateMipmaps = true
+    texture.needsUpdate = true
+    textures.add(texture)
+    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: .82 })
+    material.name = key
+    materials.set(key, material)
+    return material
   }
 
   const plaster = (index: number) => mat(`lime-plaster-${index}`, color.plaster[index % color.plaster.length])
@@ -164,6 +210,14 @@ export function createTownAssetLibrary(): TownAssetLibrary {
         result.applyMatrix4(item.matrixWorld)
         return result
       })
+      // Part boxes survive the merge so walkers and the follow camera collide with
+      // real parts (a gopuram pier, a sanctuary wall) rather than one asset-wide box.
+      const pieceBoxes = new Float32Array(pieces.length * 6)
+      pieces.forEach((piece, index) => {
+        piece.computeBoundingBox()
+        const { min, max } = piece.boundingBox!
+        pieceBoxes.set([min.x, min.y, min.z, max.x, max.y, max.z], index * 6)
+      })
       const merged = BufferGeometryUtils.mergeGeometries(pieces, false)
       for (const piece of pieces) piece.dispose()
       if (!merged) continue
@@ -173,12 +227,78 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       combined.castShadow = bucket.castShadow
       combined.receiveShadow = bucket.receiveShadow
       combined.userData.assetBatch = true
+      combined.userData.pieceBoxes = pieceBoxes
       if (bucket.material.userData.townAssetRole) combined.userData.assetRole = bucket.material.userData.townAssetRole
       combined.userData.assetMaterialName = bucket.material.name
       group.add(combined)
       for (const item of bucket.items) item.parent?.remove(item)
     }
     if (owned.size) mergedByAsset.set(group, owned)
+  }
+
+  /** Batch fixed sibling details only inside each articulation node. */
+  function batchAvatarDetails(asset: THREE.Group, joints: Array<THREE.Group | undefined>): void {
+    const owned = new Set<THREE.BufferGeometry>()
+    const keepNames = new Set(['robeHem', 'collar', 'orderLeaf', 'lampFlame'])
+    for (const parent of joints) {
+      if (!parent) continue
+      const buckets = new Map<string, { material: THREE.Material; castShadow: boolean; receiveShadow: boolean; items: THREE.Mesh[] }>()
+      for (const child of [...parent.children]) {
+        const item = child as THREE.Mesh
+        if (!item.isMesh || keepNames.has(item.name) || Array.isArray(item.material)) continue
+        if ((item as THREE.InstancedMesh).isInstancedMesh && (item as THREE.InstancedMesh).instanceColor) continue
+        const key = item.material.uuid
+        let bucket = buckets.get(key)
+        if (!bucket) {
+          bucket = { material: item.material, castShadow: item.castShadow, receiveShadow: item.receiveShadow, items: [] }
+          buckets.set(key, bucket)
+        }
+        bucket.castShadow ||= item.castShadow
+        bucket.receiveShadow ||= item.receiveShadow
+        bucket.items.push(item)
+      }
+      for (const bucket of buckets.values()) {
+        if (bucket.items.length < 2) continue
+        const pieces = bucket.items.flatMap(item => {
+          item.updateMatrix()
+          let source = item.geometry.clone()
+          if (source.index) {
+            const indexed = source
+            source = indexed.toNonIndexed()
+            indexed.dispose()
+          }
+          const instances = (item as THREE.InstancedMesh).isInstancedMesh ? item as THREE.InstancedMesh : undefined
+          const count = instances?.count ?? 1
+          const result: THREE.BufferGeometry[] = []
+          const instanceTransform = new THREE.Matrix4()
+          for (let index = 0; index < count; index += 1) {
+            const transformed = source.clone()
+            if (instances) {
+              instances.getMatrixAt(index, instanceTransform)
+              instanceTransform.premultiply(item.matrix)
+              transformed.applyMatrix4(instanceTransform)
+            } else transformed.applyMatrix4(item.matrix)
+            result.push(transformed)
+          }
+          source.dispose()
+          return result
+        })
+        const merged = BufferGeometryUtils.mergeGeometries(pieces, false)
+        for (const piece of pieces) piece.dispose()
+        if (!merged) continue
+        mergedGeometries.add(merged)
+        owned.add(merged)
+        const combined = new THREE.Mesh(merged, bucket.material)
+        combined.name = `${parent.name || 'figure'}-${bucket.material.name || 'detail'}-batch`
+        combined.castShadow = bucket.castShadow
+        combined.receiveShadow = bucket.receiveShadow
+        combined.userData.assetBatch = true
+        combined.userData.assetMaterialName = bucket.material.name
+        parent.add(combined)
+        for (const item of bucket.items) item.parent?.remove(item)
+      }
+    }
+    if (owned.size) mergedByAsset.set(asset, owned)
   }
 
   function pillar(parent: THREE.Object3D, x: number, z: number, height: number, radius: number, wood: THREE.Material, baseMaterial?: THREE.Material): void {
@@ -944,6 +1064,503 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     return group
   }
 
+  /**
+   * Meenakshi-inspired walled campus around the main sanctuary (placed separately
+   * from createTemple): outer prakaram wall with an inner cloister, four painted
+   * gopurams (the south one tallest), corner turrets, a stepped tank, a pillared
+   * hall, the flagstaff on the axis and two subsidiary vimana shrines.
+   */
+  function createTempleCampus(seed: number | string): THREE.Group {
+    const group = new THREE.Group()
+    group.name = 'Town Temple Campus · Meenakshi-inspired prakaram'
+    group.userData.assetKind = 'temple-campus'
+    group.userData.seed = String(seed)
+    const rng = randomFor(`${seed}:campus`)
+    const { minX, maxX, minZ, maxZ, width, depth, sanctuary } = TEMPLE_CAMPUS
+
+    const granite = mat('temple-granite-warm', 0x9b876d, .96)
+    const graniteLight = mat('temple-granite-sunlit-edges', 0xb29c7d, .94)
+    const graniteMid = mat('temple-granite-course', 0x83715c, .98)
+    const carved = mat('temple-carved-stone', 0xc0a985, .95)
+    const flagstones = mat('campus-prakaram-flagstones', 0x8e8772, .99)
+    const walkway = mat('campus-axial-walk', 0xa89e83, .97)
+    const water = mat('campus-tank-water', 0x4d7f88, .22, .06)
+    const gilt = mat('campus-gilded-copper', 0xd4ad55, .5, .22)
+    const stucco = mat('campus-painted-stucco', 0xffffff, .9)
+    const crownPaint = mat('campus-painted-crown', 0xc99a57, .88)
+
+    type Box = { x: number; y: number; z: number; w: number; h: number; d: number; color?: number }
+    const unitBox = boxGeometry(1, 1, 1)
+    const dummy = new THREE.Object3D()
+    const instancedBoxes = (items: Box[], material: THREE.Material, name: string, castShadow = true): void => {
+      if (!items.length) return
+      const instances = new THREE.InstancedMesh(unitBox, material, items.length)
+      instances.name = name
+      instances.castShadow = castShadow
+      instances.receiveShadow = true
+      items.forEach((item, index) => {
+        dummy.position.set(item.x, item.y, item.z); dummy.rotation.set(0, 0, 0); dummy.scale.set(item.w, item.h, item.d)
+        dummy.updateMatrix(); instances.setMatrixAt(index, dummy.matrix)
+        if (item.color !== undefined) instances.setColorAt(index, new THREE.Color(item.color))
+      })
+      instances.instanceMatrix.needsUpdate = true
+      if (instances.instanceColor) instances.instanceColor.needsUpdate = true
+      group.add(instances)
+    }
+    const pillarUnit = cylinderGeometry(.5, .5, 1, 8)
+    const instancedPillars = (items: Array<{ x: number; z: number; radius: number; height: number; y?: number }>, material: THREE.Material, name: string): void => {
+      if (!items.length) return
+      const instances = new THREE.InstancedMesh(pillarUnit, material, items.length)
+      instances.name = name
+      instances.castShadow = true
+      instances.receiveShadow = true
+      items.forEach((item, index) => {
+        dummy.position.set(item.x, (item.y ?? 0) + item.height / 2, item.z); dummy.rotation.set(0, 0, 0)
+        dummy.scale.set(item.radius * 2, item.height, item.radius * 2)
+        dummy.updateMatrix(); instances.setMatrixAt(index, dummy.matrix)
+      })
+      instances.instanceMatrix.needsUpdate = true
+      group.add(instances)
+    }
+
+    const stuccoBoxes: Box[] = []
+    const stoneBoxes: Box[] = []
+    const cloisterPillars: Array<{ x: number; z: number; radius: number; height: number; y?: number }> = []
+    const hallPillars: Array<{ x: number; z: number; radius: number; height: number; y?: number }> = []
+
+    // One continuous flagstone prakaram, with paved walks from the sanctuary to each gopuram.
+    block(group, width - 1, .12, depth - 1, 0, .06, 0, flagstones, 0, false)
+    const sanctuaryFront = sanctuary.z + TEMPLE_SITE.maxZ * sanctuary.scale
+    block(group, 6.2, .06, maxZ - sanctuaryFront, 0, .15, (maxZ + sanctuaryFront) / 2, walkway, 0, false)
+    const sanctuaryHalfX = TEMPLE_SITE.maxX * sanctuary.scale
+    const sanctuaryBack = sanctuary.z + TEMPLE_SITE.minZ * sanctuary.scale
+    block(group, maxX - sanctuaryHalfX, .06, 4.4, (maxX + sanctuaryHalfX) / 2, .15, 0, walkway, 0, false)
+    block(group, maxX - sanctuaryHalfX, .06, 4.4, -(maxX + sanctuaryHalfX) / 2, .15, 0, walkway, 0, false)
+    block(group, 4.4, .06, sanctuaryBack - minZ, 0, .15, (sanctuaryBack + minZ) / 2, walkway, 0, false)
+
+    // Gopurams: stone gateway storeys, then receding stucco tiers under a barrel-vault crown.
+    const tierGeo = geometry('campus:gopuram-tier', () => new THREE.CylinderGeometry(.9, 1, 1, 4, 1).rotateY(Math.PI / 4))
+    const vaultGeo = geometry('campus:gopuram-vault', () => new THREE.CylinderGeometry(1, 1, 1, 14, 1, false, 0, Math.PI).rotateZ(Math.PI / 2))
+    const sphereUnit = sphereGeometry(.5, 8, 6)
+    const coneUnit = geometry('campus:kalasha-cone', () => new THREE.ConeGeometry(.5, 1, 6))
+    // Upper half-ring in the XY plane: the kudu (horseshoe) arch used for niches, halos and cornices.
+    const archUnit = geometry('campus:kudu-arch', () => new THREE.TorusGeometry(1, .16, 5, 14, Math.PI))
+
+    // Tier dressing modelled on painted Madurai gopurams: pale stucco body; colour
+    // comes from sculpture — a central column of doorways flanked by deities,
+    // coral-roofed pavilions alternating with haloed niche deities, corner kutas,
+    // kudu-arch cornices and a frieze of attendants on every face.
+    const vivid = [0xd9822b, 0xc0443a, 0x4f8a4b, 0x3f9aa0, 0x3f5fa8, 0xd8b04a, 0xd98a9a, 0x8a5fa0, 0x2f7f6a, 0xe0b23c]
+    const deitySkins = [0x4f78b8, 0x5f86c4, 0xd9a55a, 0x4f8a4b, 0xe6d2b0, 0xc98a55, 0x3f9aa0]
+    const roofCorals = [0xd9776b, 0xe08a7a, 0xc9605a, 0xd98a9a]
+    const nicheTones = [0x2f4f78, 0x2f5a66, 0x7a2f2c, 0x3c3f78]
+    const creams = [0xe6d8b8, 0xdccaa4]
+    const gold = 0xd8b04a, darkOpening = 0x1d1a17
+    type Piece = { x: number; y: number; z: number; w: number; h: number; d: number; color: number; rotY: number }
+    type Dressing = { boxes: Piece[]; spheres: Piece[]; vaults: Piece[]; cones: Piece[]; arches: Piece[] }
+    const dressing = (): Dressing => ({ boxes: [], spheres: [], vaults: [], cones: [], arches: [] })
+    const pieceColor = new THREE.Color()
+    const flushDressing = (parent: THREE.Object3D, set: Dressing, name: string): void => {
+      const kinds = [[unitBox, set.boxes, 'relief'], [sphereUnit, set.spheres, 'domes-and-heads'], [vaultGeo, set.vaults, 'shala-roofs'], [coneUnit, set.cones, 'crowns-and-finials'], [archUnit, set.arches, 'kudu-arches']] as const
+      for (const [geo, items, suffix] of kinds) {
+        if (!items.length) continue
+        const instances = new THREE.InstancedMesh(geo, stucco, items.length)
+        instances.name = `${name}-${suffix}`
+        instances.castShadow = false
+        instances.receiveShadow = true
+        items.forEach((item, index) => {
+          dummy.position.set(item.x, item.y, item.z); dummy.rotation.set(0, item.rotY, 0); dummy.scale.set(item.w, item.h, item.d)
+          dummy.updateMatrix(); instances.setMatrixAt(index, dummy.matrix)
+          instances.setColorAt(index, pieceColor.set(item.color))
+        })
+        instances.instanceMatrix.needsUpdate = true
+        if (instances.instanceColor) instances.instanceColor.needsUpdate = true
+        parent.add(instances)
+      }
+    }
+    // Architecture is painted in pastel (colour blended toward the stucco);
+    // sculpted figures carry the saturated colour.
+    const pastel = (hex: number, amount = .5): number => pieceColor.set(hex).lerp(new THREE.Color(0xeadfc4), amount).getHex()
+    const pick = <T,>(items: readonly T[]): T => items[Math.floor(rng() * items.length)]!
+    type Place = (list: Piece[], along: number, out: number, y: number, pw: number, ph: number, pd: number, color: number) => void
+    // A painted deity: garment, torso, arms, crowned head, optionally seated and haloed.
+    const deity = (set: Dressing, at: Place, along: number, out: number, base: number, height: number, width: number, seated = false, halo = false): void => {
+      const skin = pick(deitySkins), garment = pick(vivid)
+      if (halo) at(set.arches, along, out - .03, base + height * .56, width * 1.25, height * .5, .45, gold)
+      if (seated) {
+        at(set.boxes, along, out, base + height * .12, width * 1.7, height * .24, .22, garment)
+        at(set.boxes, along, out + .01, base + height * .4, width * .85, height * .32, .16, skin)
+      } else {
+        at(set.boxes, along, out, base + height * .22, width * 1.1, height * .44, .18, garment)
+        at(set.boxes, along, out + .01, base + height * .54, width * .8, height * .24, .16, skin)
+      }
+      for (const side of [-1, 1]) at(set.boxes, along + side * width * .56, out + .01, base + height * (seated ? .38 : .5), width * .2, height * .3, .12, skin)
+      at(set.boxes, along, out + .02, base + height * (seated ? .54 : .66), width * .95, height * .05, .14, gold)
+      at(set.spheres, along, out + .03, base + height * .78, width * .78, width * .86, width * .7, skin)
+      at(set.cones, along, out + .03, base + height * .78 + width * .72, width * .6, width * .8, width * .6, gold)
+    }
+    // One frustum tier spanning y0..y0+h with base w × d, centred at (0, cz), tapering by `taper`.
+    const dressTier = (set: Dressing, tier: number, y0: number, h: number, w: number, d: number, cz = 0, taper = .1): void => {
+      const k = Math.min(.95, h * .4)
+      const midShrink = 1 - taper * .45
+      const niche = nicheTones[tier % nicheTones.length]!
+      const band = (y: number, height: number, color: number, grow = .1) => {
+        const shrink = 1 - taper * ((y - y0) / h)
+        set.boxes.push({ x: 0, y, z: cz, w: w * shrink + grow, h: height, d: d * shrink + grow, color, rotY: 0 })
+      }
+      band(y0 + Math.min(.08, h * .05), Math.min(.14, h * .09), pastel(vivid[(tier + 4) % vivid.length]!, .35), .16)
+      band(y0 + h - .32, Math.min(.16, h * .1), vivid[(tier + 1) % vivid.length]!)
+      const faces = [
+        { nx: 0, nz: 1, tx: 1, tz: 0, length: w, half: d / 2, rotY: 0, doorway: true },
+        { nx: 0, nz: -1, tx: -1, tz: 0, length: w, half: d / 2, rotY: Math.PI, doorway: true },
+        { nx: 1, nz: 0, tx: 0, tz: -1, length: d, half: w / 2, rotY: Math.PI / 2, doorway: false },
+        { nx: -1, nz: 0, tx: 0, tz: 1, length: d, half: w / 2, rotY: -Math.PI / 2, doorway: false },
+      ]
+      faces.forEach((face, faceIndex) => {
+        const half = face.half * midShrink, len = face.length * midShrink
+        const at: Place = (list, along, out, y, pw, ph, pd, color) => {
+          list.push({ x: face.nx * (half + out) + face.tx * along, y, z: cz + face.nz * (half + out) + face.tz * along, w: pw, h: ph, d: pd, color, rotY: face.rotY })
+        }
+        const tone = vivid[(tier + 5 + faceIndex) % vivid.length]!
+        // Central bay, projecting slightly: a doorway on the long faces, a shala pavilion on the short ones.
+        const cw = Math.min(len * .3, h * 1.35)
+        at(set.boxes, 0, .12, y0 + h * .46, cw, h * .84, .26, pastel(tone, .55))
+        if (face.doorway) {
+          at(set.boxes, 0, .26, y0 + h * .4, cw * .26, h * .5, .04, darkOpening)
+          for (const side of [-1, 1]) {
+            at(set.boxes, side * cw * .17, .28, y0 + h * .4, cw * .05, h * .56, .08, side < 0 ? 0x3f9aa0 : 0xd98a9a)
+            at(set.boxes, side * cw * .46, .28, y0 + h * .44, cw * .04, h * .7, .08, pastel(vivid[(tier + 2) % vivid.length]!, .2))
+            deity(set, at, side * cw * .31, .3, y0 + h * .1, h * .6, cw * .13, tier % 2 === 1)
+          }
+          at(set.boxes, 0, .28, y0 + h * .68, cw * .42, h * .05, .1, gold)
+          at(set.arches, 0, .3, y0 + h * .72, cw * .2, h * .17, .5, pastel(vivid[(tier + 3) % vivid.length]!, .15))
+          at(set.arches, 0, .31, y0 + h * .72, cw * .13, h * .11, .45, gold)
+          at(set.spheres, 0, .33, y0 + h * .72 + h * .17, cw * .08, cw * .08, .1, gold)
+        } else {
+          const sw = cw * .7
+          at(set.boxes, 0, .28, y0 + h * .38, sw * .5, h * .5, .04, niche)
+          deity(set, at, 0, .3, y0 + h * .14, h * .52, sw * .2, false, true)
+          at(set.vaults, 0, .2, y0 + h * .72, sw, h * .16, .3, pick(roofCorals))
+          for (const f of [-1, 0, 1]) at(set.spheres, f * sw * .3, .2, y0 + h * .72 + h * .17, h * .06, h * .09, h * .06, gold)
+        }
+        // Corner kuta pavilions: pastel cell with a niche deity, stepped coloured dome and finial.
+        for (const end of [-1, 1]) {
+          const along = end * (len / 2 - k * .55)
+          const kutaTone = vivid[(tier + faceIndex + (end > 0 ? 3 : 0)) % vivid.length]!
+          const cellY = y0 + h * .16
+          at(set.boxes, along, k * .18, cellY + k * .5, k, k, k * .7, pastel(kutaTone))
+          at(set.boxes, along, k * .18 + k * .35, cellY + k * .5, k * .5, k * .7, .04, niche)
+          deity(set, at, along, k * .18 + k * .38, cellY + k * .12, k * .62, k * .17)
+          at(set.boxes, along, k * .18, cellY + k * 1.06, k * 1.12, k * .12, k * .82, pastel(kutaTone, .2))
+          at(set.spheres, along, k * .18, cellY + k * 1.28, k * .72, k * .5, k * .6, kutaTone)
+          at(set.cones, along, k * .18, cellY + k * 1.62, k * .14, k * .3, k * .14, gold)
+        }
+        // Between centre and corners: coral-roofed pavilions alternate with haloed niche deities.
+        const segStart = cw / 2 + .05, segEnd = len / 2 - k * 1.1
+        const unit = Math.max(.42, h * .3)
+        const slots = Math.max(0, Math.floor((segEnd - segStart) / unit))
+        const spread = slots ? (segEnd - segStart) / slots : unit
+        for (const side of [-1, 1]) for (let index = 0; index < slots; index += 1) {
+          const along = side * (segStart + spread * (index + .5))
+          if (index % 3 === 1) {
+            at(set.boxes, along, .1, y0 + h * .34, spread * .9, h * .5, .24, pastel(vivid[(tier + index) % vivid.length]!, .5))
+            at(set.boxes, along, .23, y0 + h * .32, spread * .4, h * .3, .03, niche)
+            deity(set, at, along, .24, y0 + h * .18, h * .28, spread * .17, true)
+            at(set.vaults, along, .1, y0 + h * .6, spread * .9, h * .14, .2, pick(roofCorals))
+            at(set.arches, along, .24, y0 + h * .47, spread * .22, h * .1, .4, gold)
+          } else {
+            at(set.boxes, along, .03, y0 + h * .44, spread * .82, h * .6, .06, niche)
+            for (const edge of [-1, 1]) at(set.boxes, along + edge * spread * .44, .06, y0 + h * .44, spread * .1, h * .64, .14, edge < 0 ? 0x3f9aa0 : 0x4f8a4b)
+            deity(set, at, along, .12, y0 + h * .15, h * .52, spread * .28, false, true)
+          }
+        }
+        // Kudu-arch cornice: a row of small horseshoe arches along the projecting top band.
+        const corniceOut = (face.half * 2 * .92 + .3) / 2 - half + .04
+        const kuduPitch = Math.max(.45, h * .22)
+        const kudus = Math.floor(len * .96 / kuduPitch)
+        for (let index = 0; index < kudus; index += 1) {
+          const along = (index - (kudus - 1) / 2) * kuduPitch
+          at(set.arches, along, corniceOut, y0 + h - .2, kuduPitch * .3, kuduPitch * .34, .5, index % 2 ? gold : pastel(0x4f8a4b, .2))
+        }
+        // A frieze of small attendant figures along the tier's base.
+        const ganaPitch = Math.max(.22, h * .12)
+        const ganas = Math.floor(len * .92 / ganaPitch)
+        for (let index = 0; index < ganas; index += 1) {
+          const along = (index - (ganas - 1) / 2) * ganaPitch
+          at(set.boxes, along, .1, y0 + h * .07, ganaPitch * .5, h * .09, .12, vivid[(index + tier) % vivid.length]!)
+        }
+      })
+    }
+    const gopurams: Array<{ name: string; x: number; z: number; rotationY: number; baseW: number; baseD: number; tiers: number; tierH: number }> = [
+      { name: 'south', x: 0, z: maxZ - 1, rotationY: 0, baseW: 16, baseD: 9, tiers: 9, tierH: 2.35 },
+      { name: 'north', x: 0, z: minZ + 1, rotationY: Math.PI, baseW: 13, baseD: 8, tiers: 7, tierH: 2.2 },
+      { name: 'east', x: maxX - 1, z: 0, rotationY: Math.PI / 2, baseW: 13, baseD: 8, tiers: 7, tierH: 2.2 },
+      { name: 'west', x: minX + 1, z: 0, rotationY: -Math.PI / 2, baseW: 13, baseD: 8, tiers: 7, tierH: 2.2 },
+    ]
+    for (const spec of gopurams) {
+      const tower = new THREE.Group()
+      tower.name = `campus-gopuram-${spec.name}`
+      tower.position.set(spec.x, 0, spec.z)
+      tower.rotation.y = spec.rotationY
+      const { baseW, baseD } = spec
+      const towerDressing = dressing()
+      const passage = 4.4, baseH = 6.2, pierW = (baseW - passage) / 2
+      for (const side of [-1, 1]) {
+        const px = side * (passage / 2 + pierW / 2)
+        block(tower, pierW + .4, .44, baseD + .4, px, .225, 0, graniteMid)
+        block(tower, pierW, baseH, baseD, px, baseH / 2, 0, granite)
+        block(tower, pierW + .2, .28, baseD + .2, px, 1.6, 0, graniteLight, 0, false)
+        block(tower, pierW + .2, .28, baseD + .2, px, baseH - .5, 0, graniteLight, 0, false)
+        for (const face of [-1, 1]) {
+          const z = face * (baseD / 2 + .05)
+          const placeBase: Place = (list, along, out, y, pw, ph, pd, color) => {
+            list.push({ x: px + along, y, z: face * (baseD / 2 + out), w: pw, h: ph, d: pd, color, rotY: face > 0 ? 0 : Math.PI })
+          }
+          // Carved pilasters framing a painted deity in an arched niche on each pier face.
+          for (const offset of [-.42, -.3, .3, .42]) block(tower, .22, baseH - 2.4, .16, px + offset * pierW, 3.4, z, carved, 0, false)
+          placeBase(towerDressing.boxes, 0, .06, 3.2, 1.3, 2.7, .06, 0x2f4f78)
+          placeBase(towerDressing.arches, 0, .1, 4.5, .7, .55, .5, gold)
+          deity(towerDressing, placeBase, 0, .12, 1.95, 2.4, .42, false, false)
+        }
+      }
+      block(tower, passage + .2, 1.5, baseD, 0, baseH - .75, 0, granite)
+      // Gilded, carved door frame around the gate passage on both faces.
+      for (const face of [-1, 1]) {
+        const z = face * (baseD / 2 + .12)
+        for (const side of [-1, 1]) {
+          block(tower, .5, baseH - .9, .3, side * (passage / 2 + .2), (baseH - .9) / 2 + .3, z, gilt, 0, false)
+          block(tower, .22, baseH - 1.2, .36, side * (passage / 2 + .52), (baseH - 1.2) / 2 + .3, z, carved, 0, false)
+        }
+        block(tower, passage + 1.1, .5, .32, 0, baseH - .55, z, gilt, 0, false)
+        block(tower, passage + 1.5, .22, .38, 0, baseH - .18, z, carved, 0, false)
+      }
+      block(tower, baseW + .7, .42, baseD + .7, 0, baseH + .21, 0, graniteLight)
+
+      const tiers = new THREE.InstancedMesh(tierGeo, stucco, spec.tiers)
+      tiers.name = 'campus-gopuram-painted-tiers'
+      tiers.castShadow = true; tiers.receiveShadow = true
+      let tierY = baseH + .42
+      let tierW = baseW - .4, tierD = baseD - .5
+      const tierColor = new THREE.Color()
+      for (let tier = 0; tier < spec.tiers; tier += 1) {
+        dummy.position.set(0, tierY + spec.tierH / 2, 0); dummy.rotation.set(0, 0, 0)
+        dummy.scale.set(tierW / Math.SQRT2, spec.tierH, tierD / Math.SQRT2)
+        dummy.updateMatrix()
+        tiers.setMatrixAt(tier, dummy.matrix)
+        tiers.setColorAt(tier, tierColor.set(creams[tier % creams.length]!))
+        stuccoBoxes.push({ x: 0, y: tierY + spec.tierH - .12, z: 0, w: tierW * .92 + .3, h: .22, d: tierD * .92 + .3, color: 0xeadfc4 })
+        dressTier(towerDressing, tier, tierY, spec.tierH, tierW, tierD)
+        tierY += spec.tierH
+        tierW *= .92; tierD *= .9
+      }
+      tiers.instanceMatrix.needsUpdate = true
+      if (tiers.instanceColor) tiers.instanceColor.needsUpdate = true
+      tower.add(tiers)
+      for (const item of stuccoBoxes.splice(0)) stoneBoxes.push({ ...item, ...rotateLocal(spec, item) })
+
+      // Crown: scale-tiled barrel vault, a large kirtimukha arch on each long face,
+      // curling makara horns at the ends and a row of stacked gilded kalashas.
+      const crownLength = tierW * .95, crownRadius = Math.min(1.7, tierD * .55)
+      const crownY = tierY + .3, crownTop = crownY + crownRadius * 1.25
+      block(tower, crownLength + .3, .3, tierD + .1, 0, tierY + .15, 0, graniteLight)
+      mesh(vaultGeo, scaleRoof(), tower, new THREE.Vector3(0, crownY, 0), undefined, new THREE.Vector3(crownLength, crownRadius * 1.25, crownRadius))
+      towerDressing.boxes.push({ x: 0, y: crownY + .1, z: 0, w: crownLength + .2, h: .2, d: crownRadius * 2.1, color: gold, rotY: 0 })
+      for (const face of [-1, 1]) {
+        const placeCrown: Place = (list, along, out, y, pw, ph, pd, color) => {
+          list.push({ x: along, y, z: face * (crownRadius + out), w: pw, h: ph, d: pd, color, rotY: face > 0 ? 0 : Math.PI })
+        }
+        placeCrown(towerDressing.arches, 0, -.1, crownY + .1, crownRadius * 1.05, crownRadius * 1.2, .8, 0x4f8a4b)
+        placeCrown(towerDressing.arches, 0, -.05, crownY + .1, crownRadius * .85, crownRadius * .98, .7, gold)
+        placeCrown(towerDressing.spheres, 0, -.15, crownY + crownRadius * .45, crownRadius * 1.1, crownRadius * 1.3, .2, 0x2f4f78)
+        deity(towerDressing, placeCrown, 0, .02, crownY + .15, crownRadius * .85, crownRadius * .22, true, false)
+        placeCrown(towerDressing.spheres, 0, .05, crownY + crownRadius * 1.28, crownRadius * .36, crownRadius * .32, .3, gold)
+        for (const side of [-1, 1]) placeCrown(towerDressing.cones, side * crownRadius * .2, .05, crownY + crownRadius * 1.5, .12, .3, .12, gold)
+        for (const side of [-1, 1]) {
+          placeCrown(towerDressing.arches, side * crownLength * .3, -.05, crownY + .1, crownRadius * .3, crownRadius * .45, .5, gold)
+          deity(towerDressing, placeCrown, side * crownLength * .3, 0, crownY + .12, crownRadius * .42, crownRadius * .08, true, false)
+        }
+      }
+      for (const end of [-1, 1]) {
+        const x = end * (crownLength / 2)
+        towerDressing.boxes.push({ x: x - end * .1, y: crownY + crownRadius * .7, z: 0, w: .26, h: crownRadius * 1.4, d: .5, color: 0x4f8a4b, rotY: 0 })
+        towerDressing.arches.push({ x: x + end * crownRadius * .35, y: crownY + crownRadius * 1.3, z: 0, w: crownRadius * .45, h: crownRadius * .5, d: 1.2, color: 0x4f8a4b, rotY: 0 })
+        towerDressing.arches.push({ x: x + end * crownRadius * .35, y: crownY + crownRadius * 1.3, z: 0, w: crownRadius * .28, h: crownRadius * .3, d: 1, color: gold, rotY: 0 })
+        towerDressing.spheres.push({ x: x + end * crownRadius * .78, y: crownY + crownRadius * 1.3, z: 0, w: .3, h: .3, d: .3, color: 0xc0443a, rotY: 0 })
+      }
+      const finials = spec.name === 'south' ? 11 : 9
+      for (let index = 0; index < finials; index += 1) {
+        const x = (index - (finials - 1) / 2) * (crownLength * .82 / (finials - 1))
+        towerDressing.boxes.push({ x, y: crownTop + .08, z: 0, w: .34, h: .16, d: .34, color: gold, rotY: 0 })
+        towerDressing.spheres.push({ x, y: crownTop + .38, z: 0, w: .44, h: .42, d: .44, color: gold, rotY: 0 })
+        towerDressing.spheres.push({ x, y: crownTop + .72, z: 0, w: .28, h: .26, d: .28, color: gold, rotY: 0 })
+        towerDressing.cones.push({ x, y: crownTop + 1.05, z: 0, w: .16, h: .42, d: .16, color: gold, rotY: 0 })
+      }
+      flushDressing(tower, towerDressing, 'campus-gopuram-sculpture')
+      tower.userData.height = crownTop + 1.26
+      group.add(tower)
+    }
+
+    // Outer prakaram wall broken only by the four gopuram passages, with a
+    // lean-to cloister of pillars running along its inner face.
+    const wallH = 4.4, wallT = 1.4, cloisterDepth = 3.6, cloisterH = 3.5
+    const south = gopurams[0]!, side = gopurams[2]!
+    const runs: Array<{ axis: 'x' | 'z'; fixed: number; from: number; to: number; inward: number }> = [
+      { axis: 'x', fixed: maxZ - wallT / 2, from: minX, to: -south.baseW / 2, inward: -1 },
+      { axis: 'x', fixed: maxZ - wallT / 2, from: south.baseW / 2, to: maxX, inward: -1 },
+      { axis: 'x', fixed: minZ + wallT / 2, from: minX, to: -gopurams[1]!.baseW / 2, inward: 1 },
+      { axis: 'x', fixed: minZ + wallT / 2, from: gopurams[1]!.baseW / 2, to: maxX, inward: 1 },
+      { axis: 'z', fixed: maxX - wallT / 2, from: minZ, to: -side.baseW / 2, inward: -1 },
+      { axis: 'z', fixed: maxX - wallT / 2, from: side.baseW / 2, to: maxZ, inward: -1 },
+      { axis: 'z', fixed: minX + wallT / 2, from: minZ, to: -side.baseW / 2, inward: 1 },
+      { axis: 'z', fixed: minX + wallT / 2, from: side.baseW / 2, to: maxZ, inward: 1 },
+    ]
+    for (const run of runs) {
+      const length = run.to - run.from, mid = (run.from + run.to) / 2
+      const place = (along: number, across: number): [number, number] => run.axis === 'x' ? [along, run.fixed + across] : [run.fixed + across, along]
+      const size = (alongSize: number, acrossSize: number): [number, number] => run.axis === 'x' ? [alongSize, acrossSize] : [acrossSize, alongSize]
+      const [wx, wz] = place(mid, 0), [ww, wd] = size(length, wallT)
+      stoneBoxes.push({ x: wx, y: wallH / 2, z: wz, w: ww, h: wallH, d: wd, color: 0x9b876d })
+      const [cw, cd] = size(length, wallT + .5)
+      stoneBoxes.push({ x: wx, y: wallH + .14, z: wz, w: cw, h: .28, d: cd, color: 0xb29c7d })
+      const merlons = Math.floor(length / 2.6)
+      for (let index = 0; index < merlons; index += 1) {
+        const [mx, mz] = place(run.from + (index + .5) * (length / merlons), 0), [mw, md] = size(.7, .9)
+        stoneBoxes.push({ x: mx, y: wallH + .6, z: mz, w: mw, h: .64, d: md, color: 0xc0a985 })
+      }
+      // Cloister: roof slab from the wall to a pillar line, stopping short of the turrets and gopurams.
+      const inset = wallT / 2 + cloisterDepth
+      const cloisterFrom = run.from + (Math.abs(run.from) > 40 ? inset + 1 : 1.2)
+      const cloisterTo = run.to - (Math.abs(run.to) > 40 ? inset + 1 : 1.2)
+      const cloisterLength = cloisterTo - cloisterFrom
+      if (cloisterLength > 3) {
+        const [rx, rz] = place((cloisterFrom + cloisterTo) / 2, run.inward * (wallT / 2 + cloisterDepth / 2))
+        const [rw, rd] = size(cloisterLength, cloisterDepth + .4)
+        stoneBoxes.push({ x: rx, y: cloisterH + .16, z: rz, w: rw, h: .32, d: rd, color: 0xa99474 })
+        const count = Math.max(2, Math.round(cloisterLength / 3.2))
+        for (let index = 0; index <= count; index += 1) {
+          const [px, pz] = place(cloisterFrom + index * (cloisterLength / count), run.inward * inset)
+          cloisterPillars.push({ x: px, z: pz, radius: .26, height: cloisterH })
+        }
+      }
+    }
+    // Corner turrets with stepped pyramidal caps.
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const x = sx * (maxX - 2.1), z = sz * (maxZ - 2.1)
+      block(group, 4.6, 6.4, 4.6, x, 3.2, z, granite)
+      block(group, 5.2, .35, 5.2, x, 6.55, z, graniteLight)
+      mesh(cylinderGeometry(.35, 3.3, 3.2, 4), crownPaint, group, new THREE.Vector3(x, 8.3, z), new THREE.Euler(0, Math.PI / 4, 0))
+      mesh(cylinderGeometry(.06, .18, .6, 8), gilt, group, new THREE.Vector3(x, 10.2, z))
+    }
+
+    // Subsidiary vimana shrines on the sanctuary axis, each inside its own low court.
+    const shrine = (name: string, cx: number, cz: number, scale: number, tint: number) => {
+      const s = new THREE.Group()
+      s.name = `campus-shrine-${name}`
+      s.position.set(cx, 0, cz); s.scale.setScalar(scale)
+      block(s, 16, .3, 19, 0, .27, 0, graniteMid)
+      for (const [w, d, x, z] of [[16, .8, 0, -9.1], [.8, 19, -7.6, 0], [.8, 19, 7.6, 0], [5.5, .8, -5.25, 9.1], [5.5, .8, 5.25, 9.1]] as const) block(s, w, 1.7, d, x, 1.15, z, granite)
+      for (const layer of [[10, .3, 11, .55], [9.4, .3, 10.4, .85]] as const) block(s, layer[0], layer[1], layer[2], 0, layer[3], -1.2, graniteLight)
+      block(s, 6.4, 3.2, 6.4, 0, 2.6, -2.2, granite)
+      block(s, 1.3, 2.1, .2, 0, 2.05, 1.05, dark(), 0, false)
+      block(s, 7.2, .3, 7.2, 0, 4.35, -2.2, graniteLight)
+      const shrineTiers = new THREE.InstancedMesh(tierGeo, stucco, 6)
+      shrineTiers.name = 'campus-shrine-tiers'
+      shrineTiers.castShadow = true; shrineTiers.receiveShadow = true
+      const shrineDressing = dressing()
+      let y = 4.5, w = 6.6
+      for (let tier = 0; tier < 6; tier += 1) {
+        dummy.position.set(0, y + .75, -2.2); dummy.rotation.set(0, 0, 0); dummy.scale.set(w / Math.SQRT2, 1.5, w / Math.SQRT2)
+        dummy.updateMatrix(); shrineTiers.setMatrixAt(tier, dummy.matrix)
+        shrineTiers.setColorAt(tier, new THREE.Color(creams[tier % creams.length]!))
+        block(s, w * .92 + .25, .16, w * .92 + .25, 0, y + 1.48, -2.2, carved, 0, false)
+        dressTier(shrineDressing, tier + (tint & 3), y, 1.5, w, w, -2.2)
+        y += 1.5; w *= .88
+      }
+      shrineTiers.instanceMatrix.needsUpdate = true
+      if (shrineTiers.instanceColor) shrineTiers.instanceColor.needsUpdate = true
+      s.add(shrineTiers)
+      flushDressing(s, shrineDressing, 'campus-shrine-sculpture')
+      mesh(cylinderGeometry(.9, 1.1, .6, 8), graniteMid, s, new THREE.Vector3(0, y + .3, -2.2))
+      mesh(geometry('temple:rounded-octagonal-crown', () => new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2)), gilt, s, new THREE.Vector3(0, y + .6, -2.2), undefined, new THREE.Vector3(1.1, 1.3, 1.1))
+      mesh(cylinderGeometry(.06, .2, .8, 8), gilt, s, new THREE.Vector3(0, y + 2.3, -2.2))
+      // Pillared ardha-mandapa in front of the sanctum.
+      block(s, 7.4, .35, 5.4, 0, .6, 3.3, graniteLight)
+      for (const x of [-2.9, -1, 1, 2.9]) mesh(cylinderGeometry(.22, .26, 2.8, 8), granite, s, new THREE.Vector3(x, 2.15, 5.5))
+      block(s, 7.8, .35, 5.8, 0, 3.7, 3.3, graniteMid)
+      block(s, 7.2, .25, 5.2, 0, 4.0, 3.3, graniteLight)
+      for (let step = 0; step < 3; step += 1) block(s, 3.2, .18, .5, 0, .6 - step * .18, 6.3 + step * .45, graniteLight)
+      group.add(s)
+    }
+    shrine('amman', -33, -14, 1.2, 0x7f9d8d)
+    shrine('subsidiary', 33, -34, .95, 0xb8704f)
+
+    // Golden-lotus tank: stepped ghats descending inside a pillared parapet.
+    const tank = { x: -30, z: 34, w: 24, d: 18 }
+    for (let step = 0; step < 5; step += 1) {
+      const inset = step * 1.3, h = 1.0 - step * .18
+      const w = tank.w - inset * 2, d = tank.d - inset * 2
+      const tone = step % 2 ? 0xb29c7d : 0x9b876d
+      stoneBoxes.push(
+        { x: tank.x, y: h / 2, z: tank.z - d / 2 + .65, w, h, d: 1.3, color: tone },
+        { x: tank.x, y: h / 2, z: tank.z + d / 2 - .65, w, h, d: 1.3, color: tone },
+        { x: tank.x - w / 2 + .65, y: h / 2, z: tank.z, w: 1.3, h, d: d - 2.6, color: tone },
+        { x: tank.x + w / 2 - .65, y: h / 2, z: tank.z, w: 1.3, h, d: d - 2.6, color: tone },
+      )
+    }
+    block(group, tank.w - 12.4, .1, tank.d - 12.4, tank.x, .2, tank.z, water, 0, false)
+    mesh(cylinderGeometry(.35, .45, 1.6, 8), graniteLight, group, new THREE.Vector3(tank.x, 1.0, tank.z))
+    mesh(sphereGeometry(.9, 12, 6), gilt, group, new THREE.Vector3(tank.x, 1.9, tank.z), undefined, new THREE.Vector3(1, .45, 1))
+    for (let index = 0; index < 12; index += 1) {
+      const t = index / 12, perimeter = 2 * (tank.w + tank.d), along = t * perimeter
+      const [x, z] = along < tank.w ? [tank.x - tank.w / 2 + along, tank.z - tank.d / 2 - 1.2]
+        : along < tank.w + tank.d ? [tank.x + tank.w / 2 + 1.2, tank.z - tank.d / 2 + (along - tank.w)]
+        : along < 2 * tank.w + tank.d ? [tank.x + tank.w / 2 - (along - tank.w - tank.d), tank.z + tank.d / 2 + 1.2]
+        : [tank.x - tank.w / 2 - 1.2, tank.z + tank.d / 2 - (along - 2 * tank.w - tank.d)]
+      cloisterPillars.push({ x, z, radius: .22, height: 2.4 })
+    }
+
+    // Pillared hall: a dense grid of columns under a flat stone roof.
+    const hall = { x: 31, z: 31, w: 22, d: 20 }
+    for (let step = 0; step < 3; step += 1) block(group, hall.w + 1.8 - step * .6, .3, hall.d + 1.8 - step * .6, hall.x, .27 + step * .3, hall.z, step % 2 ? graniteLight : graniteMid)
+    for (let col = 0; col < 8; col += 1) for (let row = 0; row < 7; row += 1) {
+      hallPillars.push({ x: hall.x - hall.w / 2 + 1.2 + col * ((hall.w - 2.4) / 7), z: hall.z - hall.d / 2 + 1.2 + row * ((hall.d - 2.4) / 6), radius: .3, height: 4.2, y: 1.02 })
+    }
+    block(group, hall.w + .6, .45, hall.d + .6, hall.x, 5.45, hall.z, graniteMid)
+    block(group, hall.w + 1.1, .25, hall.d + 1.1, hall.x, 5.8, hall.z, graniteLight)
+    block(group, hall.w - 1, .6, hall.d - 1, hall.x, 6.2, hall.z, granite)
+
+    // Gilded flagstaff and bali-pitha on the axis between the south gopuram and the sanctuary.
+    const staffZ = sanctuaryFront + 7
+    block(group, 2.4, .7, 2.4, 0, .5, staffZ, graniteLight)
+    block(group, 1.6, .6, 1.6, 0, 1.15, staffZ, carved)
+    mesh(cylinderGeometry(.16, .26, 11, 10), gilt, group, new THREE.Vector3(0, 6.9, staffZ))
+    for (let ring = 0; ring < 3; ring += 1) mesh(torusGeometry(.3, .07, 6, 14), gilt, group, new THREE.Vector3(0, 11.6 + ring * .35, staffZ), new THREE.Euler(Math.PI / 2, 0, 0))
+    mesh(cylinderGeometry(.9, 1.1, .9, 8), carved, group, new THREE.Vector3(0, .6, staffZ + 4.2))
+
+    instancedBoxes(stoneBoxes, stucco, 'campus-walls-and-painted-detail')
+    instancedPillars(cloisterPillars, granite, 'campus-cloister-pillars')
+    instancedPillars(hallPillars, carved, 'campus-hall-pillars')
+    batchStaticMeshes(group)
+    group.userData.architecture = {
+      tradition: 'Meenakshi-inspired walled prakaram around a Chola vimana',
+      gopurams: gopurams.map(item => item.name),
+      shrines: ['amman', 'subsidiary'],
+      entrance: TEMPLE_CAMPUS.entrance,
+    }
+    return group
+
+    function rotateLocal(spec: { x: number; z: number; rotationY: number }, item: Box): Pick<Box, 'x' | 'z' | 'w' | 'd'> {
+      const cos = Math.cos(spec.rotationY), sin = Math.sin(spec.rotationY)
+      const quarter = Math.abs(Math.round(sin)) === 1
+      return {
+        x: spec.x + item.x * cos + item.z * sin,
+        z: spec.z - item.x * sin + item.z * cos,
+        w: quarter ? item.d : item.w,
+        d: quarter ? item.w : item.d,
+      }
+    }
+  }
+
   function cylinderBetween(parent: THREE.Object3D, from: THREE.Vector3, to: THREE.Vector3, radiusBottom: number, radiusTop: number, material: THREE.Material, radial = 8, castShadow = true): THREE.Mesh {
     const direction = to.clone().sub(from)
     const result = mesh(cylinderGeometry(radiusTop, radiusBottom, direction.length(), radial), material, parent,
@@ -1058,44 +1675,81 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     group.userData.assetKind = 'worker'
     group.userData.seed = String(seed)
     group.userData.pose = 'waiting'
-    const skin = mat('worker-skin', [0x895b3e, 0x9a6947, 0x764b35][Math.floor(rng() * 3)], .95)
-    const cloth = mat('worker-cotton', [0xb57e46, 0xa9533b, 0x6f7950][Math.floor(rng() * 3)], .94)
-    const wrap = mat('worker-dhoti', [0xd2c19e, 0xbca77f, 0xc8b284][Math.floor(rng() * 3)], .97)
-    const hair = mat('worker-hair', 0x27221d, .99)
-    const torso = mesh(cylinderGeometry(.23, .36, .68, 9), cloth, group, new THREE.Vector3(0, 1.06, 0))
-    torso.rotation.z = (rng() - .5) * .06
-    mesh(cylinderGeometry(.26, .30, .46, 9), wrap, group, new THREE.Vector3(0, .47, 0))
-    block(group, .16, .09, .38, 0, .46, 0, wrap, -.18, false)
-    round(group, .22, 0, 1.55, 0, skin, [1, 1.05, .90])
-    round(group, .23, 0, 1.63, -.02, hair, [1, .56, .92], false)
-    block(group, .27, .08, .26, 0, 1.79, 0, cloth, 0, false)
-    round(group, .045, -.08, 1.56, .196, hair, [.55, .55, .55], false)
-    round(group, .045, .08, 1.56, .196, hair, [.55, .55, .55], false)
-    const leftArm = new THREE.Group()
-    leftArm.name = 'leftArm'
-    leftArm.position.set(-.29, 1.31, 0)
-    group.add(leftArm)
-    const rightArm = new THREE.Group()
-    rightArm.name = 'rightArm'
-    rightArm.position.set(.29, 1.31, 0)
-    group.add(rightArm)
-    const sleeve = mat('worker-sleeve', [0x8e5e38, 0xa64f39, 0x596c45][Math.floor(rng() * 3)], .96)
-    for (const [arm, sign] of [[leftArm, -1], [rightArm, 1]] as const) {
-      cylinderBetween(arm, new THREE.Vector3(0, 0, 0), new THREE.Vector3(sign * .10, -.43, .02), .105, .085, sleeve, 8)
-      cylinderBetween(arm, new THREE.Vector3(sign * .10, -.43, .02), new THREE.Vector3(sign * .04, -.77, .08), .078, .055, skin, 7)
-      round(arm, .075, sign * .04, -.79, .08, skin, [1, .75, .75], false)
+    const robe = [0xb57e46, 0xa9533b, 0x6f7950, 0x485e68][Math.floor(rng() * 4)]!
+    const sash = [0x9d4738, 0xd5b85d, 0x3d7772, 0xb7d2c5][Math.floor(rng() * 4)]!
+    const look: ArtisanLook = {
+      key: `resident-agent-${hashSeed(seed)}`, name: 'Town agent', craft: 'builder', epithet: 'Town resident', form: 'human',
+      robe, sash, skin: [0x895b3e, 0x9a6947, 0x764b35, 0x8f6045][Math.floor(rng() * 4)]!,
+      headgear: (['headcloth', 'turban', 'topknot', 'bun'] as const)[Math.floor(rng() * 4)]!, prop: 'pouch',
     }
-    for (const side of [-1, 1]) {
-      const footX = side * .13
-      cylinderBetween(group, new THREE.Vector3(footX, .34, 0), new THREE.Vector3(footX + side * .015, .08, .03), .095, .065, skin, 7)
-      block(group, .20, .09, .32, footX, .05, .11, timber(0), 0, false)
-    }
-    const sash = block(group, .56, .09, .04, 0, 1.08, .20, mat('worker-sash', 0x9d4738, .97), -.20, false)
-    group.userData.leftArm = leftArm
-    group.userData.rightArm = rightArm
-    group.userData.animationTargets = { leftArm, rightArm }
-    void sash
+    const body = new THREE.Group()
+    body.name = 'workerBody'
+    group.add(body)
+    createHumanArtisan(look, body, { statusLamp: false, noCraftProp: true, decorativeTextile: true })
+    group.userData.body = body
+    group.userData.leftArm = body.userData.leftArm
+    group.userData.rightArm = body.userData.rightArm
+    group.userData.legs = body.userData.legs
+    group.userData.arms = body.userData.arms
+    group.userData.animationTargets = { leftArm: body.userData.leftArm, rightArm: body.userData.rightArm }
+    batchAvatarDetails(group, [body, body.userData.leftArm, body.userData.rightArm, ...(body.userData.legs as THREE.Group[] ?? [])])
     return group
+  }
+
+  function createTownsperson(seed: number | string): THREE.Group {
+    const rng = randomFor(`townsperson:${seed}`)
+    const group = new THREE.Group()
+    group.name = 'Townsperson'
+    group.userData.assetKind = 'townsperson'
+    group.userData.seed = String(seed)
+    group.userData.townsperson = true
+    const robes = [0x9c493d, 0x476b62, 0xb27c3f, 0x77749a, 0x557b88, 0x9b7049, 0x6d7b49]
+    const sashes = [0xe4c66a, 0xd58e62, 0x83b5a9, 0xe1d5b9, 0xb95b4c]
+    const skinTones = [0x68432f, 0x80543a, 0x956543, 0xa87551, 0x74503b]
+    const gear = ['headcloth', 'turban', 'topknot', 'bun'] as const
+    const look: ArtisanLook = {
+      key: `townsperson-${hashSeed(seed)}`, name: 'Townsperson', craft: 'builder', epithet: 'A neighbour from town',
+      form: 'human', robe: robes[Math.floor(rng() * robes.length)]!, sash: sashes[Math.floor(rng() * sashes.length)]!,
+      skin: skinTones[Math.floor(rng() * skinTones.length)]!, headgear: gear[Math.floor(rng() * gear.length)]!, prop: 'pouch',
+      beard: rng() > .72,
+    }
+    const body = new THREE.Group()
+    body.name = 'townspersonBody'
+    group.add(body)
+    createHumanArtisan(look, body, { statusLamp: false, noCraftProp: true, decorativeTextile: true })
+    addEverydayCarry(body, seed, rng() > .42)
+    group.userData.body = body
+    group.userData.leftArm = body.userData.leftArm
+    group.userData.rightArm = body.userData.rightArm
+    group.userData.legs = body.userData.legs
+    group.userData.arms = body.userData.arms
+    group.userData.animationTargets = { leftArm: body.userData.leftArm, rightArm: body.userData.rightArm }
+    batchAvatarDetails(group, [body, body.userData.leftArm, body.userData.rightArm, ...(body.userData.legs as THREE.Group[] ?? []), body.getObjectByName('satchel') as THREE.Group | undefined])
+    return group
+  }
+
+  function addEverydayCarry(body: THREE.Group, seed: number | string, basket: boolean): void {
+    const rng = randomFor(`carry:${seed}`)
+    const leather = mat('town-resident-leather', 0x75482b, .97)
+    const reed = mat('town-resident-reed', 0xb18a4e, .98)
+    const green = mat('town-resident-greens', 0x69814d, .98)
+    const bag = new THREE.Group()
+    bag.name = 'satchel'
+    bag.position.set(.24, 1.0, -.23)
+    bag.rotation.z = -.14
+    body.add(bag)
+    round(bag, .16, 0, 0, 0, leather, [1, 1.25, .6])
+    mesh(torusGeometry(.12, .018, 4, 10), mat('town-resident-bag-stitch', 0xd1b375, .93), bag, new THREE.Vector3(0, .02, .09), undefined, undefined, false)
+    if (basket) {
+      const holder = body.userData.rightArm as THREE.Group
+      const bowl = mesh(cylinderGeometry(.17, .11, .15, 9, true), reed, holder, new THREE.Vector3(.04, -.82, .14), undefined, undefined, false)
+      bowl.name = 'marketBasket'
+      for (let index = 0; index < 5; index += 1) {
+        const angle = index * Math.PI * 2 / 5
+        round(holder, .07, .04 + Math.cos(angle) * .09, -.70 + rng() * .035, .14 + Math.sin(angle) * .07,
+          index % 2 ? green : mat('town-resident-fruit', 0xd69439, .89), [.9, .75, .9], false)
+      }
+    }
   }
 
   function createAnimal(kind: TownAnimalKind, seed: number | string): THREE.Group {
@@ -1425,23 +2079,571 @@ export function createTownAssetLibrary(): TownAssetLibrary {
     return group
   }
 
+
+  function artisanLampMaterial(lamp: ArtisanLamp): THREE.MeshStandardMaterial {
+    const hex = LAMP_COLOR[lamp]
+    return mat(`artisan-lamp-${lamp}`, hex, .4, 0, { color: hex, intensity: lamp === 'unknown' ? .5 : 2.6 })
+  }
+
+  function limb(parent: THREE.Object3D, name: string, x: number, y: number, z: number, swing: number): THREE.Group {
+    const joint = new THREE.Group()
+    joint.name = name
+    joint.position.set(x, y, z)
+    joint.userData.swing = swing
+    parent.add(joint)
+    return joint
+  }
+
+  function addStatusLamp(group: THREE.Group, height: number): void {
+    const lamp = new THREE.Group()
+    lamp.name = 'statusLamp'
+    lamp.position.set(0, height, 0)
+    const bronze = mat('lamp-bronze', 0x87633b, .48, .58)
+    mesh(cylinderGeometry(.16, .07, .09, 10), bronze, lamp, new THREE.Vector3(0, 0, 0), undefined, undefined, false)
+    const flame = mesh(sphereGeometry(.11, 8, 6), artisanLampMaterial('idle'), lamp, new THREE.Vector3(0, .15, 0), undefined, new THREE.Vector3(.8, 1.45, .8), false)
+    flame.name = 'lampFlame'
+    group.add(lamp)
+    group.userData.lampFlame = flame
+    group.userData.statusLamp = lamp
+  }
+
+  function addOrderLeaf(hand: THREE.Object3D, y: number): void {
+    const leaf = block(hand, .09, .03, .52, 0, y, .12, mat('palm-leaf-order', 0xd9c27a, .9), 0, false)
+    leaf.name = 'orderLeaf'
+    leaf.rotation.x = -.35
+    leaf.visible = false
+  }
+
+  function addCraftProp(hand: THREE.Object3D, look: ArtisanLook, y: number): void {
+    const wood = timber(1), metal = mat('artisan-bronze', 0x9a7443, .42, .6)
+    const prop = new THREE.Group()
+    prop.name = 'craftProp'
+    prop.position.set(0, y, .06)
+    hand.add(prop)
+    switch (look.prop) {
+      case 'mallet':
+        mesh(cylinderGeometry(.03, .03, .5, 6), wood, prop, new THREE.Vector3(0, -.12, .05), new THREE.Euler(.4, 0, 0))
+        block(prop, .26, .16, .16, 0, -.36, .15, timber(2))
+        break
+      case 'chisel':
+        block(prop, .05, .34, .05, 0, -.14, .04, metal)
+        break
+      case 'ledger':
+        block(prop, .26, .06, .34, 0, -.04, .10, mat('ledger-cover', 0x7a3b25, .9))
+        break
+      case 'plan-scroll':
+        mesh(cylinderGeometry(.05, .05, .55, 8), mat('plan-scroll', 0xe7dcc0, .9), prop, new THREE.Vector3(0, -.05, .1), new THREE.Euler(0, 0, Math.PI / 2))
+        break
+      case 'stylus':
+      case 'leaf':
+        block(prop, .08, .02, .46, 0, -.04, .16, mat('palm-leaf', 0xcdb46e, .9), 0, false)
+        if (look.prop === 'stylus') mesh(cylinderGeometry(.012, .012, .3, 5), metal, prop, new THREE.Vector3(.08, -.02, .12), new THREE.Euler(1.2, 0, 0), undefined, false)
+        break
+      case 'gnomon':
+        for (const [rx, rz] of [[Math.PI / 2, 0], [0, 0], [0, Math.PI / 2]] as const) mesh(torusGeometry(.16, .015, 4, 18), metal, prop, new THREE.Vector3(0, -.02, .16), new THREE.Euler(rx, 0, rz), undefined, false)
+        break
+      case 'pouch':
+        round(prop, .12, 0, -.1, .06, mat('leather-pouch', 0x6a4328, .95), [1, 1.2, .8])
+        break
+      case 'tusk':
+        mesh(cylinderGeometry(.015, .05, .34, 6), mat('ivory', 0xf1ead7, .7), prop, new THREE.Vector3(0, -.08, .1), new THREE.Euler(1.1, 0, 0))
+        break
+      case 'bell':
+        break
+    }
+  }
+
+  function addHeadgear(group: THREE.Group, look: ArtisanLook, headY: number, radius: number): void {
+    const gold = mat('artisan-gold', 0xd6a83c, .38, .7)
+    const hair = mat('worker-hair', 0x27221d, .99)
+    switch (look.headgear) {
+      case 'crown':
+        mesh(cylinderGeometry(radius * .62, radius * .92, radius * 1.2, 10), gold, group, new THREE.Vector3(0, headY + radius * 1.05, 0))
+        mesh(cylinderGeometry(.015, radius * .45, radius * .7, 8), gold, group, new THREE.Vector3(0, headY + radius * 1.95, 0))
+        break
+      case 'turban':
+        round(group, radius * 1.08, 0, headY + radius * .55, -.01, mat(`turban-${look.sash}`, look.sash, .95), [1, .62, 1])
+        break
+      case 'topknot':
+        round(group, radius * 1.01, 0, headY + radius * .25, -.02, hair, [1, .55, .95], false)
+        round(group, radius * .4, 0, headY + radius * 1.0, -.06, hair)
+        break
+      case 'bun':
+        round(group, radius * 1.02, 0, headY + radius * .2, -.02, hair, [1, .6, .96], false)
+        round(group, radius * .45, 0, headY + radius * .15, -radius * .95, hair)
+        mesh(torusGeometry(radius * .45, .02, 4, 12), gold, group, new THREE.Vector3(0, headY + radius * .15, -radius * .9), undefined, undefined, false)
+        break
+      case 'tuft':
+        mesh(cylinderGeometry(.03, .05, radius * .9, 6), hair, group, new THREE.Vector3(0, headY + radius * 1.2, -radius * .35), new THREE.Euler(-.5, 0, 0), undefined, false)
+        break
+      case 'headcloth':
+        round(group, radius * 1.03, 0, headY + radius * .35, -.01, mat(`headcloth-${look.sash}`, look.sash, .97), [1, .5, 1])
+        break
+    }
+    if (look.beard) round(group, radius * .62, 0, headY - radius * .7, radius * .5, mat('artisan-beard', 0xe7e1d6, .99), [1, 1.2, .7], false)
+  }
+
+  interface HumanBuildOptions { statusLamp?: boolean; noCraftProp?: boolean; decorativeTextile?: boolean }
+
+  function createHumanArtisan(look: ArtisanLook, group: THREE.Group, options: HumanBuildOptions = {}): void {
+    const skin = mat(`artisan-skin-${look.skin}`, look.skin, .92)
+    const robe = mat(`artisan-robe-${look.robe}`, look.robe, .94)
+    const sash = mat(`artisan-sash-${look.sash}`, look.sash, .9)
+    const hair = mat('worker-hair', 0x27221d, .99)
+    const highlight = mat('artisan-cotton-edge', 0xe9d8b5, .92)
+    const ganesha = look.form === 'ganesha'
+    const girth = ganesha ? 1.28 : 1
+    mesh(cylinderGeometry(.24 * girth, .36 * girth, .70, 10), robe, group, new THREE.Vector3(0, 1.08, 0))
+    if (ganesha) round(group, .36, 0, 1.0, .08, robe, [1, .9, 1])
+    mesh(cylinderGeometry(.30 * girth, .34 * girth, .26, 10), sash, group, new THREE.Vector3(0, .78, 0))
+    const hem = mesh(cylinderGeometry(.335 * girth, .35 * girth, .055, 12), highlight, group, new THREE.Vector3(0, .638, 0), undefined, undefined, false)
+    hem.name = 'robeHem'
+    const collar = mesh(torusGeometry(.145 * girth, .022, 5, 16), highlight, group, new THREE.Vector3(0, 1.42, .055), new THREE.Euler(Math.PI / 2.6, 0, 0), undefined, false)
+    collar.name = 'collar'
+    // A second fold gives the draped cloth a visible edge at walking-camera range.
+    const fold = block(group, .055, .66, .035, -.055, 1.09, .255 * girth, highlight, 0, false)
+    fold.name = 'uttariyaEdge'
+    fold.rotation.z = -.55
+    // Uttariya (upper cloth) across the chest.
+    block(group, .08, .78, .05, 0, 1.12, .23 * girth, sash, 0, false).rotation.z = -.55
+    const headY = ganesha ? 1.72 : 1.60
+    const headRadius = ganesha ? .30 : .22
+    round(group, headRadius, 0, headY, 0, skin, ganesha ? [1.05, 1, 1] : [1, 1.05, .92])
+    if (ganesha) {
+      for (const side of [-1, 1]) {
+        const ear = round(group, .24, side * .31, headY + .02, -.02, skin, [.18, 1, .9], false)
+        ear.rotation.y = side * .35
+      }
+      let previous = new THREE.Vector3(0, headY - .06, .25)
+      for (const [index, point] of [[0, headY - .32, .34], [.04, headY - .58, .36], [.12, headY - .74, .26]].entries()) {
+        const next = new THREE.Vector3(...(point as [number, number, number]))
+        cylinderBetween(group, previous, next, .085 - index * .018, .07 - index * .018, skin, 8)
+        previous = next
+      }
+    } else {
+      // Hairline, ears and layered eyes give the face a readable profile in the
+      // third-person camera without adding a texture or a per-frame cost.
+      round(group, headRadius * .96, 0, headY + headRadius * .49, -.045, hair, [1, .52, .9], false)
+      for (const side of [-1, 1]) {
+        round(group, .039, side * .078, headY + .025, headRadius * .88, mat('artisan-eye-ivory', 0xf3e9d6, .84), [1.15, .78, .4], false)
+        const eye = round(group, .020, side * .078, headY + .025, headRadius * 1.01, mat('artisan-eye-dark', 0x29231f, .84), [1.1, .8, .42], false)
+        eye.name = side < 0 ? 'leftEye' : 'rightEye'
+        const brow = block(group, .075, .018, .026, side * .078, headY + .083, headRadius * .89, hair, 0, false)
+        brow.rotation.z = -side * .11
+        round(group, .07, side * headRadius * .91, headY - .015, 0, skin, [.33, .66, .72], false)
+      }
+      for (const side of [-1, 1]) {
+        const sideLock = round(group, .09, side * headRadius * .82, headY + .015, -.015, hair, [.5, 1.2, .8], false)
+        sideLock.name = side < 0 ? 'leftHairLock' : 'rightHairLock'
+      }
+      const nose = round(group, .035, 0, headY - .035, headRadius * 1.02, skin, [.68, 1.22, .7], false)
+      nose.name = 'nose'
+      const bridge = mesh(cylinderGeometry(.018, .027, .10, 6), skin, group, new THREE.Vector3(0, headY + .005, headRadius * 1.02), undefined, undefined, false)
+      bridge.name = 'noseBridge'
+      for (const side of [-1, 1]) {
+        round(group, .063, side * .11, headY - .04, headRadius * .66, skin, [.66, .58, .38], false).name = side < 0 ? 'leftCheek' : 'rightCheek'
+        const earRing = mesh(torusGeometry(.034, .009, 4, 8), mat('artisan-earring-gold', 0xb89654, .45, .45), group,
+          new THREE.Vector3(side * headRadius * 1.04, headY - .08, .006), undefined, undefined, false)
+        earRing.name = side < 0 ? 'leftEarring' : 'rightEarring'
+      }
+      const mouth = block(group, .075, .013, .012, 0, headY - .11, headRadius * .9, mat('artisan-mouth', 0x673c32, .97), 0, false)
+      mouth.name = 'mouth'
+      if (look.beard) round(group, .13, 0, headY - .16, .105, hair, [1, .52, .8], false)
+    }
+    addHeadgear(group, look, headY, headRadius)
+    if (!ganesha) {
+      const neck = mesh(cylinderGeometry(.085, .105, .19, 8), skin, group, new THREE.Vector3(0, 1.48, 0), undefined, undefined, false)
+      neck.name = 'neck'
+      const hairStrands = new THREE.InstancedMesh(boxGeometry(.018, .11, .015), hair, 5)
+      hairStrands.name = 'hairStrands'
+      const strand = new THREE.Object3D()
+      for (let index = 0; index < 5; index += 1) {
+        strand.position.set((index - 2) * .043, headY + .10 + (index % 2) * .016, headRadius * .78)
+        strand.rotation.set(0, 0, (index - 2) * -.12); strand.scale.set(1, 1, 1); strand.updateMatrix(); hairStrands.setMatrixAt(index, strand.matrix)
+      }
+      hairStrands.instanceMatrix.needsUpdate = true; hairStrands.castShadow = false; group.add(hairStrands)
+    }
+    if (options.decorativeTextile) {
+      // Contrasting collar, crossed shoulder drape, waist wrap and restrained
+      // border stitches add cloth structure while keeping each decorative run
+      // in one instanced draw per articulated torso.
+      const border = mat(`human-textile-border-${look.sash}`, look.sash, .86)
+      const thread = mat('human-embroidered-thread', 0xe7d6aa, .9)
+      mesh(torusGeometry(.18 * girth, .022, 5, 16), border, group, new THREE.Vector3(0, 1.40, .035), new THREE.Euler(Math.PI / 2.5, 0, 0), undefined, false).name = 'wovenCollar'
+      const drape = block(group, .13, .78, .055, -.075, 1.12, .225 * girth, sash, 0, false)
+      drape.name = 'drapedShoulderCloth'
+      drape.rotation.z = -.52
+      block(group, .08, .58, .035, -.10, 1.10, .268 * girth, thread, 0, false).rotation.z = -.52
+      const waist = mesh(torusGeometry(.31 * girth, .025, 5, 20), border, group, new THREE.Vector3(0, .78, 0), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+      waist.name = 'waistCord'
+      const stitchGeo = sphereGeometry(.018, 6, 4)
+      const stitches = new THREE.InstancedMesh(stitchGeo, thread, 12)
+      stitches.name = 'embroideredSashStitches'
+      const stamp = new THREE.Object3D()
+      for (let index = 0; index < 12; index += 1) {
+        const x = (index - 5.5) * .043
+        stamp.position.set(x, 1.145 - (index % 2) * .035, .270 * girth); stamp.rotation.set(0, 0, -.52); stamp.scale.set(1, 1, 1); stamp.updateMatrix()
+        stitches.setMatrixAt(index, stamp.matrix)
+      }
+      stitches.instanceMatrix.needsUpdate = true
+      stitches.castShadow = false
+      group.add(stitches)
+      const pleats = new THREE.InstancedMesh(boxGeometry(.018, .27, .018), thread, 5)
+      pleats.name = 'dhotiPleats'
+      for (let index = 0; index < 5; index += 1) {
+        stamp.position.set((index - 2) * .075, .49, .27 * girth); stamp.rotation.set(0, 0, (index - 2) * .045); stamp.scale.set(1, 1, 1); stamp.updateMatrix()
+        pleats.setMatrixAt(index, stamp.matrix)
+      }
+      pleats.instanceMatrix.needsUpdate = true
+      pleats.castShadow = false
+      group.add(pleats)
+    }
+    const leftArm = limb(group, 'leftArm', -.31 * girth, 1.34, 0, -1)
+    const rightArm = limb(group, 'rightArm', .31 * girth, 1.34, 0, 1)
+    for (const [arm, sign] of [[leftArm, -1], [rightArm, 1]] as const) {
+      cylinderBetween(arm, new THREE.Vector3(0, 0, 0), new THREE.Vector3(sign * .08, -.42, .02), .10, .08, robe, 8)
+      cylinderBetween(arm, new THREE.Vector3(sign * .08, -.42, .02), new THREE.Vector3(sign * .04, -.76, .08), .075, .055, skin, 7)
+      round(arm, .07, sign * .04, -.79, .08, skin, [1, .8, .8], false)
+      // Palm, thumb and four tapered fingers. Finger rods share one instanced
+      // mesh on each arm so hands remain legible without a draw-call explosion.
+      round(arm, .072, sign * .04, -.79, .105, skin, [.9, .7, .48], false).name = 'palm'
+      cylinderBetween(arm, new THREE.Vector3(sign * .09, -.78, .10), new THREE.Vector3(sign * .15, -.83, .14), .028, .019, skin, 6, false).name = 'thumb'
+      const fingers = new THREE.InstancedMesh(cylinderGeometry(.012, .017, .12, 5), skin, 4)
+      fingers.name = sign < 0 ? 'leftFingers' : 'rightFingers'
+      const digit = new THREE.Object3D()
+      for (let finger = 0; finger < 4; finger += 1) {
+        digit.position.set(sign * (.005 + finger * .023), -.84 - Math.abs(1.5 - finger) * .003, .14)
+        digit.rotation.set(-.08, 0, 0); digit.scale.set(1, 1, 1); digit.updateMatrix(); fingers.setMatrixAt(finger, digit.matrix)
+      }
+      fingers.instanceMatrix.needsUpdate = true; fingers.castShadow = false; arm.add(fingers)
+      mesh(torusGeometry(.095, .013, 4, 10), sash, arm, new THREE.Vector3(sign * .095, -.405, .02), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+      mesh(torusGeometry(.06, .015, 4, 10), mat('artisan-gold', 0xd6a83c, .38, .7), arm, new THREE.Vector3(sign * .05, -.66, .07), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+    }
+    if (!options.noCraftProp) addCraftProp(rightArm, look, -.82)
+    addOrderLeaf(leftArm, -.82)
+    const legs: THREE.Group[] = []
+    for (const side of [-1, 1]) {
+      const leg = limb(group, side < 0 ? 'leftLeg' : 'rightLeg', side * .13, .62, 0, side)
+      mesh(cylinderGeometry(.11, .13, .40, 8), robe, leg, new THREE.Vector3(0, -.18, 0))
+      mesh(torusGeometry(.115, .016, 4, 10), sash, leg, new THREE.Vector3(0, -.35, 0), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+      cylinderBetween(leg, new THREE.Vector3(0, -.36, 0), new THREE.Vector3(side * .01, -.56, .02), .075, .06, skin, 7)
+      const sandal = block(leg, .18, .055, .29, 0, -.585, .08, timber(0), 0, false)
+      sandal.name = side < 0 ? 'leftSandal' : 'rightSandal'
+      const strap = block(leg, .16, .025, .035, 0, -.55, .17, mat('leather-sandal-straps', 0x5c3924, .97), -.18, false)
+      strap.rotation.x = -.25
+      strap.name = side < 0 ? 'leftSandalStrap' : 'rightSandalStrap'
+      for (let toe = 0; toe < 3; toe += 1) round(leg, .019, (toe - 1) * .045, -.56, .22, skin, [.75, .7, 1], false)
+      legs.push(leg)
+    }
+    group.userData.legs = legs
+    group.userData.arms = [leftArm, rightArm]
+    group.userData.leftArm = leftArm
+    group.userData.rightArm = rightArm
+    if (options.statusLamp !== false) addStatusLamp(group, ganesha ? 2.75 : 2.45)
+  }
+
+  function createNandiArtisan(look: ArtisanLook, group: THREE.Group): void {
+    const hide = mat(`nandi-hide-${look.robe}`, look.robe, .9)
+    const dark = mat('nandi-horn', 0x3b342d, .8)
+    const garland = mat('marigold', 0xf0a030, .85, 0, { color: 0x8a4a00, intensity: .15 })
+    round(group, .55, 0, 1.0, 0, hide, [.78, .72, 1.45])
+    round(group, .28, 0, 1.42, -.22, hide, [.9, .9, 1.1])
+    const head = new THREE.Group()
+    head.name = 'nandiHead'
+    head.position.set(0, 1.28, .82)
+    group.add(head)
+    round(head, .24, 0, 0, 0, hide, [.9, 1, 1.25])
+    round(head, .13, 0, -.12, .25, mat('nandi-muzzle', 0xb8a898, .9), [1, .8, .8])
+    for (const side of [-1, 1]) {
+      cylinderBetween(head, new THREE.Vector3(side * .12, .16, -.05), new THREE.Vector3(side * .26, .38, -.12), .04, .015, dark, 6)
+      round(head, .08, side * .24, .05, -.05, hide, [1.4, .5, .8], false)
+    }
+    mesh(torusGeometry(.36, .07, 6, 14), garland, group, new THREE.Vector3(0, 1.06, .58), new THREE.Euler(1.1, 0, 0), undefined, false)
+    const bell = new THREE.Group(); bell.position.set(0, .82, .74); group.add(bell)
+    mesh(cylinderGeometry(.06, .10, .14, 10), brass(), bell, new THREE.Vector3(0, 0, 0))
+    mesh(torusGeometry(.33, .025, 4, 14), mat('artisan-sash-red', 0xa8322b, .9), group, new THREE.Vector3(0, 1.05, -.1), new THREE.Euler(0, Math.PI / 2, 0), undefined, false)
+    const legs: THREE.Group[] = []
+    for (const [index, [x, z]] of ([[-.25, .5], [.25, .5], [-.25, -.5], [.25, -.5]] as const).entries()) {
+      const leg = limb(group, `nandiLeg${index}`, x, .78, z, index === 0 || index === 3 ? 1 : -1)
+      mesh(cylinderGeometry(.08, .1, .72, 8), hide, leg, new THREE.Vector3(0, -.38, 0))
+      mesh(cylinderGeometry(.09, .09, .06, 8), dark, leg, new THREE.Vector3(0, -.75, 0))
+      legs.push(leg)
+    }
+    const tail = cylinderBetween(group, new THREE.Vector3(0, 1.2, -.78), new THREE.Vector3(0, .6, -.9), .03, .02, hide, 5)
+    void tail
+    const orderHolder = new THREE.Group(); orderHolder.name = 'leftArm'; orderHolder.position.set(0, 1.62, .9); group.add(orderHolder)
+    addOrderLeaf(orderHolder, 0)
+    group.userData.legs = legs
+    group.userData.arms = []
+    addStatusLamp(group, 2.3)
+  }
+
+  function createArtisan(look: ArtisanLook): THREE.Group {
+    const group = new THREE.Group()
+    group.name = `${look.name} artisan`
+    group.userData.assetKind = 'artisan'
+    group.userData.persona = look.key
+    group.userData.form = look.form
+    const body = new THREE.Group()
+    body.name = 'artisanBody'
+    group.add(body)
+    if (look.form === 'nandi') createNandiArtisan(look, body)
+    else createHumanArtisan(look, body, { decorativeTextile: true })
+    group.userData.legs = body.userData.legs
+    group.userData.arms = body.userData.arms
+    group.userData.leftArm = body.userData.leftArm
+    group.userData.rightArm = body.userData.rightArm
+    group.userData.animationTargets = { leftArm: body.userData.leftArm, rightArm: body.userData.rightArm }
+    group.userData.lampFlame = body.userData.lampFlame
+    group.userData.statusLamp = body.userData.statusLamp
+    group.userData.body = body
+    // A soft ground disc keeps small figures readable from the overview.
+    const ring = mesh(torusGeometry(.62, .05, 4, 24), mat(`artisan-ring-${look.sash}`, look.sash, .7, 0, { color: look.sash, intensity: .35 }), group, new THREE.Vector3(0, .04, 0), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+    ring.name = 'craftRing'
+    batchAvatarDetails(group, [body, body.userData.leftArm, body.userData.rightArm, ...(body.userData.legs as THREE.Group[] ?? [])])
+    group.scale.setScalar(1.35)
+    return group
+  }
+
+  function createTraveller(): THREE.Group {
+    const group = new THREE.Group()
+    group.name = 'Traveller (fictional player avatar)'
+    group.userData.assetKind = 'traveller'
+    group.userData.traveller = true
+    const look: ArtisanLook = {
+      key: 'town-traveller', name: 'Traveller', craft: 'researcher', epithet: 'Visitor on foot', form: 'human',
+      robe: 0x28747a, sash: 0xd8bd78, skin: 0x8a5a3c, headgear: 'headcloth', prop: 'pouch',
+    }
+    const body = new THREE.Group()
+    body.name = 'travellerBody'
+    group.add(body)
+    createHumanArtisan(look, body, { statusLamp: false, noCraftProp: true, decorativeTextile: true })
+    addTravellerPack(body)
+    addTravellerRegalia(body)
+    group.userData.body = body
+    group.userData.leftArm = body.userData.leftArm
+    group.userData.rightArm = body.userData.rightArm
+    group.userData.legs = body.userData.legs
+    group.userData.arms = body.userData.arms
+    group.userData.animationTargets = { leftArm: body.userData.leftArm, rightArm: body.userData.rightArm }
+    batchAvatarDetails(group, [body, body.userData.leftArm, body.userData.rightArm, ...(body.userData.legs as THREE.Group[] ?? []), body.getObjectByName('travellerBackpack') as THREE.Group | undefined, body.getObjectByName('waterFlask') as THREE.Group | undefined])
+    group.scale.setScalar(1.35)
+    return group
+  }
+
+  function addTravellerPack(body: THREE.Group): void {
+    const leather = mat('traveller-oiled-leather', 0x68462e, .96)
+    const binding = mat('traveller-pack-binding', 0xb89050, .78, .12)
+    const ivory = mat('traveller-rolled-blanket', 0xd8ceb2, .96)
+    const teal = mat('traveller-pack-teal', 0x315d5c, .94)
+    const brass = mat('traveller-antique-brass', 0xa9864d, .48, .5)
+    const dark = mat('traveller-flask-leather', 0x583a28, .96)
+    // The pack faces away from +z. It is built on the torso itself, so straps,
+    // roll and flask all follow the upper body when the walk cycle swings it.
+    const pack = new THREE.Group()
+    pack.name = 'travellerBackpack'
+    pack.position.set(0, 1.16, -.285)
+    pack.rotation.x = -.08
+    body.add(pack)
+    const bodyMesh = round(pack, .205, 0, 0, 0, leather, [1.03, 1.22, .72])
+    bodyMesh.name = 'packBody'
+    const flap = block(pack, .29, .20, .05, 0, .10, -.135, teal, 0, false)
+    flap.name = 'packFlap'
+    for (const side of [-1, 1]) {
+      const strap = block(pack, .052, .74, .042, side * .15, -.06, -.13, binding, side * -.12, false)
+      strap.name = side < 0 ? 'leftBackpackStrap' : 'rightBackpackStrap'
+      round(pack, .035, side * .15, -.02, -.10, brass, [1, 1, .48], false).name = side < 0 ? 'leftPackBuckle' : 'rightPackBuckle'
+    }
+    // Rolled bedding rides above the pack and reads clearly from the rear.
+    const roll = mesh(cylinderGeometry(.09, .09, .43, 9), ivory, pack, new THREE.Vector3(0, .32, -.08), new THREE.Euler(0, 0, Math.PI / 2), undefined, true)
+    roll.name = 'rolledBlanket'
+    for (const x of [-.16, .16]) {
+      const tie = block(pack, .035, .24, .12, x, .32, -.075, binding, 0, false)
+      tie.name = x < 0 ? 'leftBlanketTie' : 'rightBlanketTie'
+    }
+    // A small necked copper water flask hangs at the right hip with a visible cap and loop.
+    const flask = new THREE.Group()
+    flask.name = 'waterFlask'
+    flask.position.set(.28, .88, -.015)
+    flask.rotation.z = -.16
+    body.add(flask)
+    mesh(cylinderGeometry(.06, .095, .28, 8), dark, flask, new THREE.Vector3(0, 0, 0))
+    mesh(cylinderGeometry(.035, .045, .07, 8), brass, flask, new THREE.Vector3(0, .17, 0))
+    mesh(torusGeometry(.064, .012, 4, 10), binding, flask, new THREE.Vector3(0, .06, .01), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+    cylinderBetween(flask, new THREE.Vector3(-.08, .16, -.02), new THREE.Vector3(.08, .16, -.02), .012, .012, binding, 5, false)
+    // A cross-body leather strap and keeper clasp add front detail and connect the load visually.
+    const shoulderStrap = block(body, .065, .88, .04, .17, 1.07, .225, leather, 0, false)
+    shoulderStrap.rotation.z = -.42
+    shoulderStrap.name = 'travellerShoulderStrap'
+    const keeper = block(body, .11, .095, .045, .25, .84, .225, brass, 0, false)
+    keeper.rotation.z = -.42
+    keeper.name = 'antiqueGoldStrapKeeper'
+    const packSeam = new THREE.InstancedMesh(boxGeometry(.018, .28, .014), binding, 5)
+    packSeam.name = 'packPanelSeams'
+    const seam = new THREE.Object3D()
+    for (let index = 0; index < 5; index += 1) {
+      seam.position.set((index - 2) * .047, -.04, -.135); seam.rotation.set(0, 0, (index - 2) * .10); seam.scale.set(1, 1, 1); seam.updateMatrix()
+      packSeam.setMatrixAt(index, seam.matrix)
+    }
+    packSeam.instanceMatrix.needsUpdate = true; packSeam.castShadow = false; pack.add(packSeam)
+    const pocket = block(pack, .14, .11, .035, 0, -.11, -.15, teal, 0, false)
+    pocket.name = 'packFrontPocket'
+    round(pack, .028, 0, -.10, -.177, brass, [1, 1, .5], false).name = 'packPocketButton'
+  }
+
+  function addTravellerRegalia(body: THREE.Group): void {
+    const teal = mat('traveller-deep-teal-cloth', 0x215f65, .93)
+    const lightTeal = mat('traveller-shawl-highlight', 0x3c8584, .9)
+    const ivory = mat('traveller-ivory-cloth', 0xe8dfc8, .97)
+    const gold = mat('traveller-antique-gold-thread', 0xb69755, .75, .28)
+    const shoulderGeo = sphereGeometry(.5, 10, 7)
+    for (const side of [-1, 1]) {
+      const cap = mesh(shoulderGeo, teal, body, new THREE.Vector3(side * .30, 1.30, .01), undefined, new THREE.Vector3(.18, .22, .20), false)
+      cap.name = side < 0 ? 'leftRoundedShoulderCap' : 'rightRoundedShoulderCap'
+    }
+    // Two fitted XY panels form a broad, curved shawl across the chest and twin
+    // tails over the dhoti. They are torso details, so arm and leg pivots stay free.
+    const shawlShape = new THREE.Shape()
+    shawlShape.moveTo(-.30, 1.45); shawlShape.bezierCurveTo(-.10, 1.50, .03, 1.30, .20, 1.12)
+    shawlShape.bezierCurveTo(.29, 1.01, .31, .93, .25, .86); shawlShape.bezierCurveTo(.18, .82, .08, .88, .00, .98)
+    shawlShape.bezierCurveTo(-.08, 1.08, -.19, 1.26, -.34, 1.34); shawlShape.closePath()
+    const shawlGeo = geometry('traveller:front-shawl', () => new THREE.ShapeGeometry(shawlShape, 3))
+    const shawl = mesh(shawlGeo, lightTeal, body, new THREE.Vector3(0, 0, .286), undefined, undefined, false)
+    shawl.name = 'layeredShoulderShawl'
+    const innerShape = new THREE.Shape()
+    innerShape.moveTo(-.25, 1.42); innerShape.bezierCurveTo(-.06, 1.39, .08, 1.20, .20, 1.05)
+    innerShape.bezierCurveTo(.24, 1.00, .22, .95, .17, .92); innerShape.bezierCurveTo(.10, 1.00, -.04, 1.18, -.25, 1.34); innerShape.closePath()
+    const innerGeo = geometry('traveller:shawl-inlay', () => new THREE.ShapeGeometry(innerShape, 3))
+    mesh(innerGeo, ivory, body, new THREE.Vector3(0, 0, .292), undefined, undefined, false).name = 'shawlIvoryInlay'
+    const tails = new THREE.Shape()
+    tails.moveTo(-.15, .86); tails.lineTo(.02, .84); tails.lineTo(.08, .42); tails.quadraticCurveTo(-.01, .37, -.12, .46); tails.closePath()
+    const tailGeo = geometry('traveller:shawl-tail', () => new THREE.ShapeGeometry(tails, 1))
+    mesh(tailGeo, lightTeal, body, new THREE.Vector3(0, 0, .245), undefined, undefined, false).name = 'shawlTail'
+    const tailFold = block(body, .025, .35, .014, -.035, .65, .253, ivory, 0, false)
+    tailFold.name = 'shawlTailFold'
+    // Gold geometric embroidery follows the broad diagonal edge in a single draw.
+    const motif = new THREE.InstancedMesh(boxGeometry(.033, .024, .013), gold, 8)
+    motif.name = 'shawlGeometricEmbroidery'
+    const mark = new THREE.Object3D()
+    for (let index = 0; index < 8; index += 1) {
+      mark.position.set(-.24 + index * .047, 1.39 - index * .052, .302)
+      mark.rotation.set(0, 0, -.72); mark.scale.set(1, 1, 1); mark.updateMatrix(); motif.setMatrixAt(index, mark.matrix)
+    }
+    motif.instanceMatrix.needsUpdate = true; motif.castShadow = false; body.add(motif)
+    // Fold ridges on the wrapped lower garment use a shared instanced strip.
+    const folds = new THREE.InstancedMesh(boxGeometry(.022, .29, .016), ivory, 7)
+    folds.name = 'travellerDhotiFoldRidges'
+    for (let index = 0; index < 7; index += 1) {
+      mark.position.set(-.18 + index * .06, .48, .248); mark.rotation.set(0, 0, (index - 3) * .04); mark.scale.set(1, 1, 1); mark.updateMatrix(); folds.setMatrixAt(index, mark.matrix)
+    }
+    folds.instanceMatrix.needsUpdate = true; folds.castShadow = false; body.add(folds)
+    const belt = mesh(torusGeometry(.31, .028, 5, 20), gold, body, new THREE.Vector3(0, .79, 0), new THREE.Euler(Math.PI / 2, 0, 0), undefined, false)
+    belt.name = 'travellerAntiqueGoldBelt'
+    const clasp = mesh(boxGeometry(.11, .12, .035), gold, body, new THREE.Vector3(0, .79, .30), undefined, undefined, false)
+    clasp.name = 'travellerBeltClasp'
+    round(body, .034, 0, .79, .323, teal, [1, 1, .45], false).name = 'beltClaspInset'
+    // A bound headwrap has an ivory cap and three antique-gold fabric bands.
+    const headwrap = round(body, .237, 0, 1.85, -.015, ivory, [1.05, .42, .98], false)
+    headwrap.name = 'segmentedHeadwrap'
+    for (let index = 0; index < 3; index += 1) {
+      const band = block(body, .34 - index * .04, .027, .30, 0, 1.78 + index * .055, .028, gold, 0, false)
+      band.name = `headwrapBand${index + 1}`
+    }
+    const knot = round(body, .075, -.20, 1.84, -.06, teal, [1, .8, 1], false)
+    knot.name = 'headwrapKnot'
+    const tassel = mesh(cylinderGeometry(.02, .01, .18, 6), gold, body, new THREE.Vector3(-.23, 1.72, -.025), new THREE.Euler(0, 0, -.22), undefined, false)
+    tassel.name = 'headwrapTassel'
+  }
+
+  /** The artisans' home: a long lime-plaster hall with a raised thinnai verandah facing local +z. */
+  function createGuildHall(seed: number | string): THREE.Group {
+    const rng = randomFor(seed)
+    const group = new THREE.Group()
+    group.name = 'Artisans Guild Hall'
+    group.userData.assetKind = 'guild-hall'
+    const width = 10.4, depth = 7.2
+    addPlinth(group, width + 1, depth + 3.2, .55)
+    const wall = plaster(1)
+    block(group, width, 3.1, .3, 0, 2.1, -depth / 2, wall)
+    block(group, .3, 3.1, depth, -width / 2, 2.1, 0, wall)
+    block(group, .3, 3.1, depth, width / 2, 2.1, 0, wall)
+    for (const x of [-width * .3, width * .3]) block(group, width * .28, 3.1, .3, x, 2.1, depth / 2 - .6, wall)
+    block(group, 2.2, .6, .32, 0, 3.35, depth / 2 - .6, wall)
+    block(group, 2.2, 2.4, .12, 0, 1.75, depth / 2 - .7, timber(2))
+    // Thinnai: raised verandah benches either side of the door.
+    for (const x of [-width * .3, width * .3]) block(group, width * .34, .45, 1.4, x, .78, depth / 2 + .45, stone(2))
+    for (const x of [-width / 2 + .3, -width * .15, width * .15, width / 2 - .3]) pillar(group, x, depth / 2 + 1.2, 3.3, .16, timber(0), stone(1))
+    block(group, width + .3, .26, .3, 0, 3.45, depth / 2 + 1.2, timber(0))
+    addRoof(group, width + 1.2, depth + 3.0, 3.6, 1.9, Math.floor(rng() * color.tile.length), hashSeed(seed))
+    // Guild signboard with the builders' square.
+    block(group, 3.4, .8, .12, 0, 4.25, depth / 2 + 1.35, timber(1))
+    block(group, 1.1, .1, .14, -.2, 4.3, depth / 2 + 1.42, brass(), 0, false)
+    block(group, .1, .6, .14, -.7, 4.2, depth / 2 + 1.42, brass(), 0, false)
+    for (const x of [-width * .42, width * .42]) {
+      const lamp = createLamp(`${seed}:lamp:${x}`)
+      lamp.position.set(x, .95, depth / 2 + 1.7)
+      group.add(lamp)
+    }
+    batchStaticMeshes(group)
+    return group
+  }
+
+  /** Open pillared mandapam with a flat stone roof; dispatch gates play out here. Front faces local +z. */
+  function createStagingMandapam(seed: number | string): THREE.Group {
+    const group = new THREE.Group()
+    group.name = 'Staging mandapam'
+    group.userData.assetKind = 'staging-mandapam'
+    const width = 8.4, depth = 11
+    block(group, width + 1, .3, depth + 1, 0, .15, 0, stone(0))
+    block(group, width + .5, .25, depth + .5, 0, .42, 0, stone(1))
+    for (let step = 0; step < 3; step += 1) block(group, 3.4 + step * .3, .15, .34, 0, .1 + step * .14, depth / 2 + .7 + step * .3, stone(step % 3))
+    const columns: Array<[number, number]> = []
+    for (const x of [-width * .42, 0, width * .42]) for (const z of [-depth * .42, -depth * .14, depth * .14, depth * .42]) if (!(x === 0 && Math.abs(z) < depth * .2)) columns.push([x, z])
+    for (const [x, z] of columns) {
+      block(group, .42, 3.0, .42, x, 2.05, z, stone(2))
+      block(group, .62, .22, .62, x, 3.62, z, stone(1))
+      block(group, .7, .16, .7, x, .63, z, stone(1))
+    }
+    block(group, width + .8, .38, depth + .8, 0, 3.92, 0, stone(0))
+    for (const [x, z, w, d] of [[0, depth / 2 + .3, width + .8, .22], [0, -depth / 2 - .3, width + .8, .22], [width / 2 + .3, 0, .22, depth + .8], [-width / 2 - .3, 0, .22, depth + .8]] as const) block(group, w, .4, d, x, 4.3, z, stone(2))
+    for (const [x, z] of [[-width / 2 - .3, depth / 2 + .3], [width / 2 + .3, depth / 2 + .3], [-width / 2 - .3, -depth / 2 - .3], [width / 2 + .3, -depth / 2 - .3]] as const) mesh(cylinderGeometry(.08, .22, .6, 8), stone(1), group, new THREE.Vector3(x, 4.7, z))
+    const board = createProp('queue-board', `${seed}:board`)
+    board.position.set(width * .2, .55, depth / 2 + .2)
+    group.add(board)
+    batchStaticMeshes(group)
+    return group
+  }
+
   return {
     createHouse,
     createPavilion,
     createTemple,
+    createTempleCampus,
     createTree,
     createAnimal,
     createWorker,
+    createTownsperson,
+    createArtisan,
+    createTraveller,
+    artisanLampMaterial,
+    createGuildHall,
+    createStagingMandapam,
     createLamp,
     createProp,
     releaseAsset(asset) {
       const owned = mergedByAsset.get(asset)
-      if (!owned) return
-      for (const resource of owned) {
-        resource.dispose()
-        mergedGeometries.delete(resource)
+      if (owned) {
+        for (const resource of owned) {
+          resource.dispose()
+          mergedGeometries.delete(resource)
+        }
+        mergedByAsset.delete(asset)
       }
-      mergedByAsset.delete(asset)
+      // InstancedMesh owns a per-object instanceMatrix buffer even when its
+      // geometry is library-shared. Release those buffers with the retired asset.
+      asset.traverse(object => {
+        if ((object as THREE.InstancedMesh).isInstancedMesh) (object as THREE.InstancedMesh).dispose()
+      })
     },
     dispose() {
       if (disposed) return
@@ -1449,6 +2651,8 @@ export function createTownAssetLibrary(): TownAssetLibrary {
       for (const resource of geometries.values()) resource.dispose()
       for (const resource of mergedGeometries) resource.dispose()
       for (const resource of materials.values()) resource.dispose()
+      for (const texture of textures) texture.dispose()
+      textures.clear()
       geometries.clear()
       mergedGeometries.clear()
       materials.clear()

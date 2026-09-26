@@ -330,6 +330,17 @@ export class TownStore {
     })
   }
 
+  /** Throttled live-activity marker; never changes agent state or task ownership. */
+  recordAgentActivity(id: string, tool: string): void {
+    this.mutate(state => {
+      const agent = state.agents.find(item => item.id === id)
+      if (!agent) return
+      agent.last_activity_at = this.now().toISOString()
+      agent.last_tool = tool.slice(0, 80)
+      this.event(state, 'agent.activity', { agent_id: id, last_activity_at: agent.last_activity_at, last_tool: agent.last_tool })
+    })
+  }
+
   createTask(input: NewTownTask, expectedCursor?: number): TownTask {
     return this.mutate(state => {
       if (expectedCursor !== undefined && expectedCursor !== state.cursor) throw new RevisionConflictError(`${this.file}:cursor`, expectedCursor, state.cursor)
