@@ -66,41 +66,43 @@ export function TownRoster(props: RosterProps) {
   return <div className="town-roster-layer">
     {pickMode && selected ? <div className="town-pick-banner" role="status">Choose a house for <b>{selected.name}</b> · click a building · <button type="button" onClick={props.onPickCancel}>Cancel (Esc)</button></div> : null}
     {selected && !pickMode ? <AssignCard key={selected.id} status={selected} {...props}/> : null}
-    <nav className="town-roster" aria-label="Artisan roster">
-      <ol>
-        {statuses.map(status => {
-          const look = artisanLook(status.persona, status.craft)
-          return <li key={status.id}>
-            <button
-              type="button"
-              className={`town-roster-portrait${status.id === selectedId ? ' is-selected' : ''}`}
-              data-lamp={status.lamp}
-              data-needs-you={status.needsYou ? 'true' : 'false'}
-              data-ghost={status.ghost ? 'true' : 'false'}
-              draggable
-              onDragStart={event => { event.dataTransfer.setData(ARTISAN_DRAG_TYPE, status.id); event.dataTransfer.effectAllowed = 'link'; props.onSelect(status.id) }}
-              onClick={() => { props.onSelect(status.id === selectedId ? undefined : status.id); if (status.id !== selectedId) props.onFocusArtisan(status.id) }}
-              aria-pressed={status.id === selectedId}
-              aria-label={`${status.name}, ${status.craft ? CRAFT_LABEL[status.craft] : 'artisan'}: ${status.detail}`}
-              title={`${status.name} · ${status.detail}`}
-            >
-              <span className="town-roster-face" style={{ background: look ? hex(look.robe) : undefined, color: look && [0xe9e1cc, 0xebe6dc, 0xe0b43a].includes(look.robe) ? '#3a2a1a' : '#fff8ea' }}><CraftEmblem craft={status.craft}/></span>
-              <span className="town-roster-name">{status.name.split(' ')[0]}</span>
-              <span className="town-roster-state">{status.label}{status.queuedCount ? ` +${status.queuedCount}` : ''}</span>
-            </button>
-          </li>
-        })}
-        <li className="town-roster-hire">
-          <button type="button" className="town-roster-portrait town-roster-add" aria-expanded={hireOpen} aria-label="Hire an apprentice builder" onClick={() => setHireOpen(value => !value)} disabled={!apprentices.length}>
-            <span className="town-roster-face">+</span><span className="town-roster-name">Hire</span><span className="town-roster-state">{apprentices.length ? `${apprentices.length} apprentices` : 'Guild full'}</span>
-          </button>
-          {hireOpen ? <div className="town-hire-menu" role="menu">
-            <p>Apprentices of Vishwakarma join the guild as persistent builders.</p>
-            {apprentices.map(look => <button type="button" role="menuitem" key={look.key} disabled={props.busy} onClick={() => { props.onHire(look.key); setHireOpen(false) }}><b>{look.name}</b><small>{look.epithet}</small></button>)}
-          </div> : null}
-        </li>
-      </ol>
-    </nav>
+    <div className="town-roster-row">
+      <nav className="town-roster" aria-label="Artisan roster">
+        <ol>
+          {statuses.map(status => {
+            const look = artisanLook(status.persona, status.craft)
+            return <li key={status.id}>
+              <button
+                type="button"
+                className={`town-roster-portrait${status.id === selectedId ? ' is-selected' : ''}`}
+                data-lamp={status.lamp}
+                data-needs-you={status.needsYou ? 'true' : 'false'}
+                data-ghost={status.ghost ? 'true' : 'false'}
+                draggable
+                onDragStart={event => { event.dataTransfer.setData(ARTISAN_DRAG_TYPE, status.id); event.dataTransfer.effectAllowed = 'link'; props.onSelect(status.id) }}
+                onClick={() => { props.onSelect(status.id === selectedId ? undefined : status.id); if (status.id !== selectedId) props.onFocusArtisan(status.id) }}
+                aria-pressed={status.id === selectedId}
+                aria-label={`${status.name}, ${status.craft ? CRAFT_LABEL[status.craft] : 'artisan'}: ${status.detail}`}
+                title={`${status.name} · ${status.detail}`}
+              >
+                <span className="town-roster-face" style={{ background: look ? hex(look.robe) : undefined, color: look && [0xe9e1cc, 0xebe6dc, 0xe0b43a].includes(look.robe) ? '#3a2a1a' : '#fff8ea' }}><CraftEmblem craft={status.craft}/></span>
+                <span className="town-roster-name">{status.name.split(' ')[0]}</span>
+                <span className="town-roster-state">{status.label}{status.queuedCount ? ` +${status.queuedCount}` : ''}</span>
+              </button>
+            </li>
+          })}
+        </ol>
+      </nav>
+      <div className="town-roster-hire">
+        <button type="button" className="town-roster-portrait town-roster-add" aria-expanded={hireOpen} aria-label="Hire an apprentice builder" onClick={() => setHireOpen(value => !value)} disabled={!apprentices.length}>
+          <span className="town-roster-face">+</span><span className="town-roster-name">Hire</span><span className="town-roster-state">{apprentices.length ? `${apprentices.length} apprentices` : 'Guild full'}</span>
+        </button>
+        {hireOpen ? <div className="town-hire-menu" role="menu">
+          <p>Apprentices of Vishwakarma join the guild as persistent builders.</p>
+          {apprentices.map(look => <button type="button" role="menuitem" key={look.key} disabled={props.busy} onClick={() => { props.onHire(look.key); setHireOpen(false) }}><b>{look.name}</b><small>{look.epithet}</small></button>)}
+        </div> : null}
+      </div>
+    </div>
   </div>
 }
 

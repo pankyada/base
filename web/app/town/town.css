@@ -427,9 +427,10 @@ html:has(.town-page), body:has(.town-page) { overflow:hidden; }
 .town-artisan-badge[data-lamp="unknown"] { opacity:.7; }
 
 .town-roster-layer { position:absolute; z-index:18; left:16px; right:16px; bottom:12px; display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
-.town-roster { max-width:min(100%,960px); overflow-x:auto; padding:6px 8px; border:1px solid #b6aa7a; border-radius:12px; background:#252a23ee; box-shadow:0 10px 34px #15181088; pointer-events:auto; scrollbar-width:thin; }
+.town-roster-row { display:flex; align-items:flex-start; gap:6px; max-width:100%; pointer-events:auto; }
+.town-roster { max-width:min(100%,900px); overflow-x:auto; padding:6px 8px; border:1px solid #b6aa7a; border-radius:12px; background:#252a23ee; box-shadow:0 10px 34px #15181088; pointer-events:auto; scrollbar-width:thin; }
 .town-roster ol { display:flex; gap:4px; margin:0; padding:0; list-style:none; }
-.town-roster-hire { position:relative; }
+.town-roster-hire { position:relative; flex:none; padding:6px 8px; border:1px solid #b6aa7a; border-radius:12px; background:#252a23ee; box-shadow:0 10px 34px #15181088; pointer-events:auto; }
 .town-roster-portrait { display:grid; justify-items:center; gap:2px; width:74px; padding:5px 3px 4px; border:1px solid transparent; border-radius:9px; background:transparent; color:#eee9d9; cursor:pointer; }
 .town-roster-portrait:hover, .town-roster-portrait:focus-visible { background:#ffffff12; border-color:#ffffff22; }
 .town-roster-portrait.is-selected { background:#d0b87926; border-color:#d0b879; }
