@@ -12,6 +12,7 @@ pnpm dev profiles/devops.yaml     # explicit profile path
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HARNESS_PORT` | `7337` | WebSocket + REST server port |
+| `HARNESS_HOST` | _(unspecified)_ | Optional listener address; set `127.0.0.1` for a local-only service. Unspecified preserves the existing listener behavior. |
 | `HARNESS_API_KEY` | _(none)_ | Optional bearer token for REST API (`POST /run`, `POST /stream`) |
 
 ## TUI

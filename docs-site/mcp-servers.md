@@ -72,6 +72,14 @@ WebSocket transport. Use for real-time bidirectional MCP connections.
 
 ## ACL configuration
 
+MCP tools explicitly annotated with `readOnlyHint: true`, `destructiveHint: false`,
+and `openWorldHint: false` are classified as reads before execution. This supports
+repeated local database/document lookups after a prior result taints the turn.
+The annotations do not grant ACL permission or make returned content trusted;
+MCP results remain untrusted. Only configure servers whose claimed effects you
+understand. Missing, open-world, or contradictory annotations do not receive
+this read-effect override; network search may send private queries externally.
+
 Each MCP server has its own `acl` block. The `*` wildcard is the fallback for any tool not explicitly listed.
 
 ```yaml

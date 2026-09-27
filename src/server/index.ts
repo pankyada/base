@@ -325,7 +325,7 @@ async function main() {
       }
     },
   })
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, process.env.HARNESS_HOST, () => {
     try {
       registerServer(serverRecordFor(PORT, profile.name, [...profiles.keys()], process.cwd()))
     } catch (error: any) {

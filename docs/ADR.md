@@ -22,6 +22,7 @@ pointer to what replaced them.
 
 | ADR | Decision | Status | Area |
 |---|---|---|---|
+| [90](#adr-90) | Closed-world read-only MCP effects are available before execution | ✅ | MCP / provenance |
 | [84](#adr-84) | Interactive session working directory is persisted workspace state | ✅ | sessions |
 | [85](#adr-85) | Automatic Town dispatch requires authoritative provider capacity | ✅ | orchestrator |
 | [86](#adr-86) | Optional semantic decisions advise context and memory within existing authority | ✅ | decisions |
@@ -1338,3 +1339,23 @@ scoped read-only statistics.
 servers, or restarted processes. It adds no durable map store, routing policy,
 execution engine, provider call, or client authority. PT-085 implements the
 contract in `superpowers/specs/2026-09-23-workflow-map-spec.md`.
+
+
+### ADR-90
+**Closed-world read-only MCP effects are available before execution** — ✅
+
+Context: document memory retrieval needs successive local search and graph reads.
+An untrusted first result correctly taints the run, but an unfamiliar second tool
+name was classified as outbound and denied before it could perform another read.
+
+Decision: retain MCP annotations from listTools. Only the explicit combination
+readOnlyHint=true, destructiveHint=false, openWorldHint=false declares a read
+on the tool definition. The agent loop uses that declaration before provenance
+checks and for execution/audit classification. Missing/open-world/contradictory
+hints do not gain this override. These are operator-selected tool effect claims,
+not a proof that arbitrary servers are safe or that their returned content is trusted.
+
+Consequences: ACLs still apply, MCP results still taint runs, and outbound/destructive
+actions still require the existing controls. Local document lookups can compose
+without granting filesystem writes, deletion, or network actions. No client or
+profile schema changes. Verified locally by PT-096, not released upstream.

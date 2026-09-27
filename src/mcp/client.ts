@@ -10,6 +10,7 @@ export interface McpToolMeta {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean }
 }
 
 export interface McpEntry {
@@ -54,6 +55,7 @@ export async function createMcpClients(profile: Profile): Promise<McpEntry[]> {
           name: t.name as string,
           description: (t.description as string | undefined) ?? '',
           inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object' },
+          annotations: t.annotations,
         })),
       })
     } catch (e: any) {
@@ -83,6 +85,10 @@ export function getMcpToolDefinitions(profile: Profile, entries: McpEntry[]): To
         name: `${entry.serverName}__${tool.name}`,
         description: `[MCP:${entry.serverName}] ${tool.description || tool.name}`,
         parameters: tool.inputSchema,
+        // Read-only network tools can still send private queries externally. Only
+        // explicit closed-world, non-destructive reads avoid the outbound gate.
+        ...(tool.annotations?.readOnlyHint === true && tool.annotations.openWorldHint === false && tool.annotations.destructiveHint === false
+          ? { effect: 'read' as const } : {}),
         async execute(input, context) {
           const r = await entry.client.callTool({ name: tool.name, arguments: input }, undefined, { signal: context.signal })
           const content = r.content as Array<{ type: string; text?: string }>

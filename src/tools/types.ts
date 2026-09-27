@@ -122,6 +122,8 @@ export interface ToolDefinition {
   name: string
   description: string
   parameters: Record<string, unknown>
+  /** Declared before execution so approval/provenance checks see the same effect as audit. */
+  effect?: ToolEffect
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolReturn>
   /** Optional side-effect-free proposal. Preview never invokes execute. */
   preview?(input: Record<string, unknown>, context: ToolContext): Promise<import('../rehearsal/index.js').ActionProposal>

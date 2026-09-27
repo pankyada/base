@@ -196,7 +196,7 @@ export async function runAgentLoop(
     let result: string
     let provenance: 'trusted' | 'untrusted'
     let source: string | undefined
-    let effect = effectFor(tc.name, isMcp)
+    let effect = effectFor(tc.name, isMcp, toolDef?.effect)
     let undo: ReturnType<typeof audit>['undo']
     let ok = true
     try {
@@ -212,7 +212,7 @@ export async function runAgentLoop(
       const fallback = defaultProvenance(tc.name, input, context, isMcp)
       provenance = structured.provenance ?? fallback.provenance
       source = structured.source ?? fallback.source
-      effect = effectFor(tc.name, isMcp, structured.effect)
+      effect = effectFor(tc.name, isMcp, structured.effect ?? toolDef?.effect)
       undo = structured.undo
     } catch (e: any) {
       if (isParkSignal(e)) throw e
@@ -487,7 +487,7 @@ export async function runAgentLoop(
         reason = verdict.reason
         acl = verdict.risk === 'danger' ? 'prompt' : 'allow'
       }
-      const effect = effectFor(baseName, isMcp)
+      const effect = effectFor(baseName, isMcp, allTools.find(tool => tool.name === tc.name)?.effect)
       let finalDecision: { decision: 'allow' | 'prompt'; decided_by: 'default' | 'predicate' | 'mode' | 'human' | 'gate'; reason: string } = { decision: acl === 'prompt' ? 'prompt' : 'allow', decided_by: decision.decided_by, reason: decision.reason }
       if (acl !== 'deny' && profile.safety?.gate_untrusted_actions && (session.taint_sources?.length ?? 0) > 0 && isGatedEffect(effect, profile.safety?.gate_writes)) {
         acl = 'prompt'
